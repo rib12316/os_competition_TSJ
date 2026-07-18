@@ -1,0 +1,20 @@
+# prefix_cache: vLLM V1 默认开启 prefix caching（对照中档）
+engine:
+  backend: vllm
+  model: Qwen2.5-7B-Instruct
+  extra_args: []                 # V1 默认即开 prefix cache，无需 flag
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

@@ -1,0 +1,24 @@
+# optimized: prefix cache + FP8 KV + LMCache（三档递进最高档）
+engine:
+  backend: vllm
+  model: Qwen2.5-7B-Instruct
+  extra_args:
+    - "--kv-cache-dtype fp8"      # M1: KV cache 显存砍半
+  lmcache:
+    enabled: true                 # M4: GPU↔CPU↔SSD 三级
+    config_file: agent_mem/kv/lmcache-local.yaml
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

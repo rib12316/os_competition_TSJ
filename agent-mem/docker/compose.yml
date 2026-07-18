@@ -1,0 +1,12 @@
+# 一键启动（占位，roadmap MVP 阶段补全）
+# 用法: docker compose -f agent-mem/docker/compose.yml up
+services:
+  vllm:
+    image: quay.io/ascend/vllm-ascend:v0.22.1rc1-openeuler  # 国产化（openEuler + Ascend）
+    #devices:                                              # NPU 启动后按实际挂载 /dev/davinci*
+    #  - /dev/davinci0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../:/workspace
+    command: bash -c "cd /workspace && vllm serve <model> --port 8000"

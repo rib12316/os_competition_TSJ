@@ -1,0 +1,22 @@
+# baseline: 关闭 prefix caching，作为对照基线
+# 用法: python -m agent_mem.benchmarks.runner --config configs/baseline.yaml
+engine:
+  backend: vllm                 # vllm | sglang | vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  extra_args:
+    - "--no-enable-prefix-caching"   # 显式关闭 V1 默认 prefix cache
+
+benchmark:
+  suite: tau-bench               # tau-bench | agentbench
+  domain: retail                 # retail | airline
+  runs: 3                        # 重复次数（取中位数）
+  seed: 42
+
+metrics:                          # 必采 6 指标
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft
