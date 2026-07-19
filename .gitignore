@@ -28,8 +28,9 @@ logs/*
 !logs/README.md
 !logs/.gitkeep
 
-# ===== 模型权重 / 大体积二进制 =====
-models/
+# ===== 模型权重 / 大体积二进制（仅保留 models/README.md 清单） =====
+models/*
+!models/README.md
 *.safetensors
 *.bin
 *.gguf
