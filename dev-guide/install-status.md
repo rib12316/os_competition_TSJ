@@ -1,78 +1,61 @@
 # 安装状态与已知问题
 
-> 安装日志：`logs/_installs/20260718-020621_uv-install/`（`install.log` + `uv-freeze.txt`）。
-> 路线：**CUDA-free 全量安装** —— 目标是 Ascend，故 torch 用 CPU 版、vllm 用 empty-target 源码构建，全程**零 nvidia CUDA 包**。
+> 路线：**CUDA-free 全量安装** —— 目标 Ascend，torch 用 CPU 版、vllm 用 empty-target 源码构建，全程**零 nvidia CUDA 包**。
+> NPU 已启动后，补装 vllm-ascend + triton-ascend，全栈可用。
 
-## 当前状态（✅ 基础设施 + CPU 环境就绪）
+## 当前状态（✅ 全栈就绪，NPU 可用）
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
-| 目录脚手架 | ✅ | agent-mem / docs / third_party / logs / dev-guide |
-| uv + `.venv` (py3.11) | ✅ | 与系统 Python 隔离 |
-| MVP 克隆 | ✅ | vllm@v0.22.1 / vllm-ascend@v0.22.1rc1(+子模块) / qwen-agent / tau-bench |
-| torch + torch-npu | ✅ | CPU torch + Ascend 后端（运行需 NPU） |
-| vllm (empty target) | ✅ 可导入 | 可编辑装入，`import vllm` 正常 |
-| qwen-agent / tau-bench / agent-mem | ✅ | 均可导入；pytest 2 passed、ruff 通过 |
-| **vllm-ascend** | ⏸️ **DEFER** | **按用户要求暂不装**，等 NPU 启动 |
-| **triton-ascend** | ⏸️ **DEFER** | 随 vllm-ascend 一起，NPU 启动后装 |
-| git + SSH + remote | ✅ | 已 push 到 `github.com:rib12316/os_competition_TSJ` |
+| 目录脚手架 / uv `.venv` (py3.11) | ✅ | 与系统 Python 隔离 |
+| MVP 克隆 | ✅ | vllm@v0.22.1 / vllm-ascend@v0.22.1rc1 / qwen-agent / tau-bench |
+| torch 2.10.0+cpu + torch-npu 2.10.0.post2 | ✅ | NPU 可用（`is_available()=True`, count=1） |
+| vllm 0.22.1+empty（editable） | ✅ | 可导入 |
+| **vllm-ascend 0.22.1rc1** | ✅ | ascend 平台插件已注册；`import vllm_ascend` 正常 |
+| **triton-ascend 3.2.1** | ✅ | triton 已注册后端 `['ascend']` |
+| qwen-agent / tau-bench / agent-mem | ✅ | pytest/ruff 通过 |
+| git + SSH + remote | ✅ | `github.com:rib12316/os_competition_TSJ` |
+| **CANN** | ✅ **8.5.1 实测够用** | 驱动 26.0.rc1 足够；**无需升级 9.0.1** |
 
-## 版本快照（uv pip freeze，共 200 包，0 个 nvidia 包）
+**硬件**：芯片 910B2C（Atlas A2，64GB HBM），设备 `/dev/davinci15`，驱动 26.0.rc1。
+
+## 版本快照
 
 ```
-# 核心
-torch==2.10.0+cpu
-torch-npu==2.10.0.post2
--e file:///data/os_competition_TSJ/third_party/vllm            # vllm 0.22.1+empty
--e file:///data/os_competition_TSJ/third_party/tau-bench       # tau-bench 0.1.0
--e file:///data/os_competition_TSJ/agent-mem                   # agent-mem 0.0.1
-qwen-agent==0.0.34
-transformers==5.14.1
-numpy==2.3.5 / pyyaml==6.0.3 / soundfile==0.14.0
+# 推理栈
+torch==2.10.0+cpu            torch-npu==2.10.0.post2
+-e third_party/vllm          # vllm 0.22.1+empty
+vllm-ascend==0.22.1rc1       triton==3.2.0   triton-ascend==3.2.1
+# agent / benchmark
+-e third_party/tau-bench     qwen-agent==0.0.34   -e agent-mem
+transformers==5.14.1         numpy==1.26.4（triton-ascend 钉版）  soundfile==0.14.0
 # 开发工具链
-ruff==0.15.22 / pytest==9.1.1 / pytest-cov==7.1.0
-mkdocs==1.6.1 / mkdocs-material==9.7.7
-# DEFER（未装）
-# vllm-ascend==0.22.1rc1 / triton-ascend==3.2.1   ← NPU 启动后装
-```
-完整 freeze：`logs/_installs/20260718-020621_uv-install/uv-freeze.txt`。
-
-## 安装要点（CUDA-free，实测有效）
-
-```bash
-export UV_LINK_MODE=copy                          # uv 缓存在 / 而 venv 在 /data，跨文件系统
-export TORCH_DEVICE_BACKEND_AUTOLOAD=0            # 构建期禁用 torch_npu 自动加载，否则报错
-# 1) CPU torch（无 nvidia 包）+ torch-npu
-uv pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
-uv pip install torch-npu==2.10.0.post2 --extra-index-url https://mirrors.huaweicloud.com/ascend/repos/pypi/variant
-# 2) vllm 源码 empty-target（需预装构建依赖）
-uv pip install setuptools wheel packaging ninja setuptools_rust setuptools_scm
-cd third_party/vllm && VLLM_TARGET_DEVICE=empty uv pip install -e . --no-build-isolation
-# 3) 纯 CPU 三件套
-uv pip install qwen-agent soundfile               # soundfile 是 qwen-agent 隐式依赖
-uv pip install -e third_party/tau-bench
-uv pip install -e 'agent-mem[dev]'
+ruff==0.15.22  pytest==9.1.1  pytest-cov==7.1.0  mkdocs==1.6.1  mkdocs-material==9.7.7
+# nvidia-* CUDA 包：0 个 ✓
 ```
 
-## 已知问题 / 待办
+## vllm-ascend / triton-ascend 安装要点（实测）
 
-### ⏸️ vllm-ascend / triton-ascend（DEFER，NPU 启动后处理）
-- 用户指示：NPU 未启动前不装 vllm-ascend（装上也跑不起来）。
-- **安装坑（已查明，待 NPU 后用）**：`uv pip install vllm-ascend==0.22.1rc1` 会失败 —— uv 对华为云 variant 索引里带芯片后缀的 wheel（`...x86_64-910b.whl`）做严格 platform 校验，认为"无兼容 wheel"，且提示的 `--index-strategy unsafe-best-match` 无效（PyPI 上 vllm-ascend 只到 0.18.0）。
-- **可行修复**：直接下载目标 wheel 本地安装（绕过索引解析），例如
-  `curl -O https://mirrors.huaweicloud.com/ascend/repos/pypi/variant/vllm-ascend/vllm_ascend-0.22.1rc1-cp311-cp311-manylinux_2_24_x86_64-910b.whl && uv pip install ./vllm_ascend-...910b.whl`
-  （若 uv 仍拒标签，把文件名 `-910b` 去掉再装）。芯片型号默认 `910b`（Atlas A2），**NPU 启动后用 `npu-smi info` 确认**。
+> 日志：`logs/_installs/20260719-010839_vllm-ascend/`。NPU 启动后操作。
 
-### ⚠️ CANN 版本不匹配
-- 需求 vllm-ascend 0.22.1rc1 → **CANN 9.0.1**；本机 `/usr/local/Ascend/cann-8.5.1`（**8.5.1**）。
-- 待办：NPU 启动后按 `environment-setup.md`「CANN 手动升级」升级（系统级 `.run` 包）。
+1. **vllm-ascend**：`uv pip install vllm-ascend==0.22.1rc1` 会失败（uv 对华为云 variant 索引里带 `-910b` 后缀的 wheel 做 platform 校验，认为无兼容 wheel）。
+   - 修复：直接下 wheel 本地装（绕过索引解析）：
+     ```bash
+     curl -O https://mirrors.huaweicloud.com/ascend/repos/pypi/variant/vllm-ascend/vllm_ascend-0.22.1rc1-cp311-cp311-manylinux_2_24_x86_64-910b.whl
+     # 去掉文件名 -910b 后缀使 platform tag 合法，再 --no-deps 装
+     uv pip install --no-deps ./vllm_ascend-0.22.1rc1-cp311-cp311-manylinux_2_24_x86_64.whl
+     ```
+2. **triton-ascend**：`uv pip install triton-ascend==3.2.1 --extra-index-url .../pypi` 能装上，但 uv/pip **不会**用 triton-ascend 的补丁 `libtriton.so`（含 ascend 符号）覆盖 PyPI triton 的同名文件（文件归属 triton，严格不覆盖）→ `import triton` 报 `cannot import name 'ascend'`。
+   - 修复：下 triton-ascend wheel，用 python zipfile 把其 `triton/*` 文件**覆盖**到 site-packages：
+     ```bash
+     curl -O https://mirrors.huaweicloud.com/ascend/repos/pypi/triton-ascend/triton_ascend-3.2.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+     python -c "import zipfile; z=zipfile.ZipFile('triton_ascend-...whl'); [open(f'site-packages/{n}','wb').write(z.read(n)) for n in z.namelist() if n.startswith('triton/') and not n.endswith('/')]"
+     ```
+   - 关键：运行前必须 `source /usr/local/Ascend/ascend-toolkit/set_env.sh`（libtriton 注册 ascend 子模块需 CANN 运行时在 LD_LIBRARY_PATH）。
+3. **运行期**：`unset TORCH_DEVICE_BACKEND_AUTOLOAD`（仅构建期才需设 0）。
 
-### ⚠️ NPU 未启动
-- `/dev/davinci_manager`、`/dev/hisi_hdc` 在，但无 `/dev/davinci0`；`npu-smi info` 报 `dcmi ... ret -8005`。
-- 用户：需要时再启动。运行时验证全部 defer。
+## 已知点 / 后续
 
-### 其它
-- **构建变量**：`TORCH_DEVICE_BACKEND_AUTOLOAD=0`（构建/非运行期）；运行 NPU 时勿设。
-- **soundfile**：qwen-agent 隐式依赖（`utils.py` 无条件 import），已补装。
-- **pytest 路径**：在 `agent-mem/` 下运行 `pytest`（根目录跑会误收集 `third_party/*/tests`）。
-- 体积：`.venv` 约 2.1G；`/data` 余量充足。
+- `import triton_ascend` 报 `No module named 'triton_ascend'` 是**正常的** —— triton-ascend 集成为 `triton.backends.ascend`（已注册），无顶层模块。
+- `transformers` 当前 5.14.1（vllm 拉的），vllm-ascend 声明 `==5.5.4`；`--no-deps` 装未强制降级，运行若有 API 不兼容再按需降。
+- **下一步（MVP）**：用 vllm-ascend 跑通真实推理（下载小模型如 Qwen3-0.6B，`vllm serve`），再进入 roadmap 的 agent loop + benchmark。

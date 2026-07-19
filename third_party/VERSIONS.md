@@ -23,6 +23,7 @@
 | qwen-agent | — | 0.0.34 | ✅ |
 | tau-bench | — | 0.1.0（editable） | ✅ |
 | agent-mem | — | 0.0.1（editable） | ✅ |
-| **vllm-ascend** | 0.22.1rc1 | 未装 | ⏸️ DEFER（NPU 启动后） |
-| **triton-ascend** | 3.2.1 | 未装 | ⏸️ DEFER（NPU 启动后） |
+| **vllm-ascend** | 0.22.1rc1 | **0.22.1rc1** | ✅ ascend 插件已注册（NPU 启动后装） |
+| **triton-ascend** | 3.2.1 | **3.2.1** | ✅ triton 后端 `['ascend']` |
+| triton | 3.2.0 | 3.2.0 | ✅（triton-ascend 补丁版 libtriton） |
 | nvidia-* CUDA 包 | — | **0 个** | ✅ CUDA-free 达成 |
