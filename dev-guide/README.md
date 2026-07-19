@@ -8,6 +8,17 @@
 | [`environment-setup.md`](environment-setup.md) | 环境搭建步骤（uv / 克隆 / 安装命令） |
 | [`install-status.md`](install-status.md) | 当前安装状态 + 已知问题 + 待办 |
 | [`roadmap.md`](roadmap.md) | MVP → M1..M11 进展与优先级 |
+| [`roles/`](roles/) | ★ 三人并行协作模型（Model C）+ 各角色 MVP/扩展任务清单 |
+
+## 三人协作分工
+
+开发采用 **Model C（2 特性开发 + 1 测量/质量中枢）**，详见 [`roles/README.md`](roles/README.md)。三份角色任务清单：
+
+- [`roles/p1-engine-backend.md`](roles/p1-engine-backend.md) — 引擎/后端（M1/M4/M5/M8…）
+- [`roles/p2-agent-app.md`](roles/p2-agent-app.md) — Agent/应用（M2/M6…）
+- [`roles/p3-measure-quality.md`](roles/p3-measure-quality.md) — 测量骨干 + 质量门（M3/M10…）+ 全模块 before/after
+
+> 关键：P3 **day 1 先交付契约 + stub**，P1/P2 对契约并行开发，不被互相阻塞。
 
 ## 工作约定
 
