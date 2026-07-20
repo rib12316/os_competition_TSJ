@@ -35,8 +35,7 @@
 - **做什么**：`--kv-transfer-config '{"kv_connector":"LMCacheAscendConnector","kv_role":"kv_both"}'` 激活 vllm-ascend 内置 connector，NPU↔CPU↔Disk 三级 KV cache。
 - **落点**：`configs/f4-lmcache.yaml`（kv_transfer.connector）→ `vllm_server.py`（render_kv_transfer_arg）→ `--kv-transfer-config`。
 - **依赖**：NPU 开时需编译安装 `lmcache_ascend` 包（步骤见 `docs/F4-lmcache-ascend.md`）。
-- **现状**：config/yaml/args 翻译/单测 已完成；待 NPU 开时装包 + 真机烟测。
-- **工作量**：代码层 2-3 小时 ✅；NPU 安装 0.5 天 ⚠️。
+- **现状**：✅ 完成。延迟 -21%, QPS +32%, KV 命中 0.96。内存峰持平（workload 不触发 offload）。3 commits 在 feat/f4-lmcache。
 
 ### F7 — 分支 KV 共享（测量版）（缝F）
 

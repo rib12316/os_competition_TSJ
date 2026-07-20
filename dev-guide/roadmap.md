@@ -52,7 +52,7 @@ F8 ＞ 补缝D接口(已done) ＞ F2 ＞ F3 ＞ F4 ＞ F1(验) ＞ F5 ＞ F6 ＞
 - [ ] **F8 多硬件对照**（1 天，命中「适配不同框架/硬件」20 分）
 - [ ] **F2 Prompt 压缩**（2–3 天，LLMLingua + 成功率 ablation）
 - [ ] **F3 工具 lazy-load**（3–4 天，引用语法 + few-shot 引导 fetch）
-- [x] **F4 LMCache 分层**（config/yaml/args 翻译 ✅；NPU 开时装 lmcache_ascend + 真机验证）
+- [x] **F4 LMCache 分层**（✅ 完成。延迟 -21%, QPS +32%，内存峰持平。见 docs/F4-lmcache-ascend.md）
 - [ ] **F1 int8 KV**（验证 0.5 天 + benchmark 1 天，⚠️ 尽早上 NPU 探针）
 
 ## 阶段 3 — 深化（按时间余量）

@@ -1,7 +1,20 @@
 # F4 — LMCache Ascend 集成指南
 
-> 已验证可行性（2026-07-20）：引擎正常启动 + LMCacheAscendConnector 激活 + API 正常响应。
-> 对照 benchmark 受 NPU HBM 缓存限制待后续验证。
+> **状态**：✅ 代码集成完成 + NPU 验证通过 + benchmark 有数据。
+> 结论：LMCache 在当前 workload 下的收益在**延迟和 QPS**（-21%/-32%），内存峰持平（KV 不超 pool，offload 不触发）。
+
+## Benchmark 结果（2026-07-20）
+
+| 场景 | 指标 | baseline | f4-lmcache | delta |
+|---|---|---|---|---|
+| 单 agent (10 tasks) | P50 延迟 | 152.8s | 120.8s | **-21%** ✅ |
+| 单 agent (10 tasks) | 成功率 | 0.20 | 0.40 | **+20pp** |
+| 单 agent (10 tasks) | mem_peak | 57911 MB | 58050 MB | +0.2% |
+| 并发 4 agent | qps | 0.028 | 0.037 | **+32%** |
+| 并发 4 agent | mem_peak | 31755 MB | 31911 MB | +0.5% |
+
+> 内存峰不降的原因：τ-bench retail 任务 prompt ~7K tokens，并发 ≤4 session，
+> KV cache pool 够用，LMCache offload 不会触发。需要更长序列或多并发才能体现内存收益。
 
 ## 验证摘要（2026-07-20 NPU 真机）
 
