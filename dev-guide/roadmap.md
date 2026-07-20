@@ -49,7 +49,7 @@ F8 ＞ 补缝D接口(已done) ＞ F2 ＞ F3 ＞ F4 ＞ F1(验) ＞ F5 ＞ F6 ＞
 
 ## 阶段 2 — 高 ROI 功能（累计约 78–90%）
 
-- [ ] **F8 多硬件对照**（1 天，命中「适配不同框架/硬件」20 分）
+- [x] **F8 多硬件对照**（config 就绪 ✅。纯 config 切换，待 NPU 跑对照 benchmark。见 docs/F8-multi-hw.md）
 - [ ] **F2 Prompt 压缩**（2–3 天，LLMLingua + 成功率 ablation）
 - [ ] **F3 工具 lazy-load**（3–4 天，引用语法 + few-shot 引导 fetch）
 - [ ] **F4 LMCache 分层**（1–2 天，GPU↔CPU↔SSD）

@@ -19,7 +19,7 @@
 
 - **做什么**：同一 agent loop + 同一 yaml，`backend: vllm`(CPU) vs `vllm-ascend`(NPU) 各跑一遍对比，命中"适配不同框架/硬件"20 分项（顶替已作废的 SGLang 双引擎）。
 - **落点**：`config.py` 的 backend 白名单（已有 vllm / vllm-ascend）；两套 yaml。
-- **工作量**：1 天 · 两套引擎都已装好，几乎零成本。
+- **现状**：✅ config/yaml/文档已就绪。纯 backend 字段切换，见 docs/F8-multi-hw.md。
 
 ### F1 — int8 KV 量化（缝A，待真机验证）
 
