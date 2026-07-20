@@ -8,7 +8,7 @@ engine:
   backend: vllm-ascend          # int8 KV 是 Ascend 特性，真机跑在 NPU
   model: Qwen2.5-7B-Instruct
   extra_args:
-    - "--kv-cache-dtype int8"   # F1：KV cache 显存砍半（在线动态量化，无需校准）
+    - "--kv-cache-dtype int8_per_token_head"   # F1: int8 KV 在线动态量化（per-token-per-head scale），无需校准
 
 benchmark:
   suite: tau-bench
