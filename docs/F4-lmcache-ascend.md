@@ -1,6 +1,22 @@
 # F4 — LMCache Ascend 集成指南
 
-> 按步骤执行即可。每一步标注了预期结果和失败时的处理。
+> 已验证可行性（2026-07-20）：引擎正常启动 + LMCacheAscendConnector 激活 + API 正常响应。
+> 对照 benchmark 受 NPU HBM 缓存限制待后续验证。
+
+## 验证摘要（2026-07-20 NPU 真机）
+
+| 步骤 | 结果 | 关键操作 |
+|---|---|---|
+| 环境确认 | ✅ | 910B2C, CANN 9.0.0, torch_npu OK |
+| 安装 lmcache_ascend | ✅ | 需 `SOC_VERSION=Ascend910B2C`；用 venv pip 装 |
+| lmcache 版本 | ⚠️ | 0.5.1 CUDA 版需降级为 0.4.4（`NO_CUDA_EXT=1`） |
+| import 验证 | ✅ | `check_lmcache_ascend()` 通过 |
+| connector 注册 | ✅ | 起引擎时 vllm-ascend 插件加载 LMCacheAscendConnector |
+| 引擎烟测 | ✅ | 正常启动，LMCache 用 `non_cuda_equivalents` 后端，API 正常 |
+| F4 对照 benchmark | ❌ | NPU HBM 92% 被前序引擎占用，容器无法 reset |
+
+> **已知约束**：容器内无法 reset NPU（`npu-smi set -t reset` 不可用）。
+> 多档 benchmark 需在每档之间留足 HBM 释放时间（>5min），或单次只跑一档并重启容器。
 
 ## 前提
 
