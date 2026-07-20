@@ -21,14 +21,10 @@
 - **落点**：`config.py` 的 backend 白名单（已有 vllm / vllm-ascend）；两套 yaml。
 - **工作量**：1 天 · 两套引擎都已装好，几乎零成本。
 
-### F1 — int8 KV 量化（缝A，待真机验证）
+### F1 — int8 KV 量化（缝A，❌ 已暂停）
 
-- **做什么**：`--kv-cache-dtype int8`（一行 flag），KV 显存砍半。
-- **落点**：`configs/f1-int8.yaml`（走 `EngineConfig.extra_args`）。
-- **⚠️ 高风险**：int8 是 Ascend 上 KV 量化的唯一支持格式，但曾在 0.13rc1 被移除（[#5630](https://github.com/vllm-project/vllm-ascend/issues/5630)），0.22.1rc1 是否恢复**未知**。
-- **第一步动作（需 NPU）**：起 vllm-ascend 加 `--kv-cache-dtype int8`，看是否报错。一锤定音。
-- **备选**：若不支持，降级为 max-num-seqs / gpu-memory-utilization 调参顶替"显存↓"叙事。
-- **工作量**：验证 0.5 天 + benchmark 1 天。
+- **2026-07-20 NPU 探针结论**：Ascend 上三条路均不通。`--kv-cache-dtype int8` 是 no-op；`int8_per_token_head` Ascend 后端 buffer reshape 崩溃；C8 需 per-layer 校准文件。详见 `docs/F1-int8-kv-cache.md`。
+- **备选**：降级为 `gpu-memory-utilization` / `max-num-seqs` 调度调参，或等 vllm-ascend 升级。
 
 ### F4 — LMCache 分层（缝C）
 

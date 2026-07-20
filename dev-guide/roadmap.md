@@ -53,7 +53,7 @@ F8 ＞ 补缝D接口(已done) ＞ F2 ＞ F3 ＞ F4 ＞ F1(验) ＞ F5 ＞ F6 ＞
 - [ ] **F2 Prompt 压缩**（2–3 天，LLMLingua + 成功率 ablation）
 - [ ] **F3 工具 lazy-load**（3–4 天，引用语法 + few-shot 引导 fetch）
 - [ ] **F4 LMCache 分层**（1–2 天，GPU↔CPU↔SSD）
-- [ ] **F1 int8 KV**（验证 0.5 天 + benchmark 1 天，⚠️ 尽早上 NPU 探针）
+- [x] ~~F1 int8 KV~~（❌ 暂停。三条路均不通：int8 no-op / int8_per_token_head Ascend 崩溃 / C8 需校准文件。见 docs/F1-int8-kv-cache.md）
 
 ## 阶段 3 — 深化（按时间余量）
 

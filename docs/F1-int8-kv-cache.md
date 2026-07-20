@@ -1,61 +1,49 @@
 # F1 — int8 KV Cache 量化
 
-> 主责：P1 | 缝：A | 一行 flag，无额外代码
+> 主责：P1 | 缝：A | 状态：❌ 暂停（Ascend 上三条路均不通）
 
-## 原理
+## 探索记录
 
-vllm V1 内置 `int8_per_token_head` —— 每 token 每 head 动态算 scale，将 KV cache 从 float16/int8 → int8 存储，理论显存减半。纯在线量化，无需校准。
+2026-07-20 在 vllm-ascend 0.22.1rc1 + Ascend 910B2C + CANN 9.0.0 上依次尝试：
 
-## 代码
+### 路径 1：`--kv-cache-dtype int8`
 
-| 文件 | 内容 |
+**结论：no-op。** vllm V1 `kv_cache_dtype` 枚举里没有 `int8`——有 `int8_per_token_head`、`fp8_per_token_head`、`fp8_e4m3` 等，不存在裸 `int8`。传了不报错也不生效。
+
+### 路径 2：`--kv-cache-dtype int8_per_token_head`
+
+**结论：Ascend 后端崩溃。** vllm 内置的 per-token-head 量化是 CUDA 路径。vllm-ascend 虽接受 flag，但在 `_reshape_kv_cache_tensors` 中按 float16 维度分配 buffer，int8（1 字节）元素数是 float16（2 字节）的两倍，reshape 崩溃：
+
+```
+RuntimeError: shape '[256, 128, 4, 128]' is invalid for input of size 17301504
+```
+
+vllm-ascend 的 KV cache buffer 管理写死了 float16，接不住 int8。
+
+### 路径 3：C8（Ascend 原生 int8 KV）
+
+**结论：需要完整校准文件，不能一行 flag 搞定。** C8 是 vllm-ascend 自己写的 int8 KV（`AscendC8KVCacheAttentionMethod`），通过 `--quantization ascend` 激活。但它走 `AscendModelSlimConfig` 框架，会量化**所有权重 + KV cache**——只写 `{"kv_cache_type": "C8"}` 不够，遇到 `model.embed_tokens.weight` 等没有在 config 里声明的层就报 `KeyError` 崩溃。
+
+完整配置（`quant_model_description.json`）需要华为 `msmodelslim` 校准工具逐层生成——在非校准模型上无法使用。
+
+## 结论
+
+Ascend 910B2C（无 FP8 单元）上做 KV 量化的三条路都不可行：
+
+| 路径 | 失败原因 |
 |---|---|
-| `configs/f1-int8.yaml` | `--kv-cache-dtype int8_per_token_head` |
-| `configs/optimized.yaml` | 同上（三档最高档） |
-| `vllm_server.py` | `extra_args` 经 `shlex.split` 传入 API server |
+| `--kv-cache-dtype int8` | vllm 枚举中不存在，no-op |
+| `--kv-cache-dtype int8_per_token_head` | CUDA 路径，Ascend 后端 buffer 不兼容 |
+| C8 + `--quantization ascend` | 需 per-layer 校准文件，非校准模型不可用 |
 
-## NPU 探针
+## 代码（保留 config 供参考，flag 不生效）
 
-```bash
-# 起引擎，看是否报错或不认该 flag
-.venv/bin/python -m vllm.entrypoints.openai.api_server \
-    --model models/Qwen2.5-7B-Instruct \
-    --port 8000 \
-    --kv-cache-dtype int8_per_token_head \
-    --max-model-len 4096
-```
+`configs/f1-int8.yaml` 已更新为 `int8_per_token_head`（最新尝试值）。该 yaml 仍然存在的意义：如果 vllm-ascend 后续版本修复了 buffer reshape 兼容性，可以直接启用。
 
-**分支**：
-- ✅ 引擎正常启动 → int8 KV 生效，跑 benchmark 对比 mem_peak
-- ❌ `invalid choice` / `unrecognized` → Ascend 后端不支持，走降级方案
-- ❌ 启动成功但 mem_peak 不降 → flag 被静默忽略（no-op），走降级方案
+## 备选方向
 
-## 降级方案
+如果后续需要 KV 量化叙事：
 
-如果 `int8_per_token_head` 在 Ascend 上不生效：
-
-1. **`--gpu-memory-utilization 0.7`** — 降低 KV cache pool，迫使引擎更激进回收，间接降低 mem_peak
-2. **`--max-num-seqs 4`** — 限制并发数，控制 KV 总量
-3. 叙事改为"调度参数调优降低 Agent 推理显存占用"
-
-## Benchmark
-
-```bash
-# baseline
-.venv/bin/python agent-mem/benchmarks/runner.py \
-    --config agent-mem/configs/baseline.yaml \
-    --runner qwen-agent --engine-url http://127.0.0.1:8000/v1 \
-    --model-name Qwen2.5-7B-Instruct --max-tasks 10 --runs 1 --max-steps 25 \
-    --device npu --log-root logs-mimo \
-    --user-model mimo-v2.5-pro --user-api-base https://token-plan-cn.xiaomimimo.com/v1 \
-    --user-api-key "$MIMO_KEY"
-
-# F1
-.venv/bin/python agent-mem/benchmarks/runner.py \
-    --config agent-mem/configs/f1-int8.yaml \
-    --runner qwen-agent --engine-url http://127.0.0.1:8000/v1 \
-    --model-name Qwen2.5-7B-Instruct --max-tasks 10 --runs 1 --max-steps 25 \
-    --device npu --log-root logs-mimo \
-    --user-model mimo-v2.5-pro --user-api-base https://token-plan-cn.xiaomimimo.com/v1 \
-    --user-api-key "$MIMO_KEY"
-```
+1. 等 vllm-ascend 升级 → 支持 `int8_per_token_head` 的 buffer reshape
+2. 跑 `msmodelslim` 校准 → 生成完整 `quant_model_description.json` → C8
+3. 改为调度参数调优（`gpu-memory-utilization` + `max-num-seqs`），实现同等的"显存↓"叙事
