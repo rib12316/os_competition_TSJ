@@ -1,12 +1,32 @@
-# 一键启动（占位，roadmap MVP 阶段补全）
-# 用法: docker compose -f agent-mem/docker/compose.yml up
+# 一键启动 vLLM OpenAI server（国产化：openEuler + Ascend）
+#
+# 用法（NPU 已启动后）:
+#   docker compose -f agent-mem/docker/compose.yml up
+#
+# 不走 docker，直接用封装（推荐，三档可切）:
+#   python -m agent_mem.server.vllm_server --config configs/baseline.yaml \
+#       --model-path models/Qwen3-0.6B --device auto --port 8000
+#
+# 注：compose 默认起 prefix_cache 档（V1 默认开 prefix cache）。baseline/optimized
+# 档用上面的 vllm_server CLI + 对应 config 切换。
 services:
   vllm:
-    image: quay.io/ascend/vllm-ascend:v0.22.1rc1-openeuler  # 国产化（openEuler + Ascend）
-    #devices:                                              # NPU 启动后按实际挂载 /dev/davinci*
-    #  - /dev/davinci0
+    image: quay.io/ascend/vllm-ascend:v0.22.1rc1-openeuler
+    # NPU 启动后按实际挂载（/dev/davinci0 ...）+ Ascend 环境
+    # devices:
+    #   - /dev/davinci0
+    # environment:
+    #   - ASCEND_TOOLKIT_HOME=/usr/local/Ascend/ascend-toolkit/latest
     ports:
       - "8000:8000"
     volumes:
-      - ../:/workspace
-    command: bash -c "cd /workspace && vllm serve <model> --port 8000"
+      - ../:/workspace # 挂载仓库（含 models/ configs/ src/）
+    working_dir: /workspace
+    # Qwen 工具调用解析：真机可能需调 --tool-call-parser（hermes / qwen3_xml 等）
+    command: >
+      python -m vllm.entrypoints.openai.api_server
+      --model /workspace/models/Qwen3-0.6B
+      --port 8000
+      --host 0.0.0.0
+      --served-model-name Qwen3-0.6B
+      --enable-auto-tool-choice --tool-call-parser hermes

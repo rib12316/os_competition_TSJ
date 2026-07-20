@@ -1,0 +1,27 @@
+# F4 · LMCache 分层（缝C：NPU↔CPU↔Disk 三级 KV cache）。
+# vllm-ascend 经 LMCache-Ascend 插件消费（--enable-lmcache + LMCACHE_CONFIG_FILE）。
+# config_file 省略 → 用打包模板 src/agent_mem/kv/lmcache_local.yaml。
+#
+# 独立性：只开关自己（engine.lmcache.enabled）。
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  extra_args: []
+  lmcache:
+    enabled: true                # F4：开 LMCache 分层
+    config_file: local           # 打包模板（或自定义 yaml 路径）
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

@@ -1,0 +1,33 @@
+# F3 · 工具调用数据 lazy-load（缝D：上下文中间件 intercept_tool_result）。
+# 拦截工具返回值（长 HTML/JSON/图）→ 存外部 store → context 只放 <doc id=.. summary=..>，
+# 加 fetch(id) 工具让模型按需取详情。纯 agent 层，与硬件无关。
+#
+# ⚠️ TODO(F3)：实现 LazyLoadMiddleware 并 register("lazyload", ...) + fetch 工具后生效。
+#
+# 独立性：只开关自己（middleware.active=[lazyload]）；可与 F2 链式组合，但价值不依赖它。
+engine:
+  backend: vllm
+  model: Qwen2.5-7B-Instruct
+  extra_args: []
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+middleware:                       # 缝D
+  active: [lazyload]             # TODO(F3): register 后激活
+  options:
+    lazyload:
+      store: sqlite              # 外部 store 类型（sqlite | memory）
+      max_inline_chars: 200      # 超此长度的工具结果换成引用
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-mem
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: agent-mem/pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          # dev 依赖 + 测试需要的纯 Python 库（tau_bench 不装，相关测试 importorskip 跳过）
+          pip install -e ".[dev]" pyyaml httpx openai
+
+      - name: Ruff
+        run: ruff check src tests
+
+      - name: Pytest (coverage >= 60%)
+        run: pytest --cov=src/agent_mem --cov-report=term-missing --cov-fail-under=60

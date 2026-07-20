@@ -1,0 +1,26 @@
+# F1 · int8 KV 量化（缝A：只改 vllm CLI flag）。
+# 910B 无 FP8 单元 → FP8 作废；int8 是 Ascend 上 KV 量化的唯一支持格式。
+# ⚠️ 待真机验证：0.22.1rc1 是否恢复支持 int8 KV（#5630 曾在 0.13rc1 移除）。
+#    不支持时降级为 max-num-seqs / gpu-memory-utilization 调参顶替「显存↓」叙事。
+#
+# 独立性：只开关自己（KV 量化 flag），不改别的功能；before/after = baseline vs 本档。
+engine:
+  backend: vllm-ascend          # int8 KV 是 Ascend 特性，真机跑在 NPU
+  model: Qwen2.5-7B-Instruct
+  extra_args:
+    - "--kv-cache-dtype int8"   # F1：KV cache 显存砍半（在线动态量化，无需校准）
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

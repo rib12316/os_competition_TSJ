@@ -1,0 +1,34 @@
+# F2 · Prompt / 上下文压缩（缝D：上下文中间件 transform_messages）。
+# 对 system prompt / 冷历史用压缩器（LLMLingua）压 2–4×，发引擎前变换 messages。
+# 纯 agent 层，与硬件无关。
+#
+# ⚠️ 红线：压过头伤成功率，必须配 ablation，成功率下降 ≤ 2pp。
+# ⚠️ TODO(F2)：实现 CompressMiddleware 并 register("compress", ...) 后此档才生效。
+#    未注册时 load_config 仍通过（名字解析在 middleware 包，运行时才校验）。
+#
+# 独立性：只开关自己（middleware.active=[compress]）。
+engine:
+  backend: vllm
+  model: Qwen2.5-7B-Instruct
+  extra_args: []                 # V1 默认开 prefix cache
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+middleware:                       # 缝D
+  active: [compress]             # TODO(F2): register 后激活
+  options:
+    compress:
+      ratio: 0.5                 # 目标压缩比（token 收益 vs 成功率 trade-off）
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

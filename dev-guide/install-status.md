@@ -3,7 +3,33 @@
 > 路线：**CUDA-free 全量安装** —— 目标 Ascend，torch 用 CPU 版、vllm 用 empty-target 源码构建，全程**零 nvidia CUDA 包**。
 > NPU 已启动后，补装 vllm-ascend + triton-ascend，全栈可用。
 
-## 当前状态（✅ 全栈就绪，NPU 可用）
+## 重建状态（2026-07-19，CANN 升 9.0.0 后）⭐ 最新 —— ✅ 全栈就绪，smoke 通过
+
+> 换镜像/升 CANN 后 base python 由 3.11.14 → **3.11.15**，旧 `.venv` 软链失效（uv 也丢），需整体重建。
+> CANN 由 **8.5.1 → 9.0.0**。日志：`logs/_installs/20260719-024304_rebuild-cann9-phaseA/`（Phase A）、`logs/_installs/20260719-035337_rebuild-cann9-phaseB/`（Phase B/C，含 smoke1-4）。
+
+**最终栈（实测 smoke OK，Qwen3-0.6B 在 Ascend910B2C 推理 26s）**
+
+| 项目 | 状态 | 说明 |
+|---|---|---|
+| CANN 9.0.0 + **910b ops**（9390 kernel） | ✅ | **关键**：原先只装了 `Ascend-cann-310p-ops`（装错芯片！），910b ops 从 quay 镜像层补齐（见下） |
+| torch 2.10.0+cpu + torch-npu 2.10.0.post2 | ✅ | CANN 9.0.0 下 `is_available()=True`，count=1，Ascend910B2C |
+| vllm 0.22.1+empty（editable） | ✅ | 构建需补 `setuptools-rust==1.13.0`+`setuptools-scm==10.2.0` |
+| **vllm-ascend 0.22.1rc1** | ✅ | wheel `--no-deps`；**须补 numba==0.60.0 + torchvision==0.25.0+cpu**（见下） |
+| **triton-ascend 3.2.1**（补丁 libtriton） | ✅ | sha256 `5cc746d72fc383cd…`；triton.backends 含 `ascend` |
+| qwen-agent / tau-bench / agent-mem[dev] | ✅ | ruff 全过、pytest 2 passed |
+| **nvidia-* CUDA 包** | ✅ **0 个** | CUDA-free 达成 |
+
+**⚠️ 三个真根因（旧栈 smoke 失败的真相，均与 CANN 版本无关）**：
+1. **910b ops 缺失**（最致命）：系统只装了 `Ascend-cann-310p-ops`，缺 910b 算子 kernel → `aclnnInplaceZero failed, error 561103` / `Parse dynamic kernel config fail`。`is_available()` 能过（驱动层），但一执行真算子就崩。**修复**：从 `quay.io/ascend/cann:9.0.0-910b-openeuler24.03-py3.11` 镜像层提取（华为官网 nnrt 需登录 403，镜像层是唯一免认证渠道），见 environment-setup.md「910b ops 补齐」。
+2. **numba 缺失**：vllm-ascend `--no-deps` 装导致其依赖 `numba` 没拉进来（`policy_flashlb.py` 硬 import）。`uv pip install numba==0.60.0`（兼容 numpy 1.26.4）。
+3. **torchvision 缺失 + 版本陷阱**：vllm 源码构建没拉 torchvision（`vllm/v1/worker/block_table.py` import）。**必须钉 `torchvision==0.25.0+cpu`** —— 不钉则 uv 拉 0.28.0（要 torch 2.13.0），把 torch 升级从而撑爆 torch_npu 2.10.0.post2。torch↔torchvision 映射：2.10↔0.25。
+
+**重建踩坑**：① PyPI 下大包（triton 188MB）会 socket 卡死（0% CPU），**改用阿里云镜像** `--index-url https://mirrors.aliyun.com/pypi/simple/` 45s 跑完。② vllm `--no-build-isolation` 构建依赖须预装（含 setuptools-rust/scm）。③ triton-ascend 补丁 libtriton 须 zipfile 强制覆盖（uv 严格不覆盖），判据用 **sha256 比对**而非 `nm -D|grep ascend`（后者恒为 0，误报）。
+
+---
+
+## 历史状态（CANN 8.5.1 时期，已被上方重建状态取代）
 
 | 项目 | 状态 | 说明 |
 |---|---|---|

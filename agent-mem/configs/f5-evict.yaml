@@ -1,0 +1,29 @@
+# F5 · Session idle eviction（缝E：session 空闲超阈值 → 把显存 KV offload 到 CPU）。
+# 机制借 vllm-ascend 原生 simple_kv_offload / SimpleCPUOffloadConnector（由运行时注入
+# offload 回调）；本档只声明策略 + 阈值。
+#
+# 独立性：只开关自己（session.strategy=idle-evict）；机制与 F6 共享、策略各自独立。
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  extra_args: []
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+session:                          # 缝E
+  strategy: idle-evict
+  idle_timeout_s: 60             # session idle 60s → offload KV 到 CPU
+  options: {}
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

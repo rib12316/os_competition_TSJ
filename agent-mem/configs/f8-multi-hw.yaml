@@ -1,0 +1,27 @@
+# F8 · 多硬件对照（缝B：换引擎后端）。
+# 同一 agent loop + 同一 yaml，backend 在 vllm(CPU) vs vllm-ascend(NPU) 各跑一遍对比，
+# 命中赛题「适配不同模型规模或不同推理框架」20 分项。两套引擎本仓都已装好，几乎零成本。
+#
+# 用法：先以本档（vllm-ascend）跑一遍，再把 backend 改 vllm（或用 --engine 覆盖）跑一遍，
+# compare 出对照报告。dev/smoke 可把 model 换成 Qwen3-0.6B、device 用 cpu。
+#
+# 独立性：只开关自己（backend 字段）。
+engine:
+  backend: vllm-ascend           # F8：NPU 档（对照档改 vllm 跑 CPU）
+  model: Qwen2.5-7B-Instruct
+  extra_args: []
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

@@ -25,6 +25,7 @@ third_party/*
 # ===== 实验日志原始数据（仅保留 README/结构说明） =====
 # 命名规范见 dev-guide/log-naming-convention.md
 logs/*
+logs-*/
 !logs/README.md
 !logs/.gitkeep
 

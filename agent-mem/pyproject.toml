@@ -10,7 +10,12 @@ readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = { text = "Apache-2.0" }
 authors = [{ name = "os_competition_TSJ" }]
-dependencies = []
+# 运行时硬依赖（agent loop / 引擎封装 / 配置加载都需要；tau_bench 等重依赖仍按需装）
+dependencies = [
+  "pyyaml",
+  "httpx",
+  "openai",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -36,3 +41,11 @@ ignore = ["E501"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[tool.coverage.run]
+source = ["src/agent_mem"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

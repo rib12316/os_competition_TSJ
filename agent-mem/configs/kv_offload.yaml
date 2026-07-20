@@ -1,0 +1,24 @@
+# kv_offload: prefix cache + vLLM 原生 KV CPU offloading（F4 的 native 变体，对照 LMCache 档）
+# vLLM 原生 KV offloading：GPU 满时自动将冷 KV cache 换出到 CPU，需要时再换入。
+# 与 f4-lmcache.yaml（走 LMCache-Ascend 插件）是同缝C的两种机制，可对照。
+engine:
+  backend: vllm
+  model: Qwen2.5-7B-Instruct
+  extra_args:
+    - "--kv-offloading-size 8"           # 8 GiB KV offloading buffer on CPU
+    - "--kv-offloading-backend native"    # vLLM 原生 CPU offloading
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

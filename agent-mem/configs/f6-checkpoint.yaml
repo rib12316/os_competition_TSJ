@@ -1,0 +1,30 @@
+# F6 · KV checkpoint / 恢复（缝E：进程退出前落盘，重启冷启动按 session_id 反向加载）。
+# 与 F5 共机制（offload connector），但功能独立：F5 是运行时淘汰，F6 是跨重启持久化。
+# 机制由运行时注入 save/load 回调（connector 的 save_kv_layer）。
+#
+# 独立性：只开关自己（session.strategy=checkpoint）。
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  extra_args: []
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+session:                          # 缝E
+  strategy: checkpoint
+  idle_timeout_s: 60
+  options:
+    checkpoint_dir: ./kv-checkpoints   # KV 落盘目录（由机制回调消费）
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

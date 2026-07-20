@@ -1,12 +1,13 @@
-# optimized: prefix cache + FP8 KV + LMCache（三档递进最高档）
+# optimized: prefix cache + int8 KV + LMCache（三档递进最高档）
+# v2：FP8 在 910B 作废（无 FP8 单元）→ int8（Ascend 上 KV 量化的唯一支持格式）。
 engine:
   backend: vllm
   model: Qwen2.5-7B-Instruct
   extra_args:
-    - "--kv-cache-dtype fp8"      # M1: KV cache 显存砍半
+    - "--kv-cache-dtype int8"     # F1: KV cache 显存砍半（在线动态量化，无需校准）
   lmcache:
-    enabled: true                 # M4: GPU↔CPU↔SSD 三级
-    config_file: agent_mem/kv/lmcache-local.yaml
+    enabled: true                 # F4: GPU↔CPU↔SSD 三级
+    config_file: local            # 打包模板 src/agent_mem/kv/lmcache_local.yaml
 
 benchmark:
   suite: tau-bench
