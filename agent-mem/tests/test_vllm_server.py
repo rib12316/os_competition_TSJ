@@ -1,14 +1,26 @@
-"""vLLM serve 封装测试（build_serve_args 纯函数，无需设备）。"""
+"""vLLM serve 封装测试（build_serve_args / render_kv_transfer_arg 纯函数，无需设备）。"""
 
 from __future__ import annotations
 
-from agent_mem.config import AppConfig, BenchmarkConfig, EngineConfig, MetricsConfig
-from agent_mem.server.vllm_server import _root_url, build_serve_args
+import json
+
+from agent_mem.config import (
+    AppConfig,
+    BenchmarkConfig,
+    EngineConfig,
+    KVTransferConfig,
+    MetricsConfig,
+)
+from agent_mem.server.vllm_server import (
+    _root_url,
+    build_serve_args,
+    render_kv_transfer_arg,
+)
 
 
-def _cfg(extra_args: list[str], model: str = "Qwen2.5-7B-Instruct") -> AppConfig:
+def _cfg(extra_args: list[str] | None = None, model: str = "Qwen2.5-7B-Instruct") -> AppConfig:
     return AppConfig(
-        engine=EngineConfig(backend="vllm", model=model, extra_args=extra_args),
+        engine=EngineConfig(backend="vllm", model=model, extra_args=list(extra_args or [])),
         benchmark=BenchmarkConfig(),
         metrics=MetricsConfig(),
         config_name="x",
@@ -67,3 +79,49 @@ def test_args_npu_does_not_emit_device():
 def test_root_url_strips_v1():
     assert _root_url("http://127.0.0.1:8000/v1") == "http://127.0.0.1:8000"
     assert _root_url("http://127.0.0.1:8000") == "http://127.0.0.1:8000"
+
+
+# ---- 缝C：render_kv_transfer_arg ----
+
+
+def test_render_kv_transfer_empty_connector_returns_empty():
+    assert render_kv_transfer_arg(KVTransferConfig()) == []
+    assert render_kv_transfer_arg(KVTransferConfig(connector="")) == []
+
+
+def test_render_kv_transfer_produces_json_flag():
+    kvt = KVTransferConfig(connector="LMCacheAscendConnector", role="kv_both")
+    args = render_kv_transfer_arg(kvt)
+    assert len(args) == 2
+    assert args[0] == "--kv-transfer-config"
+    cfg = json.loads(args[1])
+    assert cfg["kv_connector"] == "LMCacheAscendConnector"
+    assert cfg["kv_role"] == "kv_both"
+
+
+def test_render_kv_transfer_with_extra_passthrough():
+    kvt = KVTransferConfig(
+        connector="LMCacheAscendConnector",
+        role="kv_both",
+        extra={"host": "127.0.0.1", "port": 1234},
+    )
+    args = render_kv_transfer_arg(kvt)
+    cfg = json.loads(args[1])
+    assert cfg["connector"] == {"host": "127.0.0.1", "port": 1234}
+
+
+def test_build_serve_args_excludes_kv_transfer_when_empty():
+    args = build_serve_args(_cfg(), model_path="models/Qwen3-0.6B")
+    assert "--kv-transfer-config" not in args
+
+
+def test_build_serve_args_includes_kv_transfer_when_set():
+    cfg = _cfg()
+    cfg.engine.kv_transfer = KVTransferConfig(
+        connector="LMCacheAscendConnector", role="kv_both",
+    )
+    args = build_serve_args(cfg, model_path="models/Qwen3-0.6B")
+    assert "--kv-transfer-config" in args
+    idx = args.index("--kv-transfer-config")
+    transfer = json.loads(args[idx + 1])
+    assert transfer["kv_connector"] == "LMCacheAscendConnector"

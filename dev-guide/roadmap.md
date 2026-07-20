@@ -32,7 +32,7 @@ F8 ＞ 补缝D接口(已done) ＞ F2 ＞ F3 ＞ F4 ＞ F1(验) ＞ F5 ＞ F6 ＞
 | **F8** 多硬件对照 | B | P1 | `backend: vllm` vs `vllm-ascend` | ✅ 两套引擎已装 |
 | **F2** Prompt 压缩 | D | P2 | LLMLingua 包一层 `transform_messages` | ✅ 纯 agent 层 |
 | **F3** 工具 lazy-load | D | P2 | 工具结果存 store + 引用 id（`intercept_tool_result`） | ✅ 纯 agent 层 |
-| **F4** LMCache 分层 | C | P1 | `--enable-lmcache` + yaml | ✅ 官方插件 |
+| **F4** LMCache 分层 | C | P1 | `--kv-transfer-config` + LMCacheAscendConnector | ✅ config 就绪 |
 | **F1** int8 KV | A | P1 | `--kv-cache-dtype int8` | ⚠️ 待真机验证 |
 | **F5** idle eviction | E | P3 | `simple_kv_offload` + idle 策略 | ✅ 机制现成 |
 | **F6** checkpoint/恢复 | E | P3 | `save_kv_layer` 落盘 + 重启加载 | ✅ 与 F5 共机制 |
@@ -52,7 +52,7 @@ F8 ＞ 补缝D接口(已done) ＞ F2 ＞ F3 ＞ F4 ＞ F1(验) ＞ F5 ＞ F6 ＞
 - [ ] **F8 多硬件对照**（1 天，命中「适配不同框架/硬件」20 分）
 - [ ] **F2 Prompt 压缩**（2–3 天，LLMLingua + 成功率 ablation）
 - [ ] **F3 工具 lazy-load**（3–4 天，引用语法 + few-shot 引导 fetch）
-- [ ] **F4 LMCache 分层**（1–2 天，GPU↔CPU↔SSD）
+- [x] **F4 LMCache 分层**（config/yaml/args 翻译 ✅；NPU 开时装 lmcache_ascend + 真机验证）
 - [ ] **F1 int8 KV**（验证 0.5 天 + benchmark 1 天，⚠️ 尽早上 NPU 探针）
 
 ## 阶段 3 — 深化（按时间余量）

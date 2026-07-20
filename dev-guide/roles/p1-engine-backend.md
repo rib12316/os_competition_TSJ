@@ -32,10 +32,11 @@
 
 ### F4 — LMCache 分层（缝C）
 
-- **做什么**：`--enable-lmcache` + 一份 `LMCACHE_CONFIG_FILE` yaml，NPU↔CPU↔Disk 三级。命中"分层内存与异构存储"。
-- **落点**：`kv/`（`lmcache.yaml`）；本仓已带 `lmcache_integration/`。
-- **开源借鉴**：[LMCache-Ascend](https://github.com/LMCache/LMCache-Ascend)（社区插件，2025-11 官方支持 NPU）。
-- **工作量**：配置 + 调试 1–2 天。
+- **做什么**：`--kv-transfer-config '{"kv_connector":"LMCacheAscendConnector","kv_role":"kv_both"}'` 激活 vllm-ascend 内置 connector，NPU↔CPU↔Disk 三级 KV cache。
+- **落点**：`configs/f4-lmcache.yaml`（kv_transfer.connector）→ `vllm_server.py`（render_kv_transfer_arg）→ `--kv-transfer-config`。
+- **依赖**：NPU 开时需编译安装 `lmcache_ascend` 包（步骤见 `docs/F4-lmcache-ascend.md`）。
+- **现状**：config/yaml/args 翻译/单测 已完成；待 NPU 开时装包 + 真机烟测。
+- **工作量**：代码层 2-3 小时 ✅；NPU 安装 0.5 天 ⚠️。
 
 ### F7 — 分支 KV 共享（测量版）（缝F）
 

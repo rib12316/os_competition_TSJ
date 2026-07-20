@@ -1,12 +1,12 @@
 """缝C · 通用 V1 KV connector 抽象（``--kv-connector`` + ``--kv-transfer-config``）。
 
-LMCache（F4）走 ``--enable-lmcache`` 专用 flag（见 :mod:`agent_mem.kv.lmcache`）；
-本模块覆盖**其它** V1 KV connector——即 vLLM V1 connector 注册表里的后端，如：
+F4 LMCache Ascend 走 ``--kv-transfer-config`` 激活 ``LMCacheAscendConnector``
+（见 ``docs/F4-lmcache-ascend.md``）。本模块覆盖其它 V1 KV connector：
 
 - ``pykvconnector``（``SimpleCPUOffloadConnector``）—— **F5/F6 借用的机制**
   （idle eviction / checkpoint 的 NPU↔CPU KV 搬运，策略见
   :mod:`agent_mem.scheduler.strategies`）；
-- ``MultiConnector`` / ``P2pNccl`` / lmcache_connector 等。
+- ``MultiConnector`` / ``P2pNccl`` 等。
 
 把一个 :class:`KVConnectorConfig` 渲染成 vLLM CLI 参数（纯函数，可单测）。真机时
 ``extra_args`` 自动带上这些 flag。

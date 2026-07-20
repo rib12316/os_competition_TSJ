@@ -22,8 +22,27 @@ from pathlib import Path
 
 import httpx
 
-from agent_mem.config import AppConfig, load_config
-from agent_mem.kv import lmcache_env, lmcache_serve_flag
+import json
+
+from agent_mem.config import AppConfig, KVTransferConfig, load_config
+
+
+def render_kv_transfer_arg(kvt: KVTransferConfig) -> list[str]:
+    """把 :class:`KVTransferConfig` 渲染成 ``--kv-transfer-config`` CLI 参数。
+
+    connector 为空字符串 → 空列表（不启用 KV transfer）。
+    vllm-ascend 的内置 connector（如 ``LMCacheAscendConnector``）直接按名激活；
+    无需传模块路径——factory 已注册。
+    """
+    if not kvt.connector:
+        return []
+    cfg: dict[str, object] = {
+        "kv_connector": kvt.connector,
+        "kv_role": kvt.role,
+    }
+    if kvt.extra:
+        cfg["connector"] = kvt.extra
+    return ["--kv-transfer-config", json.dumps(cfg, separators=(",", ":"))]
 
 
 def build_serve_args(
@@ -52,8 +71,8 @@ def build_serve_args(
     ]
     for a in cfg.engine.extra_args:
         args.extend(shlex.split(a))
-    # 缝C（F4）：lmcache.enabled → 结构化附加 --enable-lmcache（config_file 走环境变量）
-    args += lmcache_serve_flag(cfg.engine.lmcache)
+    # 缝C（F4）：kv_transfer.connector 非空 → 附加 --kv-transfer-config JSON
+    args += render_kv_transfer_arg(cfg.engine.kv_transfer)
     # NPU 由 vllm-ascend 插件自动识别——**不要**传 --device（vllm api_server 不认 npu/auto）。
     # 仅当显式指定 cpu/cuda/tpu/xpu（如 CPU 冒烟）时才传 --device。
     if device and device in {"cpu", "cuda", "tpu", "xpu"}:
@@ -67,12 +86,12 @@ def build_serve_args(
 
 
 def engine_env(cfg: AppConfig) -> dict[str, str]:
-    """引擎子进程需要的额外环境变量（缝C：LMCACHE_CONFIG_FILE 等）。
+    """引擎子进程需要的额外环境变量。
 
     返回**仅额外项**；:func:`start_engine` 会与 ``os.environ`` 合并后传给子进程。
+    缝C（F4 LMCache）—— connector 经 ``--kv-transfer-config`` 激活，无需环境变量。
     """
-    env = dict(lmcache_env(cfg))
-    return env
+    return {}
 
 
 def _root_url(base_url: str) -> str:
@@ -99,7 +118,6 @@ def start_engine(
     )
     cmd = [python_exe or sys.executable, "-m", "vllm.entrypoints.openai.api_server", *args]
     out_fh = open(log_file, "wb") if log_file else subprocess.DEVNULL  # noqa: SIM115
-    # 缝C：注入 LMCache 等环境变量（与 os.environ 合并）
     proc = subprocess.Popen(cmd, stdout=out_fh, stderr=subprocess.STDOUT,
                             env={**os.environ, **engine_env(cfg)})
     base_url = f"http://127.0.0.1:{port}/v1"
