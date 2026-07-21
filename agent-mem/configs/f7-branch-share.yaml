@@ -1,0 +1,21 @@
+# F7 · 分支 KV 共享 — 对照 B：共享前缀（分支推理）
+# N 个请求共享同一前缀 → APC 自动 CoW 复用 KV block
+# 与 f7-branch-indep 对照，差值 = APC 的分支共享收益。
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 1
+  seed: 42
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

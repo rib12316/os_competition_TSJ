@@ -42,7 +42,8 @@
 - **做什么**：构造分支 workload（self-consistency / tree-of-thought），**测量 vLLM APC 的隐式 block 级 CoW 共享**，而非造新 fork API（vLLM 无公开 fork API，[tree-attention #3960](https://github.com/vllm-project/vllm/issues/3960)）。
 - **落点**：`bench/workloads/`（自带 ToT driver，走 `Runner` Protocol）。
 - **开源借鉴**：[Tree of Thoughts](https://github.com/princeton-nlp/tree-of-thought-llm)；vLLM [Prefix Caching](https://docs.vllm.ai/en/stable/design/prefix_caching/)。
-- **工作量**：1 周+ · 难度高（自带 driver + 构造对照）。时间余量不足可只做文档叙事。
+- **现状**：✅ BranchingKVShareRunner + f7-branch-indep/share configs 已就绪。待 NPU 开跑对照。
+- **工作量**：代码层 2-3h ✅。NPU 对照 benchmark 待做。
 
 ### F9 — openEuler / Ascend 部署（缝G）
 

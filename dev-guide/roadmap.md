@@ -59,7 +59,7 @@ F8 ＞ 补缝D接口(已done) ＞ F2 ＞ F3 ＞ F4 ＞ F1(验) ＞ F5 ＞ F6 ＞
 
 - [ ] **F5 session idle eviction**（2–3 天，复用 simple_kv_offload）
 - [ ] **F6 KV checkpoint/恢复**（2–4 天，跨重启持久化）
-- [ ] **F7 分支共享测量版**（1 周+，自带 ToT driver）
+- [x] **F7 分支 KV 共享**（BranchingKVShareRunner + configs 已就绪，待 NPU 开跑对照。见 docs/F7-branch-kv-share.md）
 - [ ] **F9 openEuler/Ascend 部署**（1 天，国产 OS 硬性要求，**不要漏做**）
 
 ## 真机前提（NPU 启停由用户控制）

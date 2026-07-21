@@ -1,0 +1,21 @@
+# F7 · 分支 KV 共享 — 对照 A：独立前缀（无共享）
+# N 个请求前缀各不相同 → APC 无法复用 KV block
+# 作为分支共享的 baseline。
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 1
+  seed: 42
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft
