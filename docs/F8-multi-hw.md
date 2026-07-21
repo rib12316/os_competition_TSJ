@@ -48,6 +48,11 @@
 | mem_peak | 系统 RAM | NPU HBM | 不同内存类型 |
 | 成功率 | 相同 workload | 相同 workload | 应一致 |
 
-## 状态
+## 状态与已知问题
 
-config/yaml 已就绪，待 NPU 空闲时跑两档 benchmark 出对照报告。
+2026-07-21：
+
+- **架构层** ✅：config 白名单（vllm / vllm-ascend / sglang）+ backend 字段切换已实现
+- **NPU 对照** ⏳：NPU 关，待开启后跑 f8-multi-hw 档与 baseline 对照
+- **CPU 对照** ❌：vllm api_server 不支持 `--device` flag，无 CPU 模式。`vllm_server.py` 中的 `--device` 逻辑已移除（2026-07-21）
+- **结论**：F8 的真实交付物是「架构支持多后端切换」叙事，而非实际的 CPU vs NPU benchmark
