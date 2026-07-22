@@ -48,8 +48,10 @@ def test_load_optimized_enables_lmcache_and_int8():
     cfg = load_config(CONFIGS_DIR / "optimized.yaml")
     assert cfg.engine.lmcache.enabled is True
     assert cfg.engine.lmcache.config_file is not None
-    # v2：FP8 在 910B 作废 → int8
-    assert any("kv-cache-dtype int8" in a for a in cfg.engine.extra_args)
+    # C8 int8 KV（Ascend-only）：--quantization ascend（非 no-op 的 --kv-cache-dtype int8）
+    assert cfg.engine.backend == "vllm-ascend"
+    assert any("quantization ascend" in a for a in cfg.engine.extra_args)
+    assert not any("kv-cache-dtype" in a for a in cfg.engine.extra_args)
     assert not any("fp8" in a for a in cfg.engine.extra_args)
 
 
@@ -59,7 +61,9 @@ def test_load_optimized_enables_lmcache_and_int8():
 def test_load_f1_int8():
     cfg = load_config(CONFIGS_DIR / "f1-int8.yaml")
     assert cfg.engine.backend == "vllm-ascend"
-    assert any("kv-cache-dtype int8" in a for a in cfg.engine.extra_args)
+    # 真 C8 路径：--quantization ascend（不再用 no-op 的 --kv-cache-dtype int8）
+    assert any("quantization ascend" in a for a in cfg.engine.extra_args)
+    assert not any("kv-cache-dtype" in a for a in cfg.engine.extra_args)
 
 
 def test_load_f2_compress_toggles_middleware():
