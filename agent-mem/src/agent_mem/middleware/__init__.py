@@ -28,6 +28,7 @@ from agent_mem.middleware.base import (
     MiddlewareContext,
     MiddlewareStack,
 )
+from agent_mem.middleware.compress import CompressMiddleware
 
 __all__ = [
     "BaseMiddleware",
@@ -35,6 +36,7 @@ __all__ = [
     "MiddlewareContext",
     "MiddlewareStack",
     "NoOpMiddleware",
+    "CompressMiddleware",
     "registry",
     "register",
     "unregister",
@@ -50,9 +52,10 @@ class NoOpMiddleware(BaseMiddleware):
 
 
 # ---- 注册表：名字 → 中间件类（F2/F3 实现后在此注册）----
-# 默认只放 noop；feature 分支 merge 时补 "compress" / "lazyload"。
+# F2 Prompt 压缩已注册；F3 lazy-load 待补 "lazyload"。
 _REGISTRY: dict[str, type[BaseMiddleware]] = {
     "noop": NoOpMiddleware,
+    "compress": CompressMiddleware,
 }
 
 

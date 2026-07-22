@@ -70,6 +70,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # qwen-agent 真跑参数
     p.add_argument("--max-tasks", type=int, default=None, help="限制真跑任务数（qwen-agent）")
     p.add_argument("--max-steps", type=int, default=30, help="单任务最大 tool-calling 步数")
+    p.add_argument("--priority", type=int, default=0, help="agent 调度优先级（0=最高，值越大越先被驱逐，F5）")
     p.add_argument("--api-key", default="stub", help="引擎 API key（vLLM 不校验，占位即可）")
     # user-simulator 扩充选项（默认走本地引擎；给 --user-api-base 切外部 OpenAI 兼容 API）
     p.add_argument(
@@ -149,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
             user_provider=args.user_provider,
             user_api_base=args.user_api_base,
             user_api_key=args.user_api_key,
+            priority=args.priority,
             middlewares=mw_stack.middlewares,  # 缝D：cfg.middleware 激活的中间件
         )
     else:

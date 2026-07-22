@@ -177,6 +177,7 @@ def run_task(
     user_api_key: str | None = None,
     api_key: str = "stub",
     max_steps: int = 30,
+    priority: int = 0,
     middlewares: list | None = None,
 ) -> TaskRunResult:
     """真路径：用本地引擎跑 agent，返回带真 reward/latency/ttft 的结果。
@@ -185,6 +186,7 @@ def run_task(
     **user-simulator 侧**：走 litellm，端点由 :func:`_resolve_user_sim` 决定
     （默认本地引擎；可通过 ``user_api_base`` 切外部 OpenAI 兼容 API）。
 
+    ``priority``：vLLM 调度优先级（0=最高，数值越大越先被踢，见 F5）。
     ``middlewares``：缝D 中间件链（F2/F3），透传给 :class:`TauBenchAgent`。
     """
     import os
@@ -213,7 +215,7 @@ def run_task(
         task_index=task_id,
     )
     client = OpenAI(base_url=engine_url, api_key=api_key)  # agent 侧：始终本地引擎
-    agent = TauBenchAgent(client, model, middlewares=middlewares)
+    agent = TauBenchAgent(client, model, priority=priority, middlewares=middlewares)
 
     t0 = time.monotonic()
     try:

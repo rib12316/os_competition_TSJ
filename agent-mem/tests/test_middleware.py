@@ -13,6 +13,7 @@ import pytest
 from agent_mem.agent.react import run_react
 from agent_mem.middleware import (
     BaseMiddleware,
+    CompressMiddleware,
     MiddlewareContext,
     MiddlewareStack,
     NoOpMiddleware,
@@ -131,6 +132,156 @@ def test_tool_result_truncator_passes_short_through():
 def test_tool_result_truncator_rejects_bad_max():
     with pytest.raises(ValueError):
         ToolResultTruncator(max_chars=0)
+
+
+# ---- F2 CompressMiddleware（fake compressor，不依赖 llmlingua/真模型）----
+
+
+class _FakeCompressor:
+    """记录调用、返回可断言的压缩结果（替身 llmlingua.PromptCompressor）。"""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def compress_prompt(self, prompt_list, **kw):
+        self.calls.append(kw)
+        joined = (
+            " ".join(prompt_list) if isinstance(prompt_list, (list, tuple)) else str(prompt_list)
+        )
+        return {
+            "compressed_prompt": f"CMP({len(joined)})",
+            "origin_tokens": len(joined),
+            "compressed_tokens": 10,
+            "ratio": "10x",
+        }
+
+
+def _compress_mw(**kw) -> CompressMiddleware:
+    """构造一个绑了 fake 压缩器的 CompressMiddleware（绕过懒加载/真模型）。"""
+    mw = CompressMiddleware(**kw)
+    mw._compressor = _FakeCompressor()
+    return mw
+
+
+def _assert_no_orphan_tool(messages: list[dict]) -> None:
+    """不变量：每条 role=tool 消息，前面必有 assistant 的 tool_calls 含其 tool_call_id。"""
+    seen: set[str] = set()
+    for m in messages:
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                if isinstance(tc, dict) and tc.get("id"):
+                    seen.add(tc["id"])
+        elif m.get("role") == "tool":
+            assert m.get("tool_call_id") in seen, (
+                f"孤立 tool 消息 tool_call_id={m.get('tool_call_id')!r} 无对应 assistant tool_call"
+            )
+
+
+def test_compress_bad_method_raises():
+    with pytest.raises(ValueError):
+        CompressMiddleware(method="nope")
+
+
+def test_compress_bad_rate_raises():
+    with pytest.raises(ValueError):
+        CompressMiddleware(rate=0)
+    with pytest.raises(ValueError):
+        CompressMiddleware(rate=1.5)
+
+
+def test_compress_gate_skips_short_history():
+    """冷历史 < trigger_tokens：原样放行，压缩器不调用。"""
+    mw = _compress_mw(trigger_tokens=100_000)  # 永不触发
+    msgs = [{"role": "system", "content": "p"}, {"role": "user", "content": "hi"}]
+    out = mw.transform_messages(msgs, MiddlewareContext("s"))
+    assert out == msgs
+    assert mw._compressor.calls == []
+
+
+def test_compress_skips_when_history_shorter_than_keep_hot():
+    """非 system 消息数 ≤ keep_hot：全留。"""
+    mw = _compress_mw(keep_hot=10, trigger_tokens=1)
+    msgs = [{"role": "user", "content": "x" * 1000}, {"role": "assistant", "content": "y"}]
+    out = mw.transform_messages(msgs, MiddlewareContext("s"))
+    assert out == msgs
+    assert mw._compressor.calls == []
+
+
+def test_compress_compresses_cold_history_and_keeps_hot():
+    mw = _compress_mw(keep_hot=2, trigger_tokens=1)  # 默认 method=longllmlingua, rate=0.5
+    msgs = [
+        {"role": "system", "content": "policy"},
+        {"role": "user", "content": "do task " * 200},
+        {"role": "assistant", "content": "thinking " * 200},
+        {"role": "user", "content": "more " * 200},
+        {"role": "user", "content": "latest question"},
+        {"role": "assistant", "content": "final"},
+    ]
+    out = mw.transform_messages(msgs, MiddlewareContext("s"))
+    # system 原样
+    assert out[0] == {"role": "system", "content": "policy"}
+    # 紧跟一条压缩历史
+    assert out[1]["role"] == "system"
+    assert out[1]["content"].startswith("[compressed history]")
+    # 热尾原样保留（最后 2 条）
+    assert out[-2:] == [
+        {"role": "user", "content": "latest question"},
+        {"role": "assistant", "content": "final"},
+    ]
+    # 压缩器以 question-aware 调用，question = 最近一条 user
+    assert mw._compressor.calls[0]["question"] == "latest question"
+    assert mw._compressor.calls[0]["rate"] == 0.5
+    assert mw._compressor.calls[0]["rank_method"] == "longllmlingua"
+    _assert_no_orphan_tool(out)
+
+
+def test_compress_snaps_hot_boundary_to_tool_group():
+    """热尾从 tool 消息开始时，snap 把 caller assistant 一起拉进热尾，避免孤立。"""
+    mw = _compress_mw(keep_hot=1, trigger_tokens=1)
+    msgs = [
+        {"role": "system", "content": "p"},
+        {"role": "user", "content": "q" * 400},  # cold
+        {"role": "assistant", "content": None,
+         "tool_calls": [{"id": "c1", "type": "function",
+                         "function": {"name": "search", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "r" * 400},  # keep_hot=1 时本是 hot[0]
+    ]
+    out = mw.transform_messages(msgs, MiddlewareContext("s"))
+    assert mw._compressor.calls, "应触发压缩（cold=user 一块）"
+    # assistant(tool_calls)+tool 对完整保留在热尾
+    assert any(m.get("role") == "assistant" and m.get("tool_calls") for m in out)
+    assert any(m.get("role") == "tool" and m.get("tool_call_id") == "c1" for m in out)
+    _assert_no_orphan_tool(out)
+
+
+def test_compress_never_produces_orphan_tool():
+    """混合轨迹（热尾含完整 tool 组）压缩后无孤立 tool。"""
+    mw = _compress_mw(keep_hot=2, trigger_tokens=1)
+    msgs = [
+        {"role": "system", "content": "p"},
+        {"role": "user", "content": "x" * 500},
+        {"role": "assistant", "content": "t" * 500},
+        {"role": "user", "content": "cold q " * 100},
+        {"role": "assistant", "content": "plan",
+         "tool_calls": [{"id": "c1", "type": "function",
+                         "function": {"name": "a", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "r" * 200},
+        {"role": "assistant", "content": "done"},
+    ]
+    out = mw.transform_messages(msgs, MiddlewareContext("s"))
+    _assert_no_orphan_tool(out)
+
+
+def test_compress_registered_via_build_middlewares():
+    """yaml active:[compress] 能构造 CompressMiddleware 并透传 options（不需真模型）。"""
+    stack = build_middlewares(
+        ["compress"], options={"compress": {"rate": 0.3, "method": "llmlingua2"}}
+    )
+    assert stack.names == ["compress"]
+    mw = stack.middlewares[0]
+    assert isinstance(mw, CompressMiddleware)
+    assert mw.rate == 0.3
+    assert mw.method == "llmlingua2"
 
 
 # ---- run_react 接线 ----

@@ -28,6 +28,7 @@ class QwenAgentRunner(Runner):
         api_key: str = "stub",
         max_steps: int = 30,
         max_tasks: int | None = None,
+        priority: int = 0,
         middlewares: list | None = None,
     ):
         self.engine_url = engine_url
@@ -39,6 +40,7 @@ class QwenAgentRunner(Runner):
         self.api_key = api_key
         self.max_steps = max_steps
         self.max_tasks = max_tasks
+        self.priority = priority
         # 缝D：中间件链（由 CLI 从 cfg.middleware 构造后注入；None=identity）
         self.middlewares = middlewares
 
@@ -64,6 +66,7 @@ class QwenAgentRunner(Runner):
                 user_api_key=self.user_api_key,
                 api_key=self.api_key,
                 max_steps=self.max_steps,
+                priority=self.priority,
                 middlewares=self.middlewares,
             )
             for t in tasks

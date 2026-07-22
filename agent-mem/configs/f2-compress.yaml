@@ -3,8 +3,9 @@
 # 纯 agent 层，与硬件无关。
 #
 # ⚠️ 红线：压过头伤成功率，必须配 ablation，成功率下降 ≤ 2pp。
-# ⚠️ TODO(F2)：实现 CompressMiddleware 并 register("compress", ...) 后此档才生效。
-#    未注册时 load_config 仍通过（名字解析在 middleware 包，运行时才校验）。
+# ✅ 已实现：CompressMiddleware 已 register("compress")，此档开箱可用。
+#    llmlingua 为可选依赖：pip install llmlingua（或 agent-mem[compress]）。
+#    未安装时仅 import 包/跑单测不受影响（惰性 import）。
 #
 # 独立性：只开关自己（middleware.active=[compress]）。
 engine:
@@ -19,10 +20,21 @@ benchmark:
   seed: 42
 
 middleware:                       # 缝D
-  active: [compress]             # TODO(F2): register 后激活
+  active: [compress]             # 已注册，开箱激活
   options:
     compress:
-      ratio: 0.5                 # 目标压缩比（token 收益 vs 成功率 trade-off）
+      # —— 方案 A：单一方法 + 触发门 ——
+      method: longllmlingua      # llmlingua | longllmlingua | llmlingua2（ablation 可切）
+      rate: 0.4                  # 保留比例（0.4=保留 40%≈2.5× 压缩）
+      trigger_tokens: 4000       # 冷历史 < 此值不压（短上下文无 lost-in-the-middle，省延迟）
+      keep_hot: 6                # 热尾保留条数（自动 snap 到完整 tool_call→tool 组）
+      device: cpu                # 压缩器小模型放 CPU，NPU 让给主 LLM
+      model_name: null           # null=PromptCompressor 默认模型；可填本地路径避免现下
+      # —— LongLLMLingua 专属（method=longllmlingua 才用）——
+      condition_in_question: after_condition   # question-aware 打分
+      dynamic_context_compression_ratio: 0.3   # 分段动态压缩率（冗余段压狠）
+      condition_compare: true                  # 邻近冗余块去重
+      reorder_context: none                    # agent 轨迹默认保时序；ablation 可试 sort
 
 metrics:
   - e2e_latency_p50

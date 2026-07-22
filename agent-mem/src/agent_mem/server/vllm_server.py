@@ -58,6 +58,8 @@ def build_serve_args(
     # 仅当显式指定 cpu/cuda/tpu/xpu（如 CPU 冒烟）时才传 --device。
     if device and device in {"cpu", "cuda", "tpu", "xpu"}:
         args += ["--device", device]
+    # priority 调度：HBM 满时优先踢低优先级请求（F5 动态资源回收基础机制）
+    args += ["--scheduling-policy", "priority"]
     if tool_call_parser:
         # 启用工具调用解析（Qwen 等模型真机可能需要，如 --tool-call-parser hermes）
         args += ["--enable-auto-tool-choice", "--tool-call-parser", tool_call_parser]

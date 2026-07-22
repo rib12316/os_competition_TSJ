@@ -58,17 +58,20 @@ class TauBenchAgent:
         temperature: float = 0.0,
         max_tokens: int = 512,
         enable_thinking: bool = False,
+        priority: int = 0,
         middlewares: MiddlewareStack | Sequence[Middleware] | None = None,
     ):
         self.client = client
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
-        # Qwen3 默认开 thinking（<think>…</think>），benchmark 关掉以加速 + 省 token；
-        # 经 chat_template_kwargs 透传给 vLLM 的 chat template。
-        self.extra_body = (
-            None if enable_thinking else {"chat_template_kwargs": {"enable_thinking": False}}
-        )
+        self.priority = priority
+        # extra_body：关闭 thinking + 透传 priority 给 vLLM 调度器
+        body: dict[str, Any] = {}
+        if not enable_thinking:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        body["priority"] = priority
+        self.extra_body = body
         # 缝D：上下文中间件（F2 压缩 / F3 lazy-load）。None → 空 stack = identity。
         self.stack: MiddlewareStack = _as_stack(middlewares)
 
