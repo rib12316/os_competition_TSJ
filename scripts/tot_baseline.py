@@ -4,6 +4,7 @@
 采集准确率、LLM 调用次数、墙钟时间、KV 命中率、mem_peak。
 """
 
+import os
 import json
 import sys
 import time
@@ -63,9 +64,13 @@ def run_baseline(
     n_branches: int = 2,
 ) -> list[RunMetrics]:
     """跑 baseline：Cogitator ToT + 引擎 + 采集指标"""
+    # Cogitator 的 OpenAILLM 不支持 base_url，通过环境变量指向本地引擎
+    os.environ["OPENAI_BASE_URL"] = engine_url
+    os.environ["OPENAI_API_KEY"] = "stub"
+
     from cogitator import TreeOfThoughts, OpenAILLM
 
-    llm = OpenAILLM(model=model, base_url=engine_url)
+    llm = OpenAILLM(model=model, api_key="stub")
     tot = TreeOfThoughts(llm, max_depth=max_depth, num_branches=n_branches)
 
     results: list[RunMetrics] = []
