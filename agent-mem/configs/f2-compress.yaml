@@ -29,12 +29,16 @@ middleware:                       # 缝D
       trigger_tokens: 4000       # 冷历史 < 此值不压（短上下文无 lost-in-the-middle，省延迟）
       keep_hot: 6                # 热尾保留条数（自动 snap 到完整 tool_call→tool 组）
       device: cpu                # 压缩器小模型放 CPU，NPU 让给主 LLM
-      model_name: null           # null=PromptCompressor 默认模型；可填本地路径避免现下
-      # —— LongLLMLingua 专属（method=longllmlingua 才用）——
-      condition_in_question: after_condition   # question-aware 打分
+      model_name: gpt2           # 小模型(开发/冒烟用)；生产可换 NousResearch/Llama-2-7b-hf 提质量
+      # —— 后端：隔离 venv 子进程（绕开主 venv transformers 5.x ↔ llmlingua 4.x 冲突）——
+      backend: subprocess        # subprocess(默认, 推荐) | inprocess(仅隔离 venv 自身跑时)
+      worker_venv: /data/os_competition_TSJ/.venv-compress/bin/python  # 隔离压缩 venv 的 python
+      worker_script: ""          # 空=用随包的 agent_mem/middleware/_compress_worker.py
+      # —— LongLLMLingua 专属（method=longllmlingua 才用；枚举值对齐 llmlingua 0.2.2）——
+      condition_in_question: after             # question-aware（0.2.2 认 none/before/after）
       dynamic_context_compression_ratio: 0.3   # 分段动态压缩率（冗余段压狠）
-      condition_compare: true                  # 邻近冗余块去重
-      reorder_context: none                    # agent 轨迹默认保时序；ablation 可试 sort
+      condition_compare: false                 # 0.2.2 下 True 会改 condition 值致分发失配；ablation 再试
+      reorder_context: original                # 保时序（0.2.2 认 original/two_stage）
 
 metrics:
   - e2e_latency_p50

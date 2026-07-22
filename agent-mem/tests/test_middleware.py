@@ -284,6 +284,27 @@ def test_compress_registered_via_build_middlewares():
     assert mw.method == "llmlingua2"
 
 
+def test_compress_bad_backend_raises():
+    with pytest.raises(ValueError):
+        CompressMiddleware(backend="nope")
+
+
+def test_compress_subprocess_backend_requires_worker_venv():
+    """backend=subprocess 但没配 worker_venv → 友好报错（不拉起进程）。"""
+    mw = CompressMiddleware(backend="subprocess", worker_venv="")
+    with pytest.raises(ValueError, match="worker_venv"):
+        mw._get_compressor()
+
+
+def test_compress_worker_script_defaults_to_packaged():
+    """worker_script 默认指向随包的 _compress_worker.py。"""
+    import os
+
+    mw = CompressMiddleware(backend="subprocess", worker_venv="/x/python")
+    assert mw.worker_script.endswith("_compress_worker.py")
+    assert os.path.exists(mw.worker_script)
+
+
 # ---- run_react 接线 ----
 
 

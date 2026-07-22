@@ -26,6 +26,9 @@ system 原样保留。命中赛题"降显存/降延迟"——更短的 prompt �
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 from typing import Any
 
 from agent_mem.middleware.base import BaseMiddleware, MiddlewareContext
@@ -35,6 +38,11 @@ _METHODS: set[str] = {"llmlingua", "longllmlingua", "llmlingua2"}
 
 # 粗略 chars→tokens 估计（英文 ~4 char/token；仅用于触发门判定，无需精确）
 _CHARS_PER_TOKEN = 4
+
+# 随包发布的压缩 worker 脚本（在隔离 venv 里跑，见 _SubprocessCompressor）
+_DEFAULT_WORKER = os.path.join(os.path.dirname(__file__), "_compress_worker.py")
+# worker 的 stderr 日志（诊断用；不参与协议，避免 PIPE 死锁）
+_WORKER_STDERR_LOG = "/tmp/llmlingua_worker.stderr.log"
 
 
 def _msg_to_text(m: dict) -> str:
@@ -55,6 +63,96 @@ def _msg_to_text(m: dict) -> str:
         if calls:
             content = (content + f" [called: {calls}]").strip()
     return content
+
+
+class _SubprocessCompressor:
+    """常驻子进程压缩器：用隔离 venv 的 python 跑 ``_compress_worker``。
+
+    背景：llmlingua 0.2.2 只兼容 transformers 4.x，而主 venv 的 transformers 被
+    vllm 锁在 5.x，无法同进程共存。解法——把真压缩放进一个独立 venv 的常驻子进程，
+    模型只加载一次、跨多次压缩复用；主 venv 一点不动。
+
+    duck-type 成 ``PromptCompressor``：暴露同签名的 ``compress_prompt(*args, **kw)``，
+    原样转发给 worker 里的真 ``PromptCompressor``，于是 ``_compress_cold`` 无需改。
+    """
+
+    def __init__(
+        self,
+        *,
+        venv_python: str,
+        worker_script: str,
+        model_name: str | None,
+        use_llmlingua2: bool,
+        device: str,
+    ) -> None:
+        self.venv_python = venv_python
+        self.worker_script = worker_script
+        self.model_name = model_name
+        self.use_llmlingua2 = use_llmlingua2
+        self.device = device
+        self._proc: subprocess.Popen | None = None
+        self._stderr_fh = None
+
+    def _ensure_started(self) -> None:
+        if self._proc is not None and self._proc.poll() is None:
+            return
+        # 清掉 PYTHONPATH，避免子进程误用主 venv 的 transformers
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        self._stderr_fh = open(_WORKER_STDERR_LOG, "a")
+        self._proc = subprocess.Popen(
+            [self.venv_python, self.worker_script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self._stderr_fh,
+            text=True,
+            env=env,
+        )
+        config = json.dumps(
+            {
+                "model_name": self.model_name,
+                "use_llmlingua2": self.use_llmlingua2,
+                "device": self.device,
+            }
+        )
+        assert self._proc.stdin is not None
+        self._proc.stdin.write(config + "\n")
+        self._proc.stdin.flush()
+        assert self._proc.stdout is not None
+        ready_line = self._proc.stdout.readline()
+        if not ready_line:
+            raise RuntimeError(
+                f"compress worker 启动无响应，见 {_WORKER_STDERR_LOG}"
+            )
+        ready = json.loads(ready_line)
+        if not ready.get("ready"):
+            raise RuntimeError(f"compress worker 启动失败: {ready}")
+
+    def compress_prompt(self, *args: Any, **kw: Any) -> dict:
+        """透明转发到 worker 的 PromptCompressor.compress_prompt。"""
+        self._ensure_started()
+        assert self._proc is not None and self._proc.stdin is not None
+        self._proc.stdin.write(json.dumps({"args": list(args), "kw": kw}) + "\n")
+        self._proc.stdin.flush()
+        resp_line = self._proc.stdout.readline()
+        if not resp_line:
+            raise RuntimeError(
+                f"compress worker 无响应（可能崩溃），见 {_WORKER_STDERR_LOG}"
+            )
+        resp = json.loads(resp_line)
+        if "error" in resp:
+            raise RuntimeError(f"compress worker 报错: {resp['error']}")
+        return resp["result"]
+
+    def close(self) -> None:
+        if self._proc and self._proc.poll() is None:
+            try:
+                assert self._proc.stdin is not None
+                self._proc.stdin.write("EXIT\n")
+                self._proc.stdin.flush()
+                self._proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001
+                self._proc.kill()
+        self._proc = None
 
 
 class CompressMiddleware(BaseMiddleware):
@@ -86,10 +184,13 @@ class CompressMiddleware(BaseMiddleware):
         keep_hot: int = 6,
         device: str = "cpu",
         model_name: str | None = None,
-        condition_in_question: str = "after_condition",
+        backend: str = "subprocess",
+        worker_venv: str = "",
+        worker_script: str = "",
+        condition_in_question: str = "after",
         dynamic_context_compression_ratio: float = 0.3,
-        condition_compare: bool = True,
-        reorder_context: str = "none",
+        condition_compare: bool = False,
+        reorder_context: str = "original",
         force_tokens: list[str] | None = None,
         history_role: str = "system",
     ) -> None:
@@ -108,6 +209,11 @@ class CompressMiddleware(BaseMiddleware):
         self.keep_hot = keep_hot
         self.device = device
         self.model_name = model_name
+        self.backend = backend
+        self.worker_venv = worker_venv
+        self.worker_script = worker_script or _DEFAULT_WORKER
+        if backend not in {"subprocess", "inprocess"}:
+            raise ValueError(f"backend 必须是 subprocess 或 inprocess，得到 {backend!r}")
         self.condition_in_question = condition_in_question
         self.dynamic_context_compression_ratio = dynamic_context_compression_ratio
         self.condition_compare = condition_compare
@@ -119,20 +225,39 @@ class CompressMiddleware(BaseMiddleware):
     # ---- 压缩器加载（惰性、缓存）----
 
     def _get_compressor(self) -> Any:
-        """懒加载 ``llmlingua.PromptCompressor``，缓存在实例上（只加载一次）。"""
+        """懒加载压缩器并缓存（只加载/拉起一次）。
+
+        - ``backend="subprocess"``（默认）：用隔离 venv 的常驻 worker，绕开主 venv 的
+          transformers 5.x 与 llmlingua 4.x 的冲突。需配 ``worker_venv``。
+        - ``backend="inprocess"``：直接在进程内 import llmlingua（仅当本环境 transformers
+          为 4.x 时可用，例如跑在隔离 venv 内自身）。
+        """
         if self._compressor is None:
-            try:
-                from llmlingua import PromptCompressor
-            except ImportError as e:  # pragma: no cover - 依赖缺失友好提示
-                raise ImportError(
-                    "F2 压缩需要可选依赖 llmlingua："
-                    "pip install 'agent-mem[compress]' 或 pip install llmlingua"
-                ) from e
-            self._compressor = PromptCompressor(
-                model_name=self.model_name,
-                use_llmlingua2=(self.method == "llmlingua2"),
-                device_map=self.device,
-            )
+            if self.backend == "subprocess":
+                if not self.worker_venv:
+                    raise ValueError(
+                        "backend=subprocess 需配置 worker_venv（隔离压缩 venv 的 python 路径，"
+                        "如 .venv-compress/bin/python）"
+                    )
+                self._compressor = _SubprocessCompressor(
+                    venv_python=self.worker_venv,
+                    worker_script=self.worker_script,
+                    model_name=self.model_name,
+                    use_llmlingua2=(self.method == "llmlingua2"),
+                    device=self.device,
+                )
+            else:
+                try:
+                    from llmlingua import PromptCompressor
+                except ImportError as e:  # pragma: no cover
+                    raise ImportError(
+                        "inprocess 后端需要 llmlingua（且 transformers 4.x 环境）"
+                    ) from e
+                self._compressor = PromptCompressor(
+                    model_name=self.model_name,
+                    use_llmlingua2=(self.method == "llmlingua2"),
+                    device_map=self.device,
+                )
         return self._compressor
 
     # ---- 主钩子 ----
@@ -174,6 +299,13 @@ class CompressMiddleware(BaseMiddleware):
             ),
             "",
         )
+        if not question:
+            # LongLLMLingua 必须有非空 question（llmlingua 内部 assert）；
+            # 退化用最近一条非空消息，再不行用占位
+            question = (
+                next((m.get("content") or "" for m in reversed(rest) if m.get("content")), "")
+                or "Continue the task."
+            )
 
         compressed = self._compress_cold(chunks, question)
 
@@ -205,12 +337,12 @@ class CompressMiddleware(BaseMiddleware):
                 reorder_context=self.reorder_context,
             )
         else:
-            # llmlingua / llmlingua2：拼成一段文本，按 rate 压
-            prompt = "\n\n".join(chunks)
-            kw: dict[str, Any] = dict(prompt=prompt, rate=self.rate, force_tokens=self.force_tokens)
+            # llmlingua / llmlingua2：拼成一段文本（compress_prompt 首参 context），按 rate 压
+            context = "\n\n".join(chunks)
+            kw: dict[str, Any] = dict(rate=self.rate, force_tokens=self.force_tokens)
             if question:
                 kw["question"] = question
-            res = c.compress_prompt(**kw)
+            res = c.compress_prompt(context, **kw)
         return res.get("compressed_prompt", "")
 
     @staticmethod
