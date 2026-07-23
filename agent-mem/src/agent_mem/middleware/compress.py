@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import subprocess
 import threading
 import time
@@ -165,6 +166,36 @@ class _SubprocessCompressor:
         self._proc = None
 
 
+class _SubprocessCompressorPool:
+    """压缩 worker 池：N 个 ``_SubprocessCompressor``，并发任务各取一个并行压缩。
+
+    解决"单 worker + 锁在并发下串行"的瓶颈（全量115 并发4 时延迟 +16% 的根因）。
+    每次 ``compress_prompt`` 从空闲队列取一个 worker、用完归还——同一 worker 同一时刻
+    只被一个线程用，故无需再加锁；最多 N 路压缩并行。
+
+    duck-type 成压缩器：暴露 ``compress_prompt(*args, **kw)``，``_compress_cold`` 无需改。
+    每个 worker 各加载一份小模型（gpt2 ~500MB×N，CPU 可承受；首次压缩时并行加载）。
+    """
+
+    def __init__(self, *, size: int, **worker_kw: Any) -> None:
+        self.size = max(1, int(size))
+        self._workers = [_SubprocessCompressor(**worker_kw) for _ in range(self.size)]
+        self._free: queue.Queue = queue.Queue()
+        for w in self._workers:
+            self._free.put(w)
+
+    def compress_prompt(self, *args: Any, **kw: Any) -> dict:
+        w = self._free.get()  # 无空闲则阻塞等（concurrency > pool_size 时优雅降级）
+        try:
+            return w.compress_prompt(*args, **kw)
+        finally:
+            self._free.put(w)
+
+    def close(self) -> None:
+        for w in self._workers:
+            w.close()
+
+
 class CompressMiddleware(BaseMiddleware):
     """F2 Prompt 压缩中间件。
 
@@ -197,6 +228,7 @@ class CompressMiddleware(BaseMiddleware):
         backend: str = "subprocess",
         worker_venv: str = "",
         worker_script: str = "",
+        worker_pool_size: int = 1,
         condition_in_question: str = "after",
         dynamic_context_compression_ratio: float = 0.3,
         condition_compare: bool = False,
@@ -224,6 +256,7 @@ class CompressMiddleware(BaseMiddleware):
         self.backend = backend
         self.worker_venv = worker_venv
         self.worker_script = worker_script or _DEFAULT_WORKER
+        self.worker_pool_size = max(1, int(worker_pool_size))  # 并发压缩池大小（>= concurrency 才全并行）
         if backend not in {"subprocess", "inprocess"}:
             raise ValueError(f"backend 必须是 subprocess 或 inprocess，得到 {backend!r}")
         self.condition_in_question = condition_in_question
@@ -258,13 +291,20 @@ class CompressMiddleware(BaseMiddleware):
                         "backend=subprocess 需配置 worker_venv（隔离压缩 venv 的 python 路径，"
                         "如 .venv-compress/bin/python）"
                     )
-                self._compressor = _SubprocessCompressor(
+                kw = dict(
                     venv_python=self.worker_venv,
                     worker_script=self.worker_script,
                     model_name=self.model_name,
                     use_llmlingua2=(self.method == "llmlingua2"),
                     device=self.device,
                 )
+                if self.worker_pool_size > 1:
+                    # 并发压缩池：N 个 worker 并行（消除单 worker 串行瓶颈）
+                    self._compressor = _SubprocessCompressorPool(
+                        size=self.worker_pool_size, **kw
+                    )
+                else:
+                    self._compressor = _SubprocessCompressor(**kw)
             else:
                 try:
                     from llmlingua import PromptCompressor

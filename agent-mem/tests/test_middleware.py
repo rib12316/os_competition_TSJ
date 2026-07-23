@@ -361,6 +361,59 @@ def test_compress_event_log(tmp_path):
     assert ev["session_id"] == "task-7"
     assert ev["action"] == "compress"
     assert "origin_tokens" in ev and "compress_ms" in ev and "cold_tokens" in ev
+    assert "sent_tokens" in ev  # 实际发给引擎的 token
+
+
+def test_compress_sent_tokens_logged():
+    """sent_tokens 在 compress/skip 分支都记。"""
+    import json as _json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        log = f"{d}/e.jsonl"
+        mw = CompressMiddleware(keep_hot=1, trigger_tokens=10, event_log=log)
+        mw._compressor = _FakeCompressor()
+        mw.transform_messages(
+            [{"role": "system", "content": "p"},
+             {"role": "user", "content": "x" * 1000},
+             {"role": "assistant", "content": "a"}],
+            MiddlewareContext("s"),
+        )
+        ev = _json.loads([l for l in open(log).read().splitlines() if l.strip()][0])
+        assert "sent_tokens" in ev and isinstance(ev["sent_tokens"], int)
+
+
+def test_compress_worker_pool_distributes():
+    """池把请求分发到不同 worker（FIFO+归还，串行调用也轮转），不总用 worker0。"""
+    import queue as _q
+
+    from agent_mem.middleware.compress import _SubprocessCompressorPool
+
+    used = []
+
+    class _Fake:
+        def __init__(self, i):
+            self.i = i
+
+        def compress_prompt(self, *a, **k):
+            used.append(self.i)
+            return {"compressed_prompt": f"w{self.i}", "origin_tokens": 1, "compressed_tokens": 1}
+
+        def close(self):
+            pass
+
+    pool = _SubprocessCompressorPool(
+        size=1, venv_python="x", worker_script="y", model_name=None,
+        use_llmlingua2=False, device="cpu",
+    )
+    pool._workers = [_Fake(i) for i in range(3)]
+    pool.size = 3
+    pool._free = _q.Queue()
+    for w in pool._workers:
+        pool._free.put(w)
+    for _ in range(3):
+        pool.compress_prompt("ctx")
+    assert used == [0, 1, 2]  # 轮转用到全部 3 个 worker
 
 
 # ---- run_react 接线 ----
