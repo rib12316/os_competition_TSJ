@@ -61,9 +61,23 @@ def test_load_optimized_enables_lmcache_and_int8():
 def test_load_f1_int8():
     cfg = load_config(CONFIGS_DIR / "f1-int8.yaml")
     assert cfg.engine.backend == "vllm-ascend"
-    # 真 C8 路径：--quantization ascend（不再用 no-op 的 --kv-cache-dtype int8）
-    assert any("quantization ascend" in a for a in cfg.engine.extra_args)
+    assert cfg.engine.c8.enabled is True
+    assert cfg.engine.c8.patch_qwen2 is True
+    # --quantization ascend 由 build_serve_args 从 c8.enabled 注入，不在 extra_args
+    assert not any("quantization" in a for a in cfg.engine.extra_args)
     assert not any("kv-cache-dtype" in a for a in cfg.engine.extra_args)
+
+
+def test_c8_enabled_requires_ascend_backend():
+    # c8.enabled + backend=vllm 应校验失败
+    from agent_mem.config import AppConfig, validate, ConfigError
+    bad = AppConfig(
+        engine=EngineConfig(backend="vllm", model="m"),
+        benchmark=BenchmarkConfig(), metrics=MetricsConfig(), config_name="x",
+    )
+    bad.engine.c8.enabled = True
+    with pytest.raises(ConfigError):
+        validate(bad)
 
 
 def test_load_f2_compress_toggles_middleware():

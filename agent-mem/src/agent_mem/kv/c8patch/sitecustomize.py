@@ -1,7 +1,9 @@
 """Apply Qwen2 C8 KV scale-loading patch at interpreter startup.
 
 Imported automatically in every Python process whose sys.path includes this dir
-(prepend it to PYTHONPATH). Gated by ``QWEN2_C8_PATCH=1``.
+(``agent_mem/kv/c8patch/`` — put it on PYTHONPATH via
+:func:`agent_mem.server.vllm_server.engine_env` when ``engine.c8.patch_qwen2``).
+Gated by ``QWEN2_C8_PATCH=1``.
 
 Why this exists: vLLM V1 loads the model in a **spawned EngineCore subprocess**,
 so an in-process monkeypatch in the api_server parent does NOT propagate to the

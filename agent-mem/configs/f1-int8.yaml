@@ -1,24 +1,25 @@
-# F1 · int8 KV 量化（缝A · 精度层，C8）。
+# F1 · int8 KV 量化（缝A · 精度层，C8）—— vllm-ascend 原生 C8。
 #
-# 真实现：**不走** `--kv-cache-dtype int8`（Ascend 0.22.1rc1 已证伪为 no-op——
-#   后端 attention_v1.py:1309 硬断言 scales==1.0，全仓无 int8→C8 路由）。
-# 改走 vllm-ascend 原生 **C8** int8 KV：`--quantization ascend` + 模型目录的
-#   `quant_model_description.json`。详见 docs/F1-c8-injection.md 与 docs/F1-c8-upstream-survey.md。
+# 真实现：不走 no-op 的 `--kv-cache-dtype int8`；走 `--quantization ascend` + 模型目录的
+#   `quant_model_description.json`（AscendC8KVCacheAttentionMethod）。`c8.enabled` 自动注入
+#   `--quantization ascend` + `--compilation-config {"cudagraph_mode":"FULL_DECODE_ONLY"}`
+#   （FULL decode 在 910B 确定性死锁，故强制 FULL_DECODE_ONLY）。
+#   详见 docs/F1-c8-injection.md（§3 校准坑、§5b Qwen2.5-7B 实测 before/after）。
 #
-# 前置（跑前必做）：给模型目录注入 quant_description + 占位 scale（探针用）：
-#   PYTHONPATH=agent-mem/src:$PYTHONPATH python -m agent_mem.kv.c8 annotate models/Qwen2.5-7B-Instruct
-#   python -m agent_mem.kv.c8 inject-scales models/Qwen2.5-7B-Instruct
-# 真精度 scale 由自校准产出（scripts/calibrate_f1_c8.py，feat/f1-c8-ascend-investigation 分支）。
-# 还原 stock：python -m agent_mem.kv.c8 restore models/Qwen2.5-7B-Instruct
+# 前置（跑前一次性，需 NPU 做校准）：
+#   1) 注入 quant_description：python -m agent_mem.kv.c8 annotate models/Qwen2.5-7B-Instruct
+#   2) post-RoPE 自校准（写 per-channel MinMax scale，**关键**——hook 错张量会出垃圾）：
+#      PYTHONPATH=agent-mem/src:$PYTHONPATH python scripts/calibrate_c8_qwen2.py
+#   还原 stock：python -m agent_mem.kv.c8 restore models/Qwen2.5-7B-Instruct
 #
-# 910B 无 FP8 单元 → FP8 作废；int8(C8) 是 Ascend 上 KV 量化的唯一支持格式。
-# ⚠️ 真机坑：910B 上 C8 decode 在 FULL ACL-graph capture 确定性死锁（见 injection 文档 caveat）。
 # 独立性：只开关自己（KV 量化），不改别的功能；before/after = baseline vs 本档。
 engine:
-  backend: vllm-ascend          # C8 是 Ascend 特性，真机跑在 NPU
+  backend: vllm-ascend          # C8 是 Ascend 特性
   model: Qwen2.5-7B-Instruct
-  extra_args:
-    - "--quantization ascend"   # F1：触发模型 quant_description 里的 C8 int8 KV
+  c8:
+    enabled: true               # 注入 --quantization ascend + FULL_DECODE_ONLY
+    patch_qwen2: true           # Qwen2.5=Qwen2 架构，patch_gqa_c8 不覆盖 → sitecustomize 补 scale 加载
+  # extra_args 不再放 --quantization ascend（c8.enabled 负责注入）
 
 benchmark:
   suite: tau-bench

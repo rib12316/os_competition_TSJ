@@ -57,6 +57,25 @@ class LmCacheConfig:
 
 
 @dataclass
+class C8Config:
+    """缝A F1：vllm-ascend 原生 **C8 int8 KV 量化**配置。
+
+    - ``enabled``：开则 :func:`build_serve_args` 注入 ``--quantization ascend`` +
+      ``--compilation-config {"cudagraph_mode":"FULL_DECODE_ONLY"}``。FULL decode 在 910B
+      上确定性死锁（见 ``docs/F1-c8-injection.md``），故强制 FULL_DECODE_ONLY（decode eager）。
+      **前置**：模型须先 annotate + 校准（post-RoPE per-channel MinMax scale），见
+      ``python -m agent_mem.kv.c8`` 与 ``scripts/calibrate_c8_qwen2.py``；否则 C8 激活但输出垃圾。
+    - ``patch_qwen2``：Qwen2.5（Qwen2 架构）不在 vllm-ascend 的 ``patch_gqa_c8`` 覆盖里
+      （只 Qwen3/Glm4Moe/MiniMaxM2），需经 ``agent_mem/kv/c8patch/sitecustomize.py`` 在
+      EngineCore 子进程给 ``Qwen2ForCausalLM.load_weights`` 打补丁，KV scale 才会加载
+      （否则默认 ones(1) → ``_prepare_c8_scales`` 的 ``.view`` 崩）。Qwen3 等原生覆盖的模型设 False。
+    """
+
+    enabled: bool = False
+    patch_qwen2: bool = False
+
+
+@dataclass
 class MiddlewareConfig:
     """缝D 中间件激活配置（F2 压缩 / F3 lazy-load）。
 
@@ -91,6 +110,7 @@ class EngineConfig:
     model: str = ""
     extra_args: list[str] = field(default_factory=list)
     lmcache: LmCacheConfig = field(default_factory=LmCacheConfig)
+    c8: C8Config = field(default_factory=C8Config)
 
 
 @dataclass
@@ -120,6 +140,7 @@ class AppConfig:
 
 def _build_engine(data: dict[str, Any]) -> EngineConfig:
     lm_data = data.get("lmcache") or {}
+    c8_data = data.get("c8") or {}
     return EngineConfig(
         backend=data.get("backend", "vllm"),
         model=data.get("model", ""),
@@ -127,6 +148,10 @@ def _build_engine(data: dict[str, Any]) -> EngineConfig:
         lmcache=LmCacheConfig(
             enabled=bool(lm_data.get("enabled", False)),
             config_file=lm_data.get("config_file"),
+        ),
+        c8=C8Config(
+            enabled=bool(c8_data.get("enabled", False)),
+            patch_qwen2=bool(c8_data.get("patch_qwen2", False)),
         ),
     )
 
@@ -198,6 +223,8 @@ def validate(cfg: AppConfig) -> None:
         raise ConfigError("engine.model 不能为空")
     if e.extra_args and not all(isinstance(a, str) for a in e.extra_args):
         raise ConfigError("engine.extra_args 必须是字符串列表")
+    if e.c8.enabled and e.backend != "vllm-ascend":
+        raise ConfigError("engine.c8.enabled 需要 backend=vllm-ascend（C8 是 Ascend 专属）")
 
     b = cfg.benchmark
     if b.suite not in _SUITES:
