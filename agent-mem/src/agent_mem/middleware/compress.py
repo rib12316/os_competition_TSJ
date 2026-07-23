@@ -294,6 +294,7 @@ class CompressMiddleware(BaseMiddleware):
         if len(rest) <= self.keep_hot:
             self._log_event(ctx, {"action": "skip", "n_msgs": len(messages),
                                   "cold_n": 0, "hot_n": len(rest), "cold_tokens": 0,
+                                  "sent_tokens": self._sent_tokens(messages),
                                   "reason": "history_shorter_than_keep_hot"})
             return list(messages)
 
@@ -325,11 +326,13 @@ class CompressMiddleware(BaseMiddleware):
         if cold_tokens < self.trigger_tokens:
             st["frozen_count"] = 0
             st["compressed"] = ""
-            self._log_event(ctx, {**common, "action": "skip", "reason": "below_trigger"})
+            self._log_event(ctx, {**common, "action": "skip", "reason": "below_trigger",
+                                  "sent_tokens": self._sent_tokens(messages)})
             return list(messages)
 
         # 决定 compress vs reuse：首次压缩，或自上次压缩后新增冷 >= delta
         do_compress = (not st["compressed"]) or (new_tokens >= self.recompress_delta_tokens)
+        extra: dict = {}
         if do_compress:
             question = self._pick_question(rest)
             t0 = time.monotonic()
@@ -340,8 +343,7 @@ class CompressMiddleware(BaseMiddleware):
             st["frozen_count"] = len(cold)  # 当下整段冷都压进去了
             st["count"] += 1
             est_comp = self._est_tokens([compressed]) if compressed else 0
-            self._log_event(ctx, {
-                **common,
+            extra = {
                 "action": "compress",
                 "compress_count": st["count"],
                 "frozen_count": st["frozen_count"],
@@ -350,10 +352,10 @@ class CompressMiddleware(BaseMiddleware):
                 "est_compressed_tokens": est_comp,
                 "ratio": res.get("ratio"),
                 "compress_ms": round(ms, 1),
-            })
+            }
         else:
             compressed = st["compressed"]
-            self._log_event(ctx, {**common, "action": "reuse"})
+            extra = {"action": "reuse"}
 
         # 重建：[sys] + [压缩段(覆盖 cold[:frozen_count])] + [新增冷 cold[frozen_count:] verbatim] + [hot]
         # tool_call 配对安全：frozen_count 总落在完整 tool_call→tool 组边界（见 _pick 切分）
@@ -367,7 +369,14 @@ class CompressMiddleware(BaseMiddleware):
             )
         out.extend(cold[st["frozen_count"]:])  # 自上次压缩后新增的冷（verbatim，不丢信息）
         out.extend(hot)
+
+        # sent_tokens = 实际发给引擎的 token（按 out 内容估，与 cold_tokens 同口径 chars/4）
+        self._log_event(ctx, {**common, **extra, "sent_tokens": self._sent_tokens(out)})
         return out
+
+    def _sent_tokens(self, msgs: list[dict]) -> int:
+        """估算实际发给引擎的 token（按 messages 内容，与 cold_tokens 同口径）。"""
+        return self._est_tokens([_msg_to_text(m) for m in msgs])
 
     @staticmethod
     def _pick_question(rest: list[dict]) -> str:
