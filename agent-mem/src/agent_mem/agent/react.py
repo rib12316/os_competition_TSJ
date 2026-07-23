@@ -15,7 +15,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_mem.agent.usage_log import log_prompt_tokens
+from agent_mem.agent.usage_log import log_prompt_tokens, measure_prompt_pair
 from agent_mem.middleware import Middleware, MiddlewareContext, MiddlewareStack
 
 # 工具执行器签名：(name, args_dict) -> 观察文本
@@ -193,9 +193,16 @@ def run_react(
         ctx.bump_step()
         # 缝D：发引擎前变换（副本），正典 msgs 不变
         to_send = stack.transform_messages(msgs, ctx)
+        token_measurement = measure_prompt_pair(
+            model=model,
+            original_messages=msgs,
+            transformed_messages=to_send,
+            tools=tools,
+            extra_body=extra_body,
+        )
         resp = client.chat.completions.create(**base_kw, messages=to_send)
         prompt_tokens = _prompt_tokens_from_usage(getattr(resp, "usage", None))
-        log_prompt_tokens(ctx, prompt_tokens)
+        log_prompt_tokens(ctx, prompt_tokens, token_measurement)
         stack.after_model_call(prompt_tokens, ctx)
         msg = resp.choices[0].message
         msgs.append(assistant_message_to_dict(msg))

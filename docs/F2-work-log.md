@@ -186,3 +186,13 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
 - 最终 8 条：success 2/8；BERT 压缩均值 7.01s；p50 98.64s。旧 GPT-2 小测分别为
   0/8、19.15s、145.92s。安全 cold 压缩约 -7.2%，retail 未触发 hot 大结果路径。
 - 报告：`docs/f2-results/comparison_toolaware8.md`；原始数据：`/tmp/f2-toolaware8-v2`。
+
+## 14. 同轨迹完整 Prompt 计量
+
+- 公共 meter 在同一次调用内对 canonical/transformed messages 应用本地 Qwen2.5 完整 chat
+  template，并把同一份 `tools=` 计入两边；响应 usage 校验 transformed 漂移。
+- 8 条结果：`726,409 -> 722,145`，严格配对节省 4,264 token（0.59%）；仅 20/111
+  次请求有节省，证明继续只提高 cold rate 的总体上限很低。
+- meter 平均 16.77ms/步、p95 26.23ms；tokenizer 在任务计时前预热。
+- 报告：`docs/f2-results/comparison_paired8.md`；原始数据：`/tmp/f2-paired8`。
+- 决策：下一阶段实施 system/tools 固定前缀确定性去重，cold rate 暂不提高。

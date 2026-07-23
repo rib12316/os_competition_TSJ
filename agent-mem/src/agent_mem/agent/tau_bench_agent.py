@@ -16,7 +16,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent_mem.agent.react import _as_stack, stream_chat_with_ttft
-from agent_mem.agent.usage_log import log_prompt_tokens
+from agent_mem.agent.usage_log import (
+    log_prompt_tokens,
+    measure_prompt_pair,
+    prepare_prompt_meter,
+)
 from agent_mem.middleware import Middleware, MiddlewareContext, MiddlewareStack
 
 
@@ -72,6 +76,7 @@ class TauBenchAgent:
         )
         # 缝D：上下文中间件（F2 压缩 / F3 lazy-load）。None → 空 stack = identity。
         self.stack: MiddlewareStack = _as_stack(middlewares)
+        prepare_prompt_meter(model)
 
     def solve(self, env: Any, task_index: int | None = None, max_num_steps: int = 30) -> SolveOutcome:
         # 惰性 import（触发 litellm 仅在此处）
@@ -96,6 +101,13 @@ class TauBenchAgent:
             ctx.bump_step()
             # 缝D：发引擎前变换 messages（副本），正典 messages 不动
             to_send = self.stack.transform_messages(messages, ctx)
+            token_measurement = measure_prompt_pair(
+                model=self.model,
+                original_messages=messages,
+                transformed_messages=to_send,
+                tools=env.tools_info,
+                extra_body=self.extra_body,
+            )
             # 流式调用：拿到 message dict + 本步 TTFT
             next_message, ttft_s, prompt_tokens = stream_chat_with_ttft(
                 self.client,
@@ -106,7 +118,7 @@ class TauBenchAgent:
                 max_tokens=self.max_tokens,
                 extra_body=self.extra_body,
             )
-            log_prompt_tokens(ctx, prompt_tokens)
+            log_prompt_tokens(ctx, prompt_tokens, token_measurement)
             self.stack.after_model_call(prompt_tokens, ctx)
             ttft_ms_list.append(ttft_s * 1000)
             action = _message_to_action(next_message, Action, RESPOND_ACTION_NAME)

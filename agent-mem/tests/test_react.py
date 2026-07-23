@@ -95,8 +95,17 @@ def test_run_react_bad_tool_args_recovers():
 def test_run_react_logs_prompt_tokens_without_middleware(tmp_path, monkeypatch):
     import json
 
+    from agent_mem.agent import usage_log
+
+    class _FakeTokenizer:
+        def apply_chat_template(self, messages, tools=None, **kw):
+            size = sum(len(str(m.get("content") or "")) for m in messages)
+            size += 10 * len(tools or [])
+            return list(range(size + 5))
+
     log = tmp_path / "usage.jsonl"
     monkeypatch.setenv("PROMPT_TOKEN_LOG", str(log))
+    monkeypatch.setattr(usage_log, "_get_tokenizer", lambda model: _FakeTokenizer())
     client = _FakeClient([_resp(_msg("done"), prompt_tokens=4321)])
     run_react(
         client, "m", [{"role": "user", "content": "hi"}],
@@ -108,6 +117,31 @@ def test_run_react_logs_prompt_tokens_without_middleware(tmp_path, monkeypatch):
     assert event["step"] == 1
     assert event["prompt_tokens"] == 4321
     assert event["source"] == "response.usage.prompt_tokens"
+    assert event["original_prompt_tokens"] == 7
+    assert event["transformed_prompt_tokens"] == 7
+    assert event["saved_tokens"] == 0
+    assert event["tokenizer_drift"] == 4314
+
+
+def test_measure_prompt_pair_includes_same_tools_in_both_sides(monkeypatch):
+    from agent_mem.agent import usage_log
+
+    class _FakeTokenizer:
+        def apply_chat_template(self, messages, tools=None, **kw):
+            message_size = sum(len(str(m.get("content") or "")) for m in messages)
+            return list(range(message_size + 100 * len(tools or [])))
+
+    monkeypatch.setenv("PROMPT_TOKEN_LOG", "/tmp/not-written-by-measurement")
+    monkeypatch.setattr(usage_log, "_get_tokenizer", lambda model: _FakeTokenizer())
+    measurement = usage_log.measure_prompt_pair(
+        model="m",
+        original_messages=[{"role": "user", "content": "abcdefghij"}],
+        transformed_messages=[{"role": "user", "content": "abc"}],
+        tools=[{"type": "function"}],
+    )
+    assert measurement["original_prompt_tokens"] == 110
+    assert measurement["transformed_prompt_tokens"] == 103
+    assert measurement["saved_tokens"] == 7
 
 
 def test_run_react_against_stub_server():
