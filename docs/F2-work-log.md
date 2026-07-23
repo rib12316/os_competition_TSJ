@@ -196,3 +196,18 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
 - meter 平均 16.77ms/步、p95 26.23ms；tokenizer 在任务计时前预热。
 - 报告：`docs/f2-results/comparison_paired8.md`；原始数据：`/tmp/f2-paired8`。
 - 决策：下一阶段实施 system/tools 固定前缀确定性去重，cold rate 暂不提高。
+
+## 15. 全面 system/tools + 动态上下文优化
+
+- 新增联合 `transform_request(messages, tools)` 挂载点，F2 可同时优化 system 与工具 schema。
+- retail system policy 使用逐条语义保留的 compact 版本；工具 name/type/required/enum/
+  参数结构不动，15 个重复 description 提取为 4 条共享 conventions，移除 7 条 system
+  已覆盖的 confirmation 重复句。
+- 8 条严格配对：`972,762 -> 802,653`，节省 170,109 token（17.49%），139/139 步
+  均有收益；每步至少省 1,219 token。
+- success 1/8，与 strict baseline 小测相同；p50 80.36s vs baseline 78.45s。
+- 4k cold 门槛仅在最后一步触发一次：15.89s 只多省 668 token，故最终提高到 8k。
+  大单次 tool result 仍由 hot 1k 路径处理。
+- system 语义审计补回三项规则后，首轮实测 `4,272 -> 3,085`（-1,187，-27.79%）；
+  最终 8k 配置按该轨迹预计约 16.96% token 收益，且不支付本次 cold BERT 成本。
+- 报告：`docs/f2-results/comparison_comprehensive8.md`；原始：`/tmp/f2-comprehensive8-v3`。

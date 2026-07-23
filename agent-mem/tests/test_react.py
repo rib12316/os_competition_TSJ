@@ -137,7 +137,8 @@ def test_measure_prompt_pair_includes_same_tools_in_both_sides(monkeypatch):
         model="m",
         original_messages=[{"role": "user", "content": "abcdefghij"}],
         transformed_messages=[{"role": "user", "content": "abc"}],
-        tools=[{"type": "function"}],
+        original_tools=[{"type": "function"}],
+        transformed_tools=[{"type": "function"}],
     )
     assert measurement["original_prompt_tokens"] == 110
     assert measurement["transformed_prompt_tokens"] == 103

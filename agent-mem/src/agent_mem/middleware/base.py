@@ -1,6 +1,6 @@
 """缝D · 上下文中间件接口（F2 Prompt 压缩 / F3 工具数据 lazy-load 的挂载点）。
 
-三个钩子，覆盖 agent loop 里**所有**与 messages / 模型响应 / 工具结果交互的位置：
+请求变换与响应观察钩子覆盖 agent loop 里的 messages、tools、模型响应和工具结果：
 
 - :meth:`Middleware.transform_messages` —— 发引擎**前**变换 messages（F2 压缩冷历史、
   F3 注入引用占位）。**只变换发给引擎的副本，不改 agent 的正典历史**——压缩类优化
@@ -59,6 +59,18 @@ class Middleware(Protocol):
         """发引擎前变换 messages（返回新列表，不改入参正典历史）。"""
         ...
 
+    def transform_tools(
+        self, tools: list[dict], ctx: MiddlewareContext
+    ) -> list[dict]:
+        """发引擎前变换工具 schema（返回新列表，不改 canonical tools）。"""
+        ...
+
+    def transform_request(
+        self, messages: list[dict], tools: list[dict], ctx: MiddlewareContext
+    ) -> tuple[list[dict], list[dict]]:
+        """联合变换 messages/tools；需要跨区域去重的中间件可覆盖。"""
+        ...
+
     def intercept_tool_result(
         self, name: str, args: dict[str, Any], result: str, ctx: MiddlewareContext
     ) -> str:
@@ -89,6 +101,16 @@ class BaseMiddleware:
         self, messages: list[dict], ctx: MiddlewareContext
     ) -> list[dict]:
         return messages
+
+    def transform_tools(
+        self, tools: list[dict], ctx: MiddlewareContext
+    ) -> list[dict]:
+        return tools
+
+    def transform_request(
+        self, messages: list[dict], tools: list[dict], ctx: MiddlewareContext
+    ) -> tuple[list[dict], list[dict]]:
+        return self.transform_messages(messages, ctx), self.transform_tools(tools, ctx)
 
     def intercept_tool_result(
         self, name: str, args: dict[str, Any], result: str, ctx: MiddlewareContext
@@ -131,6 +153,22 @@ class MiddlewareStack:
         for mw in self._mw:
             out = mw.transform_messages(out, ctx)
         return out
+
+    def transform_request(
+        self, messages: list[dict], tools: list[dict], ctx: MiddlewareContext
+    ) -> tuple[list[dict], list[dict]]:
+        out_messages = list(messages)
+        out_tools = list(tools)
+        for mw in self._mw:
+            hook = getattr(mw, "transform_request", None)
+            if hook is not None:
+                out_messages, out_tools = hook(out_messages, out_tools, ctx)
+            else:
+                out_messages = mw.transform_messages(out_messages, ctx)
+                transform_tools = getattr(mw, "transform_tools", None)
+                if transform_tools is not None:
+                    out_tools = transform_tools(out_tools, ctx)
+        return out_messages, out_tools
 
     def intercept_tool_result(
         self, name: str, args: dict[str, Any], result: str, ctx: MiddlewareContext

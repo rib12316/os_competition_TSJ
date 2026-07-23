@@ -44,6 +44,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_mem.middleware.base import BaseMiddleware, MiddlewareContext
+from agent_mem.middleware.static_prompt import (
+    compact_system_messages,
+    optimize_tool_descriptions,
+)
 
 # 支持的压缩方法（同一套配置切，便于 ablation）
 _METHODS: set[str] = {"llmlingua", "longllmlingua", "llmlingua2"}
@@ -387,6 +391,9 @@ class CompressMiddleware(BaseMiddleware):
         assistant_rate: float = 0.75,
         tool_result_rate: float = 0.6,
         hot_tool_trigger_tokens: int = 0,
+        optimize_static_prompt: bool = False,
+        system_prompt_mode: str = "none",
+        deduplicate_tool_descriptions: bool = True,
         recompress_delta_tokens: int | None = None,
         event_log: str | None = None,
     ) -> None:
@@ -428,6 +435,9 @@ class CompressMiddleware(BaseMiddleware):
         self.assistant_rate = float(assistant_rate)
         self.tool_result_rate = float(tool_result_rate)
         self.hot_tool_trigger_tokens = int(hot_tool_trigger_tokens)
+        self.optimize_static_prompt = bool(optimize_static_prompt)
+        self.system_prompt_mode = system_prompt_mode
+        self.deduplicate_tool_descriptions = bool(deduplicate_tool_descriptions)
         if self.tool_aware and self.method != "llmlingua2":
             raise ValueError("tool_aware 当前要求 method=llmlingua2（结构字段由外层保护）")
         if not (0.0 < self.assistant_rate <= 1.0):
@@ -436,6 +446,8 @@ class CompressMiddleware(BaseMiddleware):
             raise ValueError("tool_result_rate 必须在 (0, 1]")
         if self.hot_tool_trigger_tokens < 0:
             raise ValueError("hot_tool_trigger_tokens 必须 >= 0")
+        if self.system_prompt_mode not in {"none", "retail_compact"}:
+            raise ValueError("system_prompt_mode 必须是 none 或 retail_compact")
         self.recompress_delta_tokens = (
             recompress_delta_tokens if recompress_delta_tokens is not None else trigger_tokens
         )
@@ -504,6 +516,43 @@ class CompressMiddleware(BaseMiddleware):
         st.setdefault("body_cache", {})
         return st
 
+    def transform_request(
+        self, messages: list[dict], tools: list[dict], ctx: MiddlewareContext
+    ) -> tuple[list[dict], list[dict]]:
+        if not self.optimize_static_prompt:
+            return self.transform_messages(messages, ctx), list(tools)
+
+        system_text = "\n".join(
+            str(message.get("content") or "")
+            for message in messages if message.get("role") == "system"
+        ).lower()
+        system_covers_confirmation = (
+            "explicit user confirmation" in system_text
+            or self.system_prompt_mode == "retail_compact"
+        )
+        if self.deduplicate_tool_descriptions:
+            out_tools, conventions, stats = optimize_tool_descriptions(
+                tools, system_covers_confirmation=system_covers_confirmation
+            )
+        else:
+            out_tools, conventions, stats = list(tools), [], {
+                "tool_descriptions_replaced": 0,
+                "tool_conventions": 0,
+                "confirmation_sentences_removed": 0,
+            }
+        out_messages, compacted = compact_system_messages(
+            messages, mode=self.system_prompt_mode, conventions=conventions
+        )
+        ctx.scratch["compress:static_metrics"] = {
+            **stats,
+            "system_prompt_compacted": compacted,
+        }
+        return self.transform_messages(out_messages, ctx), out_tools
+
+    @staticmethod
+    def _static_metrics(ctx: MiddlewareContext) -> dict[str, Any]:
+        return dict(ctx.scratch.get("compress:static_metrics", {}))
+
     def transform_messages(
         self, messages: list[dict], ctx: MiddlewareContext
     ) -> list[dict]:
@@ -519,6 +568,7 @@ class CompressMiddleware(BaseMiddleware):
             out = list(sys_msgs) + send_rest
             self._stage_event(ctx, {"action": "skip", "n_msgs": len(messages),
                                     "cold_n": 0, "hot_n": len(rest), "cold_tokens": 0,
+                                    **self._static_metrics(ctx),
                                     **hot_extra,
                                     "estimated_sent_tokens": self._estimate_message_tokens(out),
                                     "reason": "history_shorter_than_keep_hot"})
@@ -533,22 +583,30 @@ class CompressMiddleware(BaseMiddleware):
 
         chunks = self._history_texts(cold)
         cold_tokens = self._est_tokens(chunks)
+        compressible_cold_tokens = self._est_tokens(
+            self._compressible_history_texts(cold)
+        )
         hot_tokens = self._est_tokens([_msg_to_text(m) for m in hot])
 
         # 每 session 的压缩缓存（frozen_count=已压进压缩段的冷条数；compressed=压缩文本；count=压缩次数）
         st = self._state(ctx)
-        new_chunks = self._history_texts(cold[st["frozen_count"]:])
-        new_tokens = self._est_tokens(new_chunks)
+        new_tokens = self._est_tokens(
+            self._compressible_history_texts(cold[st["frozen_count"]:])
+        )
 
         common = {
             "n_msgs": len(messages), "cold_n": len(cold), "hot_n": len(hot),
-            "cold_tokens": cold_tokens, "hot_tokens": hot_tokens,
+            "cold_tokens": cold_tokens,
+            "compressible_cold_tokens": compressible_cold_tokens,
+            "hot_tokens": hot_tokens,
             "new_tokens": new_tokens, "compress_count": st["count"],
-            "frozen_count": st["frozen_count"], **hot_extra,
+            "frozen_count": st["frozen_count"], **self._static_metrics(ctx),
+            **hot_extra,
         }
 
         # 触发门：冷历史没过阈值 → 完全不压（短上下文无 lost-in-the-middle）
-        if cold_tokens < self.trigger_tokens:
+        gate_tokens = compressible_cold_tokens if self.tool_aware else cold_tokens
+        if gate_tokens < self.trigger_tokens:
             st["frozen_count"] = 0
             st["compressed"] = ""
             out = list(sys_msgs) + list(cold) + send_hot
@@ -672,6 +730,19 @@ class CompressMiddleware(BaseMiddleware):
                 tool_rate=self.tool_result_rate,
             )
             if segment.original_text()
+        ]
+
+    def _compressible_history_texts(self, messages: list[dict]) -> list[str]:
+        if not self.tool_aware:
+            return self._history_texts(messages)
+        return [
+            segment.body
+            for segment in _tool_aware_segments(
+                messages,
+                assistant_rate=self.assistant_rate,
+                tool_rate=self.tool_result_rate,
+            )
+            if segment.body
         ]
 
     def _compress_bodies(

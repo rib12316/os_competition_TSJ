@@ -181,7 +181,7 @@ def run_react(
 
     # 基础请求参数（messages 每步由中间件变换后注入）
     base_kw: dict[str, Any] = dict(
-        model=model, tools=tools or None, temperature=temperature
+        model=model, temperature=temperature
     )
     if max_tokens is not None:
         base_kw["max_tokens"] = max_tokens
@@ -191,16 +191,19 @@ def run_react(
     while n_steps < max_steps:
         n_steps += 1
         ctx.bump_step()
-        # 缝D：发引擎前变换（副本），正典 msgs 不变
-        to_send = stack.transform_messages(msgs, ctx)
+        # 缝D：联合变换 messages/tools（副本），正典输入不变
+        to_send, to_tools = stack.transform_request(msgs, tools or [], ctx)
         token_measurement = measure_prompt_pair(
             model=model,
             original_messages=msgs,
             transformed_messages=to_send,
-            tools=tools,
+            original_tools=tools,
+            transformed_tools=to_tools,
             extra_body=extra_body,
         )
-        resp = client.chat.completions.create(**base_kw, messages=to_send)
+        resp = client.chat.completions.create(
+            **base_kw, messages=to_send, tools=to_tools or None
+        )
         prompt_tokens = _prompt_tokens_from_usage(getattr(resp, "usage", None))
         log_prompt_tokens(ctx, prompt_tokens, token_measurement)
         stack.after_model_call(prompt_tokens, ctx)

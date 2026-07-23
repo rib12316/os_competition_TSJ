@@ -283,6 +283,22 @@ def test_tool_aware_recompression_reuses_body_cache():
     assert sum(len(call[0]) for call in fake.calls) == 3
 
 
+def test_tool_aware_gate_counts_only_compressible_bodies():
+    mw = CompressMiddleware(
+        method="llmlingua2", tool_aware=True, keep_hot=1, trigger_tokens=1,
+        backend="inprocess",
+    )
+    fake = _ToolAwareFakeCompressor()
+    mw._compressor = fake
+    messages = [
+        {"role": "user", "content": "protected user goal " * 500},
+        {"role": "assistant", "content": "hot tail"},
+    ]
+    out = mw.transform_messages(messages, MiddlewareContext("protected-only"))
+    assert out == messages
+    assert fake.calls == []
+
+
 def test_tool_aware_compresses_large_hot_tool_content_without_breaking_pair():
     mw = CompressMiddleware(
         method="llmlingua2", tool_aware=True, keep_hot=6, trigger_tokens=999999,
@@ -323,6 +339,74 @@ def test_tool_aware_compresses_large_hot_tool_content_without_breaking_pair():
 def test_hot_tool_trigger_rejects_negative_value():
     with pytest.raises(ValueError, match="hot_tool_trigger_tokens"):
         CompressMiddleware(hot_tool_trigger_tokens=-1)
+
+
+def test_static_prompt_optimization_compacts_system_and_deduplicates_tools():
+    import copy
+
+    repeated = "The order id, such as '#W0000000'. Include the leading # symbol."
+    confirmation = (
+        "Cancel a pending order. The agent needs to explain the cancellation detail "
+        "and ask for explicit user confirmation (yes/no) to proceed."
+    )
+    tools = [
+        {"type": "function", "function": {
+            "name": name,
+            "description": confirmation,
+            "parameters": {
+                "type": "object",
+                "properties": {"order_id": {"type": "string", "description": repeated}},
+                "required": ["order_id"],
+            },
+        }}
+        for name in ("cancel_order", "get_order")
+    ]
+    original_tools = copy.deepcopy(tools)
+    messages = [{
+        "role": "system",
+        "content": (
+            "# Retail agent policy\nBefore updates, obtain explicit user confirmation."
+        ),
+    }, {"role": "user", "content": "cancel my order"}]
+    original_messages = copy.deepcopy(messages)
+    mw = CompressMiddleware(
+        method="llmlingua2",
+        optimize_static_prompt=True,
+        system_prompt_mode="retail_compact",
+        keep_hot=6,
+        backend="inprocess",
+    )
+
+    out_messages, out_tools = mw.transform_request(
+        messages, tools, MiddlewareContext("static")
+    )
+    system = out_messages[0]["content"]
+    assert system.startswith("# Retail support policy")
+    assert "First authenticate" in system
+    assert "explicit yes/no confirmation" in system
+    assert "# Shared tool conventions" in system
+    assert system.count(repeated) == 1
+    assert all(
+        tool["function"]["parameters"]["properties"]["order_id"]["description"]
+        == "See C1."
+        for tool in out_tools
+    )
+    assert all(
+        "explicit user confirmation" not in tool["function"]["description"]
+        for tool in out_tools
+    )
+    assert [tool["function"]["name"] for tool in out_tools] == [
+        "cancel_order", "get_order"
+    ]
+    assert all(tool["function"]["parameters"]["required"] == ["order_id"]
+               for tool in out_tools)
+    assert messages == original_messages
+    assert tools == original_tools
+
+
+def test_bad_system_prompt_mode_rejected():
+    with pytest.raises(ValueError, match="system_prompt_mode"):
+        CompressMiddleware(system_prompt_mode="unknown")
 
 
 def test_compress_gate_skips_short_history():

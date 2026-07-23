@@ -71,7 +71,8 @@ def measure_prompt_pair(
     model: str,
     original_messages: list[dict],
     transformed_messages: list[dict],
-    tools: list[dict] | None,
+    original_tools: list[dict] | None,
+    transformed_tools: list[dict] | None,
     extra_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """同一 tokenizer/chat template 下配对计算变换前后的完整 prompt。"""
@@ -82,10 +83,10 @@ def measure_prompt_pair(
         tokenizer = _get_tokenizer(model)
         template_kwargs = (extra_body or {}).get("chat_template_kwargs")
         original = _count_chat_tokens(
-            tokenizer, original_messages, tools, template_kwargs
+            tokenizer, original_messages, original_tools, template_kwargs
         )
         transformed = _count_chat_tokens(
-            tokenizer, transformed_messages, tools, template_kwargs
+            tokenizer, transformed_messages, transformed_tools, template_kwargs
         )
         return {
             "original_prompt_tokens": original,

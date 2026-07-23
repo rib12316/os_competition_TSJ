@@ -1,0 +1,15 @@
+{
+  "run_id": "20260723-172702_vllm_qwen25-7b_f2-compress_run1",
+  "engine": "vllm",
+  "model": "qwen25-7b",
+  "config": "f2-compress",
+  "e2e_latency_p50_ms": 80357.32906800695,
+  "e2e_latency_p95_ms": 139853.2928542525,
+  "qps": 0.03219463815509869,
+  "mem_peak_mb": 58046,
+  "kv_cache_hit_rate": 0.9458095262905174,
+  "task_success_rate": 0.125,
+  "ttft_ms": 80.36783651914448,
+  "seed": 42,
+  "started_at": "2026-07-23T17:27:02"
+}

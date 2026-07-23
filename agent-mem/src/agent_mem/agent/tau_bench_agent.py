@@ -99,13 +99,16 @@ class TauBenchAgent:
         for _ in range(max_num_steps):
             steps += 1
             ctx.bump_step()
-            # 缝D：发引擎前变换 messages（副本），正典 messages 不动
-            to_send = self.stack.transform_messages(messages, ctx)
+            # 缝D：联合变换 messages/tools（副本），正典输入不动
+            to_send, to_tools = self.stack.transform_request(
+                messages, env.tools_info, ctx
+            )
             token_measurement = measure_prompt_pair(
                 model=self.model,
                 original_messages=messages,
                 transformed_messages=to_send,
-                tools=env.tools_info,
+                original_tools=env.tools_info,
+                transformed_tools=to_tools,
                 extra_body=self.extra_body,
             )
             # 流式调用：拿到 message dict + 本步 TTFT
@@ -113,7 +116,7 @@ class TauBenchAgent:
                 self.client,
                 model=self.model,
                 messages=to_send,
-                tools=env.tools_info,
+                tools=to_tools,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 extra_body=self.extra_body,

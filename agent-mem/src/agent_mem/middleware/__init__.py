@@ -3,6 +3,7 @@
 核心契约在 :mod:`agent_mem.middleware.base`：::
 
     Middleware.transform_messages()    # 发引擎前变换 messages（F2 压缩）
+    Middleware.transform_request()     # 联合变换 messages/tools（固定前缀去重）
     Middleware.after_model_call()      # 响应后观察真实 prompt_tokens
     Middleware.intercept_tool_result() # 拦工具返回值（F3 lazy-load）
 

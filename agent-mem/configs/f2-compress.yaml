@@ -26,13 +26,16 @@ middleware:                       # 缝D
       # —— 方案 A：单一方法 + 触发门 ——
       method: llmlingua2         # BERT token classifier，比 GPT-2 LLMLingua 快 3-6×
       rate: 0.65                 # 非 tool-aware 回退路径的默认保留比例
-      trigger_tokens: 2000       # 冷历史 < 此值不压（tau-bench retail 实测多数任务冷历史 2k~5k，降到 2000 才 engages）
+      trigger_tokens: 8000       # 累计长 body 才压；大单次结果由 hot 1k 路径处理
       recompress_delta_tokens: 4000  # 压过之后新增冷 >= 此值才重压（4000≈每任务压1次复用；8000 太高永不重压）
       keep_hot: 6                # 热尾保留条数（自动 snap 到完整 tool_call→tool 组）
       tool_aware: true           # 保留 user/tool name/arguments/关键 JSON，仅压正文
       assistant_rate: 0.75       # 冷 assistant 自然语言保留比例
       tool_result_rate: 0.60     # 冷 tool result 正文保留比例
       hot_tool_trigger_tokens: 1000  # 大 tool result 在热区即压 content，结构/硬字段保持
+      optimize_static_prompt: true   # system + tools 固定前缀确定性精简
+      system_prompt_mode: retail_compact  # 逐条保留 retail 规则的紧凑 policy
+      deduplicate_tool_descriptions: true # 重复参数说明提取为共享 convention
       device: cpu                # 压缩器小模型放 CPU，NPU 让给主 LLM
       model_name: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank
       # —— 后端：隔离 venv 子进程（绕开主 venv transformers 5.x ↔ llmlingua 4.x 冲突）——
