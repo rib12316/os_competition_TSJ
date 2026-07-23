@@ -24,24 +24,23 @@ middleware:                       # 缝D
   options:
     compress:
       # —— 方案 A：单一方法 + 触发门 ——
-      method: longllmlingua      # llmlingua | longllmlingua | llmlingua2（ablation 可切）
-      rate: 0.65                 # 保留比例（0.65=保留 65%≈1.5× 压缩；调高护 success）
+      method: llmlingua2         # BERT token classifier，比 GPT-2 LLMLingua 快 3-6×
+      rate: 0.65                 # 非 tool-aware 回退路径的默认保留比例
       trigger_tokens: 2000       # 冷历史 < 此值不压（tau-bench retail 实测多数任务冷历史 2k~5k，降到 2000 才 engages）
       recompress_delta_tokens: 4000  # 压过之后新增冷 >= 此值才重压（4000≈每任务压1次复用；8000 太高永不重压）
       keep_hot: 6                # 热尾保留条数（自动 snap 到完整 tool_call→tool 组）
+      tool_aware: true           # 保留 user/tool name/arguments/关键 JSON，仅压正文
+      assistant_rate: 0.75       # 冷 assistant 自然语言保留比例
+      tool_result_rate: 0.60     # 冷 tool result 正文保留比例
+      hot_tool_trigger_tokens: 1000  # 大 tool result 在热区即压 content，结构/硬字段保持
       device: cpu                # 压缩器小模型放 CPU，NPU 让给主 LLM
-      model_name: gpt2           # 小模型(开发/冒烟用)；生产可换 NousResearch/Llama-2-7b-hf 提质量
+      model_name: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank
       # —— 后端：隔离 venv 子进程（绕开主 venv transformers 5.x ↔ llmlingua 4.x 冲突）——
       backend: subprocess        # subprocess(默认, 推荐) | inprocess(仅隔离 venv 自身跑时)
       worker_venv: /data/os_competition_TSJ/.venv-compress/bin/python  # 隔离压缩 venv 的 python
       worker_script: ""          # 空=用随包的 agent_mem/middleware/_compress_worker.py
       worker_pool_size: 4        # 并发压缩池大小（应 >= --concurrency 才全并行；默认1=单worker）
       worker_threads: 0          # 0=自动(核数//pool_size：pool1→128核不限, pool4→32核不超订)；>0 手动指定
-      # —— LongLLMLingua 专属（method=longllmlingua 才用；枚举值对齐 llmlingua 0.2.2）——
-      condition_in_question: after             # question-aware（0.2.2 认 none/before/after）
-      dynamic_context_compression_ratio: 0.3   # 分段动态压缩率（冗余段压狠）
-      condition_compare: false                 # 0.2.2 下 True 会改 condition 值致分发失配；ablation 再试
-      reorder_context: original                # 保时序（0.2.2 认 original/two_stage）
 
 metrics:
   - e2e_latency_p50

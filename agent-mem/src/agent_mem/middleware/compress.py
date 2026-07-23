@@ -33,12 +33,14 @@ system 原样保留。命中赛题"降显存/降延迟"——更短的 prompt �
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from agent_mem.middleware.base import BaseMiddleware, MiddlewareContext
@@ -53,6 +55,144 @@ _CHARS_PER_TOKEN = 4
 _DEFAULT_WORKER = os.path.join(os.path.dirname(__file__), "_compress_worker.py")
 # worker 的 stderr 日志（诊断用；不参与协议，避免 PIPE 死锁）
 _WORKER_STDERR_LOG = "/tmp/llmlingua_worker.stderr.log"
+
+_CRITICAL_KEY_PARTS = {
+    "id", "status", "state", "amount", "price", "total", "balance",
+    "quantity", "count", "time", "date", "email", "address", "payment",
+    "reason", "confirm", "error", "name", "zip", "refund",
+}
+
+
+@dataclass(frozen=True)
+class _HistorySegment:
+    """工具感知历史片段：prefix 必须原样保留，body 才允许压缩。"""
+
+    prefix: str
+    body: str = ""
+    rate: float = 1.0
+
+    def original_text(self) -> str:
+        return "\n".join(part for part in (self.prefix, self.body) if part)
+
+
+def _is_critical_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    parts = set(normalized.split("_"))
+    return bool(parts & _CRITICAL_KEY_PARTS) or normalized.endswith(("_id", "_ids"))
+
+
+def _extract_critical_json(value: Any, key: str = "") -> Any:
+    """抽取工具结果中的硬字段；空容器返回 ``None``，避免复制整份 JSON。"""
+    if isinstance(value, dict):
+        out = {}
+        for child_key, child_value in value.items():
+            if _is_critical_key(child_key):
+                out[child_key] = child_value
+                continue
+            child = _extract_critical_json(child_value, child_key)
+            if child is not None:
+                out[child_key] = child
+        return out or None
+    if isinstance(value, list):
+        out = [item for item in (_extract_critical_json(v, key) for v in value)
+               if item is not None]
+        return out or None
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return value if key and _is_critical_key(key) else None
+
+
+def _critical_tool_content(content: str) -> str:
+    try:
+        parsed = json.loads(content)
+    except (TypeError, ValueError):
+        return ""
+    critical = _extract_critical_json(parsed)
+    if critical is None:
+        return ""
+    return json.dumps(critical, ensure_ascii=False, separators=(",", ":"))
+
+
+def _strip_critical_json(value: Any, key: str = "") -> Any:
+    """返回仅含可压缩 narrative 字段的 JSON；硬字段已由 protected prefix 承载。"""
+    if key and _is_critical_key(key):
+        return None
+    if isinstance(value, dict):
+        out = {}
+        for child_key, child_value in value.items():
+            child = _strip_critical_json(child_value, child_key)
+            if child is not None:
+                out[child_key] = child
+        return out or None
+    if isinstance(value, list):
+        out = [item for item in (_strip_critical_json(v, key) for v in value)
+               if item is not None]
+        return out or None
+    if isinstance(value, str):
+        return value
+    # 数值/布尔/null 已由 critical snapshot 无条件保留，不在正文重复。
+    return None
+
+
+def _compressible_tool_content(content: str) -> str:
+    try:
+        parsed = json.loads(content)
+    except (TypeError, ValueError):
+        return content
+    narrative = _strip_critical_json(parsed)
+    if narrative is None:
+        return ""
+    return json.dumps(narrative, ensure_ascii=False, separators=(",", ":"))
+
+
+def _tool_aware_segments(
+    messages: list[dict], *, assistant_rate: float, tool_rate: float
+) -> list[_HistorySegment]:
+    """把完整 agent 轨迹分成受保护 metadata 与可压缩正文。"""
+    call_names: dict[str, str] = {}
+    for message in messages:
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            call_id = str(call.get("id") or "")
+            name = str(call.get("function", {}).get("name") or "")
+            if call_id:
+                call_names[call_id] = name
+
+    segments: list[_HistorySegment] = []
+    for message in messages:
+        role = str(message.get("role") or "unknown")
+        content = str(message.get("content") or "")
+        if role == "user":
+            # 历史用户目标、确认和约束高度敏感，完整保留。
+            segments.append(_HistorySegment(f"[USER]\n{content}"))
+            continue
+        if role == "assistant" and message.get("tool_calls"):
+            protected = ["[ASSISTANT_TOOL_CALL]"]
+            for call in message.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                fn = call.get("function", {})
+                protected.extend([
+                    f"call_id={call.get('id') or ''}",
+                    f"name={fn.get('name') or ''}",
+                    f"arguments={fn.get('arguments') or '{}'}",
+                ])
+            segments.append(_HistorySegment("\n".join(protected), content, assistant_rate))
+            continue
+        if role == "tool":
+            call_id = str(message.get("tool_call_id") or "")
+            name = str(message.get("name") or call_names.get(call_id) or "")
+            protected = ["[TOOL_RESULT]", f"call_id={call_id}", f"name={name}"]
+            critical = _critical_tool_content(content)
+            if critical:
+                protected.append(f"critical_fields={critical}")
+            segments.append(_HistorySegment(
+                "\n".join(protected), _compressible_tool_content(content), tool_rate
+            ))
+            continue
+        segments.append(_HistorySegment(f"[{role.upper()}]", content, assistant_rate))
+    return segments
 
 
 def _msg_to_text(m: dict) -> str:
@@ -243,6 +383,10 @@ class CompressMiddleware(BaseMiddleware):
         reorder_context: str = "original",
         force_tokens: list[str] | None = None,
         history_role: str = "system",
+        tool_aware: bool = False,
+        assistant_rate: float = 0.75,
+        tool_result_rate: float = 0.6,
+        hot_tool_trigger_tokens: int = 0,
         recompress_delta_tokens: int | None = None,
         event_log: str | None = None,
     ) -> None:
@@ -280,6 +424,18 @@ class CompressMiddleware(BaseMiddleware):
         self.reorder_context = reorder_context
         self.force_tokens = force_tokens if force_tokens is not None else ["\n", "?", "."]
         self.history_role = history_role
+        self.tool_aware = bool(tool_aware)
+        self.assistant_rate = float(assistant_rate)
+        self.tool_result_rate = float(tool_result_rate)
+        self.hot_tool_trigger_tokens = int(hot_tool_trigger_tokens)
+        if self.tool_aware and self.method != "llmlingua2":
+            raise ValueError("tool_aware 当前要求 method=llmlingua2（结构字段由外层保护）")
+        if not (0.0 < self.assistant_rate <= 1.0):
+            raise ValueError("assistant_rate 必须在 (0, 1]")
+        if not (0.0 < self.tool_result_rate <= 1.0):
+            raise ValueError("tool_result_rate 必须在 (0, 1]")
+        if self.hot_tool_trigger_tokens < 0:
+            raise ValueError("hot_tool_trigger_tokens 必须 >= 0")
         self.recompress_delta_tokens = (
             recompress_delta_tokens if recompress_delta_tokens is not None else trigger_tokens
         )
@@ -287,6 +443,7 @@ class CompressMiddleware(BaseMiddleware):
             raise ValueError("recompress_delta_tokens 必须 >= 0")
         self._event_log_path = event_log or os.environ.get("F2_EVENT_LOG") or ""
         self._log_lock = threading.Lock()  # 并发跑多任务时串行化事件日志写文件
+        self._compressor_lock = threading.Lock()  # 首次并发触发时只构造一个 worker pool
         self._compressor: Any = None  # 懒加载，进程级单例
 
     # ---- 压缩器加载（惰性、缓存）----
@@ -300,42 +457,52 @@ class CompressMiddleware(BaseMiddleware):
           为 4.x 时可用，例如跑在隔离 venv 内自身）。
         """
         if self._compressor is None:
-            if self.backend == "subprocess":
-                if not self.worker_venv:
-                    raise ValueError(
-                        "backend=subprocess 需配置 worker_venv（隔离压缩 venv 的 python 路径，"
-                        "如 .venv-compress/bin/python）"
-                    )
-                kw = dict(
-                    venv_python=self.worker_venv,
-                    worker_script=self.worker_script,
-                    model_name=self.model_name,
-                    use_llmlingua2=(self.method == "llmlingua2"),
-                    device=self.device,
-                    num_threads=self.worker_threads,
-                )
-                if self.worker_pool_size > 1:
-                    # 并发压缩池：N 个 worker 并行（消除单 worker 串行瓶颈）
-                    self._compressor = _SubprocessCompressorPool(
-                        size=self.worker_pool_size, **kw
-                    )
-                else:
-                    self._compressor = _SubprocessCompressor(**kw)
-            else:
-                try:
-                    from llmlingua import PromptCompressor
-                except ImportError as e:  # pragma: no cover
-                    raise ImportError(
-                        "inprocess 后端需要 llmlingua（且 transformers 4.x 环境）"
-                    ) from e
-                self._compressor = PromptCompressor(
-                    model_name=self.model_name,
-                    use_llmlingua2=(self.method == "llmlingua2"),
-                    device_map=self.device,
-                )
+            with self._compressor_lock:
+                if self._compressor is None:
+                    self._compressor = self._build_compressor()
         return self._compressor
 
+    def _build_compressor(self) -> Any:
+        """构造压缩器；只允许由 ``_get_compressor`` 的初始化锁调用。"""
+        if self.backend == "subprocess":
+            if not self.worker_venv:
+                raise ValueError(
+                    "backend=subprocess 需配置 worker_venv（隔离压缩 venv 的 python 路径，"
+                    "如 .venv-compress/bin/python）"
+                )
+            kw = dict(
+                venv_python=self.worker_venv,
+                worker_script=self.worker_script,
+                model_name=self.model_name,
+                use_llmlingua2=(self.method == "llmlingua2"),
+                device=self.device,
+                num_threads=self.worker_threads,
+            )
+            if self.worker_pool_size > 1:
+                return _SubprocessCompressorPool(size=self.worker_pool_size, **kw)
+            return _SubprocessCompressor(**kw)
+        try:
+            from llmlingua import PromptCompressor
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                "inprocess 后端需要 llmlingua（且 transformers 4.x 环境）"
+            ) from e
+        return PromptCompressor(
+            model_name=self.model_name,
+            use_llmlingua2=(self.method == "llmlingua2"),
+            device_map=self.device,
+        )
+
     # ---- 主钩子 ----
+
+    @staticmethod
+    def _state(ctx: MiddlewareContext) -> dict[str, Any]:
+        st = ctx.scratch.setdefault("compress", {})
+        st.setdefault("frozen_count", 0)
+        st.setdefault("compressed", "")
+        st.setdefault("count", 0)
+        st.setdefault("body_cache", {})
+        return st
 
     def transform_messages(
         self, messages: list[dict], ctx: MiddlewareContext
@@ -348,43 +515,46 @@ class CompressMiddleware(BaseMiddleware):
 
         # 太短：热尾都凑不齐，全留
         if len(rest) <= self.keep_hot:
+            send_rest, hot_extra = self._compress_hot_tool_results(rest, ctx)
+            out = list(sys_msgs) + send_rest
             self._stage_event(ctx, {"action": "skip", "n_msgs": len(messages),
                                     "cold_n": 0, "hot_n": len(rest), "cold_tokens": 0,
-                                    "estimated_sent_tokens": self._estimate_message_tokens(messages),
+                                    **hot_extra,
+                                    "estimated_sent_tokens": self._estimate_message_tokens(out),
                                     "reason": "history_shorter_than_keep_hot"})
-            return list(messages)
+            return out
 
         # 切冷/热；热尾边界 snap 到完整 tool_call→tool 组（避免孤立 tool）
         split = len(rest) - self.keep_hot
         while split > 0 and rest[split].get("role") == "tool":
             split -= 1  # 把 tool 的 caller(assistant) 一起拉进热尾
         cold, hot = rest[:split], rest[split:]
+        send_hot, hot_extra = self._compress_hot_tool_results(hot, ctx)
 
-        chunks = [t for t in (_msg_to_text(m) for m in cold) if t]
+        chunks = self._history_texts(cold)
         cold_tokens = self._est_tokens(chunks)
         hot_tokens = self._est_tokens([_msg_to_text(m) for m in hot])
 
         # 每 session 的压缩缓存（frozen_count=已压进压缩段的冷条数；compressed=压缩文本；count=压缩次数）
-        st = ctx.scratch.setdefault(
-            "compress", {"frozen_count": 0, "compressed": "", "count": 0}
-        )
-        new_chunks = [t for t in (_msg_to_text(m) for m in cold[st["frozen_count"]:]) if t]
+        st = self._state(ctx)
+        new_chunks = self._history_texts(cold[st["frozen_count"]:])
         new_tokens = self._est_tokens(new_chunks)
 
         common = {
             "n_msgs": len(messages), "cold_n": len(cold), "hot_n": len(hot),
             "cold_tokens": cold_tokens, "hot_tokens": hot_tokens,
             "new_tokens": new_tokens, "compress_count": st["count"],
-            "frozen_count": st["frozen_count"],
+            "frozen_count": st["frozen_count"], **hot_extra,
         }
 
         # 触发门：冷历史没过阈值 → 完全不压（短上下文无 lost-in-the-middle）
         if cold_tokens < self.trigger_tokens:
             st["frozen_count"] = 0
             st["compressed"] = ""
+            out = list(sys_msgs) + list(cold) + send_hot
             self._stage_event(ctx, {**common, "action": "skip", "reason": "below_trigger",
-                                    "estimated_sent_tokens": self._estimate_message_tokens(messages)})
-            return list(messages)
+                                    "estimated_sent_tokens": self._estimate_message_tokens(out)})
+            return out
 
         # 决定 compress vs reuse：首次压缩，或自上次压缩后新增冷 >= delta
         do_compress = (not st["compressed"]) or (new_tokens >= self.recompress_delta_tokens)
@@ -392,7 +562,7 @@ class CompressMiddleware(BaseMiddleware):
         if do_compress:
             question = self._pick_question(rest)
             t0 = time.monotonic()
-            res = self._compress_cold(chunks, question)
+            res = self._compress_cold(chunks, question, cold=cold, ctx=ctx)
             ms = (time.monotonic() - t0) * 1000.0
             compressed = res.get("compressed_prompt", "")
             st["compressed"] = compressed
@@ -424,13 +594,158 @@ class CompressMiddleware(BaseMiddleware):
                 }
             )
         out.extend(cold[st["frozen_count"]:])  # 自上次压缩后新增的冷（verbatim，不丢信息）
-        out.extend(hot)
+        out.extend(send_hot)
 
         self._stage_event(ctx, {
             **common, **extra,
             "estimated_sent_tokens": self._estimate_message_tokens(out),
         })
         return out
+
+    def _compress_hot_tool_results(
+        self, hot: list[dict], ctx: MiddlewareContext
+    ) -> tuple[list[dict], dict[str, Any]]:
+        """保持 hot tool 协议结构，仅压超过阈值的 result content。"""
+        empty = {
+            "hot_tool_compressed": 0,
+            "hot_tool_saved_tokens_est": 0,
+            "hot_compress_ms": 0.0,
+        }
+        if not self.tool_aware or self.hot_tool_trigger_tokens <= 0:
+            return list(hot), empty
+
+        candidates: list[tuple[int, str, str, str]] = []
+        for idx, message in enumerate(hot):
+            if message.get("role") != "tool":
+                continue
+            content = str(message.get("content") or "")
+            if self._est_tokens([content]) >= self.hot_tool_trigger_tokens:
+                candidates.append((
+                    idx,
+                    content,
+                    _compressible_tool_content(content),
+                    _critical_tool_content(content),
+                ))
+        if not candidates:
+            return list(hot), empty
+
+        t0 = time.monotonic()
+        body_positions = [idx for idx, (_, _, body, _) in enumerate(candidates) if body]
+        compressed_values = self._compress_bodies(
+            [candidates[idx][2] for idx in body_positions],
+            [self.tool_result_rate] * len(body_positions),
+            ctx,
+        )
+        compressed_by_candidate = dict(zip(body_positions, compressed_values))
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+        out = list(hot)
+        count = 0
+        saved = 0
+        for candidate_idx, (idx, original, body, critical) in enumerate(candidates):
+            body = compressed_by_candidate.get(candidate_idx, body)
+            pieces = ["[compressed tool result]"]
+            if critical:
+                pieces.append(f"critical_fields={critical}")
+            pieces.append(body)
+            replacement = "\n".join(pieces)
+            original_tokens = self._est_tokens([original])
+            replacement_tokens = self._est_tokens([replacement])
+            if replacement_tokens >= original_tokens:
+                continue
+            out[idx] = {**hot[idx], "content": replacement}
+            count += 1
+            saved += original_tokens - replacement_tokens
+        return out, {
+            "hot_tool_compressed": count,
+            "hot_tool_saved_tokens_est": saved,
+            "hot_compress_ms": round(elapsed_ms, 1),
+        }
+
+    def _history_texts(self, messages: list[dict]) -> list[str]:
+        if not self.tool_aware:
+            return [text for text in (_msg_to_text(m) for m in messages) if text]
+        return [
+            segment.original_text()
+            for segment in _tool_aware_segments(
+                messages,
+                assistant_rate=self.assistant_rate,
+                tool_rate=self.tool_result_rate,
+            )
+            if segment.original_text()
+        ]
+
+    def _compress_bodies(
+        self, bodies: list[str], rates: list[float], ctx: MiddlewareContext
+    ) -> list[str]:
+        """按 rate 批量压缩正文，并以内容 hash 跨 cold 重压复用。"""
+        if not bodies:
+            return []
+        st = self._state(ctx)
+        cache: dict[str, str] = st.setdefault("body_cache", {})
+        output = [""] * len(bodies)
+        pending_by_rate: dict[float, list[tuple[int, str, str]]] = {}
+        for idx, (body, rate) in enumerate(zip(bodies, rates)):
+            digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            key = f"{rate:.4f}:{digest}"
+            if key in cache:
+                output[idx] = cache[key]
+            else:
+                pending_by_rate.setdefault(rate, []).append((idx, key, body))
+
+        compressor = self._get_compressor()
+        for rate, pending in pending_by_rate.items():
+            originals = [item[2] for item in pending]
+            result = compressor.compress_prompt(
+                originals,
+                rate=rate,
+                force_tokens=self.force_tokens,
+                force_reserve_digit=True,
+                use_context_level_filter=False,
+            )
+            compressed = result.get("compressed_prompt_list")
+            if not isinstance(compressed, list) or len(compressed) != len(originals):
+                compressed = originals
+            for (idx, key, original), value in zip(pending, compressed):
+                value = value if isinstance(value, str) and value.strip() else original
+                # 压完更长时保留原文；结构保护不能以负收益为代价。
+                if self._est_tokens([value]) >= self._est_tokens([original]):
+                    value = original
+                cache[key] = value
+                output[idx] = value
+        return output
+
+    def _compress_tool_aware(
+        self, cold: list[dict], ctx: MiddlewareContext
+    ) -> dict:
+        segments = _tool_aware_segments(
+            cold,
+            assistant_rate=self.assistant_rate,
+            tool_rate=self.tool_result_rate,
+        )
+        body_segments = [(idx, segment) for idx, segment in enumerate(segments)
+                         if segment.body]
+        bodies = [segment.body for _, segment in body_segments]
+        rates = [segment.rate for _, segment in body_segments]
+        compressed_bodies = self._compress_bodies(bodies, rates, ctx)
+        replacements = {
+            idx: body for (idx, _), body in zip(body_segments, compressed_bodies)
+        }
+        pieces = []
+        for idx, segment in enumerate(segments):
+            pieces.append("\n".join(
+                part for part in (segment.prefix, replacements.get(idx, "")) if part
+            ))
+        original = "\n\n".join(segment.original_text() for segment in segments)
+        compressed = "\n\n".join(pieces)
+        origin_tokens = self._est_tokens([original])
+        compressed_tokens = self._est_tokens([compressed])
+        ratio = origin_tokens / max(1, compressed_tokens)
+        return {
+            "compressed_prompt": compressed,
+            "origin_tokens": origin_tokens,
+            "compressed_tokens": compressed_tokens,
+            "ratio": f"{ratio:.1f}x",
+        }
 
     def _estimate_message_tokens(self, msgs: list[dict]) -> int:
         """按 messages 文本 chars/4 粗估；仅作诊断，不再冒充真实 sent_tokens。"""
@@ -484,8 +799,19 @@ class CompressMiddleware(BaseMiddleware):
 
     # ---- 压缩分发 ----
 
-    def _compress_cold(self, chunks: list[str], question: str) -> dict:
+    def _compress_cold(
+        self,
+        chunks: list[str],
+        question: str,
+        *,
+        cold: list[dict] | None = None,
+        ctx: MiddlewareContext | None = None,
+    ) -> dict:
         """调压缩器，返回 llmlingua 的完整结果 dict（含 compressed_prompt/origin_tokens/...）。"""
+        if self.tool_aware:
+            if cold is None or ctx is None:
+                raise ValueError("tool_aware 压缩需要 cold messages 与 MiddlewareContext")
+            return self._compress_tool_aware(cold, ctx)
         c = self._get_compressor()
         if self.method == "longllmlingua":
             # LongLLMLingua：按块传入，question-aware 打分 + 分段动态率

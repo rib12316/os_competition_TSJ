@@ -32,7 +32,9 @@ f2-compress.yaml (middleware.active:[compress] + options.compress)
      → _compress_cold → _get_compressor
         backend=subprocess → _SubprocessCompressorPool(N worker + queue)
            → 每个 worker 是 .venv-compress 里的 _compress_worker.py（常驻，模型加载一次）
-              → llmlingua PromptCompressor(gpt2, transformers 4.43.4)
+              → llmlingua PromptCompressor(LLMLingua-2 BERT, transformers 4.43.4)
+     tool-aware：user/tool name/arguments/关键 JSON 外层保护；只压 assistant/tool body
+       + hot 大工具结果提前压缩 + body SHA-256 缓存
      每步写 F2_EVENT_LOG 事件 JSONL：sent_tokens=响应 usage.prompt_tokens 真值；
        estimated_sent_tokens=旧 chars/4 估算，仅诊断
 ```
@@ -48,15 +50,19 @@ middleware:
   active: [compress]          # 开关：compress=开，[]=关(baseline)
   options:
     compress:
-      method: longllmlingua
-      rate: 0.65               # 保留 65%（甜点：护 success）
+      method: llmlingua2
+      model_name: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank
       trigger_tokens: 2000     # 冷历史>此值才开始压
       recompress_delta_tokens: 4000  # 压过后新增>此值才重压（增量复用）
       keep_hot: 6
+      tool_aware: true
+      assistant_rate: 0.75
+      tool_result_rate: 0.60
+      hot_tool_trigger_tokens: 1000
       backend: subprocess
       worker_venv: /data/os_competition_TSJ/.venv-compress/bin/python
       worker_pool_size: 4      # 并发压缩池（>= --concurrency）
-      worker_threads: 0        # 0=自动(核数//pool_size)；gpt2 小模型限线程反而更快
+      worker_threads: 0        # 0=自动(核数//pool_size)
 user_sim:                      # mimo 当 user-sim（已成默认）
   model: mimo-v2.5-pro
   api_base: https://token-plan-cn.xiaomimimo.com/v1
@@ -118,12 +124,11 @@ PYTHONPATH=$PWD/src F2_EVENT_LOG=/tmp/ev.jsonl \
 
 ## 8. 未完成 / 下一步（按优先级）
 
-1. **静态 prompt 精简 ablation**：详见 `F2-static-prompt-compression-research.md`。先做固定 system policy + 工具描述去重，预计每步省约 900-1200 真 token，运行时零压缩开销。
-2. **换 BERT(llmlingua2) 压缩器**（用户暂缓，但这是延迟的根本解）：~3-5s/次，把 +9.7% 延迟归零。改 method=llmlingua2 + 换 BERT 模型（注意 512 上下文 + 不 question-aware）。
+1. **tool-aware BERT 8 条 + full115 ablation**：当前实现已完成，尚需验证 success/真 token/延迟。
+2. **静态 prompt 精简 ablation**：详见 `F2-static-prompt-compression-research.md`，与动态历史方案分开验证。
 3. **push 到远程**（`git push origin feat/f2-prompt-compress`）保险。
-4. **更长上下文场景**：tau-bench retail 冷历史才 2-5k（中等），F2 延迟小亏；上长 RAG/长任务（冷历史几万 token）延迟会翻正（prefill 节省 > 压缩耗时）。
-5. **mem 指标**：换"实际 KV 用量"而非 vllm pool peak，才能体现 -45% 上下文的显存收益。
-6. rate/trigger 还可微调（现 rate=0.65/trigger=2000/recompress=4000 是甜点）。
+4. **更长上下文场景**：验证搜索/RAG/大 JSON 工具结果。
+5. **mem 指标**：换"实际 KV 用量"而非 vllm pool peak。
 
 ## 9. 提交链（feat/f2-prompt-compress）
 
@@ -144,6 +149,7 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
 - `f2-results/` — 原始产物（comparison、per-task、events jsonl，各档）
 - `F2-prompt-compress.md` — F2 设计/搭建说明
 - `F2-static-prompt-compression-research.md` — system policy / 工具 schema 真 token 构成与压缩方案
+- `F2-tool-aware-llmlingua-plan.md` — 工具轨迹结构保护、BERT 与 hot result 方案
 
 ## 11. sent_tokens 口径变更（2026-07-23）
 
@@ -166,3 +172,17 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
 - system policy + tools 约占 F2 真输入 60.6%，当前冷历史 F2 不处理。下一步优先固定静态
   prompt 精简，而不是继续只调 cold rate。
 - 完整报告：`docs/f2-results/comparison_true8_usage.md`；原始运行：`/tmp/f2-true8-usage`。
+
+## 13. Tool-aware LLMLingua-2 实现（checkpoint 后）
+
+- 回退 checkpoint：`e9505ed`（真实 token 计量 + 调研，尚未实施 tool-aware）。
+- 当前配置切到 LLMLingua-2 BERT small；模型缓存位于 `$HF_HUB_CACHE`。
+- cold serializer 完整保留 user、tool name/call ID/arguments，并从 JSON tool result 抽取
+  ID/status/金额/数量/时间/address/payment/error 等硬字段；只把正文送 BERT。
+- hot tool content 超过估算 1,000 token 时提前压缩，但 assistant/tool 协议结构原样。
+- body 按 `rate + SHA-256` 缓存，hot 压过的结果进入 cold 后不再重复推理。
+- 新增压缩器初始化锁，避免并发任务首次触发时重复创建 worker pool。
+- 真 worker：首次 BERT 加载+压缩 4.98s，同内容缓存复用低于 1ms；硬字段保持。
+- 最终 8 条：success 2/8；BERT 压缩均值 7.01s；p50 98.64s。旧 GPT-2 小测分别为
+  0/8、19.15s、145.92s。安全 cold 压缩约 -7.2%，retail 未触发 hot 大结果路径。
+- 报告：`docs/f2-results/comparison_toolaware8.md`；原始数据：`/tmp/f2-toolaware8-v2`。

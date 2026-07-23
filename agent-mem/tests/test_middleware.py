@@ -156,6 +156,25 @@ class _FakeCompressor:
         }
 
 
+class _ToolAwareFakeCompressor:
+    """LLMLingua-2 替身：逐 context 返回短文本，便于验证结构保护与缓存。"""
+
+    def __init__(self):
+        self.calls: list[tuple[list[str], dict]] = []
+
+    def compress_prompt(self, prompt_list, **kw):
+        contexts = list(prompt_list)
+        self.calls.append((contexts, kw))
+        compressed = [f"CMP_BODY_{i}" for i, _ in enumerate(contexts)]
+        return {
+            "compressed_prompt": "\n\n".join(compressed),
+            "compressed_prompt_list": compressed,
+            "origin_tokens": sum(len(x) for x in contexts),
+            "compressed_tokens": sum(len(x) for x in compressed),
+            "ratio": "2x",
+        }
+
+
 def _compress_mw(**kw) -> CompressMiddleware:
     """构造一个绑了 fake 压缩器的 CompressMiddleware（绕过懒加载/真模型）。"""
     mw = CompressMiddleware(**kw)
@@ -187,6 +206,123 @@ def test_compress_bad_rate_raises():
         CompressMiddleware(rate=0)
     with pytest.raises(ValueError):
         CompressMiddleware(rate=1.5)
+
+
+def test_tool_aware_requires_llmlingua2():
+    with pytest.raises(ValueError, match="method=llmlingua2"):
+        CompressMiddleware(method="longllmlingua", tool_aware=True)
+
+
+def test_tool_aware_preserves_tool_protocol_semantics():
+    mw = CompressMiddleware(
+        method="llmlingua2", tool_aware=True, keep_hot=1, trigger_tokens=1,
+        backend="inprocess",
+    )
+    fake = _ToolAwareFakeCompressor()
+    mw._compressor = fake
+    ctx = MiddlewareContext("tool-aware")
+    arguments = '{"order_id":"#W0001","reason":"ordered by mistake"}'
+    tool_result = (
+        '{"order_id":"#W0001","status":"pending","total":42.5,'
+        '"description":"' + "long product description " * 40 + '"}'
+    )
+    messages = [
+        {"role": "system", "content": "policy"},
+        {"role": "user", "content": "Cancel #W0001 after I confirm yes."},
+        {"role": "assistant", "content": "checking", "tool_calls": [{
+            "id": "call-1", "type": "function",
+            "function": {"name": "get_order_details", "arguments": arguments},
+        }]},
+        {"role": "tool", "tool_call_id": "call-1", "name": "get_order_details",
+         "content": tool_result},
+        {"role": "assistant", "content": "hot tail"},
+    ]
+
+    out = mw.transform_messages(messages, ctx)
+    memory = out[1]["content"]
+    assert "Cancel #W0001 after I confirm yes." in memory
+    assert "call_id=call-1" in memory
+    assert "name=get_order_details" in memory
+    assert f"arguments={arguments}" in memory
+    assert '"order_id":"#W0001"' in memory
+    assert '"status":"pending"' in memory
+    assert '"total":42.5' in memory
+    assert "CMP_BODY_" in memory
+    assert "long product description" not in memory
+    assert out[-1] == {"role": "assistant", "content": "hot tail"}
+    assert messages[3]["content"] == tool_result  # canonical 历史未改
+    assert fake.calls
+    assert all(call[1]["force_reserve_digit"] for call in fake.calls)
+    assert all(call[1]["use_context_level_filter"] is False for call in fake.calls)
+
+
+def test_tool_aware_recompression_reuses_body_cache():
+    mw = CompressMiddleware(
+        method="llmlingua2", tool_aware=True, keep_hot=1, trigger_tokens=1,
+        recompress_delta_tokens=1, backend="inprocess",
+    )
+    fake = _ToolAwareFakeCompressor()
+    mw._compressor = fake
+    ctx = MiddlewareContext("cache")
+    base = [
+        {"role": "user", "content": "keep this user goal exactly"},
+        {"role": "assistant", "content": "old assistant body " * 40},
+        {"role": "assistant", "content": "tail"},
+    ]
+    mw.transform_messages(base, ctx)
+    assert sum(len(call[0]) for call in fake.calls) == 1
+
+    extended = base + [
+        {"role": "assistant", "content": "new assistant body " * 40},
+        {"role": "assistant", "content": "new tail"},
+    ]
+    mw.transform_messages(extended, ctx)
+    # 第二次整段重建，但旧 body 由 hash cache 命中，只压新进入 cold 的两个 body。
+    all_submitted = [body for call in fake.calls for body in call[0]]
+    assert sum(body.startswith("old assistant body") for body in all_submitted) == 1
+    assert sum(len(call[0]) for call in fake.calls) == 3
+
+
+def test_tool_aware_compresses_large_hot_tool_content_without_breaking_pair():
+    mw = CompressMiddleware(
+        method="llmlingua2", tool_aware=True, keep_hot=6, trigger_tokens=999999,
+        hot_tool_trigger_tokens=10, backend="inprocess",
+    )
+    fake = _ToolAwareFakeCompressor()
+    mw._compressor = fake
+    ctx = MiddlewareContext("hot-tool")
+    arguments = '{"order_id":"#W0002"}'
+    result = (
+        '{"order_id":"#W0002","status":"delivered","description":"'
+        + "verbose result " * 100 + '"}'
+    )
+    messages = [
+        {"role": "user", "content": "show order"},
+        {"role": "assistant", "content": None, "tool_calls": [{
+            "id": "c2", "type": "function",
+            "function": {"name": "get_order_details", "arguments": arguments},
+        }]},
+        {"role": "tool", "tool_call_id": "c2", "name": "get_order_details",
+         "content": result},
+    ]
+
+    out = mw.transform_messages(messages, ctx)
+    assert out[1] == messages[1]
+    assert out[2]["role"] == "tool"
+    assert out[2]["tool_call_id"] == "c2"
+    assert "[compressed tool result]" in out[2]["content"]
+    assert '"order_id":"#W0002"' in out[2]["content"]
+    assert '"status":"delivered"' in out[2]["content"]
+    _assert_no_orphan_tool(out)
+
+    calls_after_first = len(fake.calls)
+    mw.transform_messages(messages, ctx)
+    assert len(fake.calls) == calls_after_first  # 相同 content 命中 body hash cache
+
+
+def test_hot_tool_trigger_rejects_negative_value():
+    with pytest.raises(ValueError, match="hot_tool_trigger_tokens"):
+        CompressMiddleware(hot_tool_trigger_tokens=-1)
 
 
 def test_compress_gate_skips_short_history():
@@ -438,6 +574,33 @@ def test_compress_worker_pool_distributes():
     for _ in range(3):
         pool.compress_prompt("ctx")
     assert used == [0, 1, 2]  # 轮转用到全部 3 个 worker
+
+
+def test_compressor_pool_initialization_is_thread_safe():
+    import threading
+    import time
+
+    class _InitProbe(CompressMiddleware):
+        def __init__(self):
+            super().__init__(backend="inprocess")
+            self.build_count = 0
+
+        def _build_compressor(self):
+            self.build_count += 1
+            time.sleep(0.01)
+            return object()
+
+    mw = _InitProbe()
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(mw._get_compressor()))
+               for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert mw.build_count == 1
+    assert len({id(result) for result in results}) == 1
 
 
 # ---- run_react 接线 ----

@@ -77,9 +77,11 @@ narrative_fields=<按 0.5-0.7 压缩>
 [ASSISTANT] ...
 ```
 
-通过 `structured_compress_prompt` 给 role marker、工具名、参数、关键 JSON 片段设置
-`compress=False`，只对自然语言和低敏感结果设置 rate。question 使用最近 user 请求，
-`reorder_context=original`，保持 agent 时序。
+实现验证发现：`llmlingua 0.2.2` 的 `structured_compress_prompt` 最终会进入
+`compress_prompt`，但 LLMLingua-2 的 early branch 不消费 segment 的 `compress=False`
+元数据。当前实现因此在调用 BERT 前由 serializer 物理分离 protected prefix 与 body：
+硬字段完全不送入压缩器，只有自然语言和低敏感结果按 rate 批量压缩，之后按原时序重组。
+这比依赖标签保护更强。
 
 冷 group 最终仍可折叠成一条 `[compressed history]` system message；因为它已经离开 hot
 协议区，不再需要保留可执行 `tool_call_id`，但语义信息必须完整。
@@ -105,7 +107,7 @@ narrative_fields=<按 0.5-0.7 压缩>
 
 ### P0：修正 serializer 与计量
 
-1. 新增 `ToolAwareHistorySerializer`，按完整 tool group 输出结构化片段；
+1. 新增 tool-aware serializer，按完整 tool group 输出结构化片段；
 2. arguments 和关键字段必须原样；
 3. 日志按 role 记录原始/压缩后的真实 Qwen token；
 4. 增加 JSON 可解析、ID/金额/status 不丢、tool pairing 合法测试。
@@ -113,7 +115,7 @@ narrative_fields=<按 0.5-0.7 压缩>
 ### P1：LLMLingua-2 冷历史
 
 1. 切 `llmlingua2-bert-base-multilingual-cased-meetingbank`；
-2. role marker/工具名/arguments 使用 `compress=False`；
+2. role marker/工具名/arguments 在压缩器外物理保护；
 3. user/assistant 文本先用 rate=0.75，tool narrative 用 rate=0.6；
 4. 保持 `keep_hot=6`，先只替换当前 cold 路径。
 
@@ -152,3 +154,19 @@ narrative_fields=<按 0.5-0.7 压缩>
 “普通冷文本”扩展到“工具结果 + 完整工具轨迹”，同时保护结构字段。真正的收益取决于
 tool result 在任务中的长度：对于短 retail JSON，收益仍有限；对搜索/RAG/大 JSON 工具，
 收益会显著高于当前 cold-only 实现。
+
+## 8. 实施状态
+
+- P0 已完成：tool-aware serializer、arguments/关键 JSON 保护、安全测试；
+- P1 已完成：配置切到 BERT small，模型已缓存，冷 assistant/tool body 分 rate 压缩；
+- P2 已完成：hot tool content 超过估算 1,000 token 时压缩，role/call ID 保持；
+- P3 已完成计算层：body 按 `rate + SHA-256` 缓存，重建 cold 时只压新增 body；
+- 并发初始化锁已加入，首次并发触发只构造一个 worker pool；
+- 8 条 smoke benchmark 已完成；待完成 full115 success/latency ablation。
+
+真实 worker 冒烟：BERT 首次加载+压缩 4.98s；5,279 字符工具结果发送副本降到 2,967
+字符，ID/status/金额保持；同内容第二次缓存命中低于 1ms。
+
+最终 8 条小测：success 2/8，BERT 压缩均值 7.01s（旧 GPT-2 19.15s），E2E p50
+98.64s（旧 GPT-2 145.92s）。首次 cold 安全压缩合计仅 -7.2%；retail 没有 hot result
+超过阈值。详见 `f2-results/comparison_toolaware8.md`。
