@@ -98,32 +98,57 @@ fix = pin `numpy==1.26.4`（已应用）。详见 memory `numpy-abi-broke-npu-se
 **不死锁**、正常生成 ~200–260 tok/s。死锁根因确认是 **decode 走 FULL graph capture**；
 decode 改 eager（NONE）即绕开。enum 另有 `FULL_AND_PIECEWISE`（decode=PIECEWISE）未测，可能更快。
 
-**② ❌ C8 输出是垃圾**（`coholiccoholic...`），即使注入正确自校准 MinMax scale（0.001~0.9，逐通道）。
-同 prompt 的 **bf16 baseline 完全连贯**（"7 multiplied by 8 ... is 56"）。查 `vllm_ascend` 源码：
-scale 方向 / shape / offset=0 / quant-dequant 公式**我方全对**
-（`_c8_k_inv_scale=1/scale` 量化、`_c8_k_aq_scale_nz_bnsd=scale` 反量化，对称 per-channel）
-→ 不是校准/格式问题，是 **vllm-ascend 0.22.1rc1 的 C8 正确性 bug**（与上游 survey 吻合：
-C8 GQA 0.22.1 后仍在 churn 精度 bugfix，release notes 明写 "fix for precision issue caused by
-incorrect KV cache handling"）。placeholder scale(0.05) 和真 scale 都垃圾、baseline 不垃圾 →
-确认是 C8 路径本身。
+**② ✅ C8 输出垃圾的根因 = 校准采错张量（已修，非上游 bug）**
 
-### 结论与出路
+初次用"自校准 MinMax scale"跑 C8，输出是垃圾（`coholiccoholic...`），bf16 baseline 同 prompt
+连贯。**一度误判为 vllm-ascend 0.22.1rc1 的 C8 正确性 bug——此判断错误，现更正。**
 
-- **graph 死锁已解**（FULL_DECODE_ONLY）——这是 investigation 没试到的解法。
-- **C8 在 0.22.1rc1 上质量不可用**。要 F1 出真 before/after，二选一：
-  1. **升级 vllm-ascend** 到精度 bugfix 后的版本（≥0.23.0 稳定版），重验 C8 输出连贯；或
-  2. 改用上游验过的 **ModelSlim W8A8C8 checkpoint**（PR #7474 的验证模型 Qwen3-32B W8A8C8，
-     自带正确 scale 格式）替代自校准 MinMax。
-- 当前「自校准 MinMax + 0.22.1rc1」这条组合不通。调试后模型已还原 stock（无残留）。
+`scripts/verify_c8_rope.py` 实测定因：校准脚本 hook 的是 **pre-RoPE 的 `k_proj`**，但 KV cache 存的是
+**post-RoPE K**（vLLM V1 在 rotary 之后才把 K 交给 C8 backend 量化）。RoPE + `k_norm` 把早期层 K 的
+逐通道幅值放大 **最多 ~435×**（L0），pre-RoPE scale 对早期层小几个数量级 → 量化饱和截断 → 反量化错位 → 垃圾。
+
+| Layer | post/pre maxabs | pre-scale roundtrip err | pre-scale 饱和 | **post-scale err** |
+|---|---|---|---|---|
+| L0 | 435× | 0.845 | 68% | **0.004** |
+| L7 | 29× | 0.477 | 26% | 0.005 |
+| L14 | 11× | 0.086 | 4.8% | 0.006 |
+| L27 | 1.2× | 0.036 | 0.02% | 0.005 |
+
+⇒ **per-channel MinMax scheme 本身完全正确**（post-RoPE scale 的 quant→dequant roundtrip 误差 ~0.5%）。
+bug 100% 在校准采的张量，是我们能修的，**不是上游 bug**。
+
+**修法**（`scripts/calibrate_c8.py`）：K 改 hook **post-RoPE**（monkeypatch
+`transformers.models.qwen3.modeling_qwen3.apply_rotary_pos_emb` 抓旋转后 K 的逐通道 maxabs）；
+V 无 RoPE，`v_proj` 直采不变。scale = maxabs/127，注入 model.safetensors。
+
+**③ ✅ 修正后 C8 完全可用**（FULL_DECODE_ONLY + post-RoPE scale）：
+- 输出连贯正确：`7×8 → "...7*8 is 56..."`、`primary colors → "...red, blue, and yellow..."`。
+- ~200 tok/s、不死锁、KV cache 是 int8。
+- KV 容量：54.85 GiB int8 池装 **1,026,944 tokens**（≈ bf16 2×）。
+
+### 结论（已更正）
+
+- **C8 在 vllm-ascend 0.22.1rc1 上完全可用**：`FULL_DECODE_ONLY`（解 graph 死锁）+ **post-RoPE 逐通道
+  MinMax 校准**（解精度）。**F1 解锁，无需升级版本、无需 ModelSlim。**
+- investigation 的 "此路不通" 两处都错：① 只测 FULL graph（死锁）→ `FULL_DECODE_ONLY` 可绕开；
+  ② 校准 hook pre-RoPE（垃圾）→ post-RoPE 校准正确。
+- ⚠️ **本结论 Qwen3-specific**：校准脚本 monkeypatch 的是 qwen3 的 `apply_rotary_pos_emb`；换模型族要改 hook 点。换模型/版本前用 `verify_c8_rope.py` 复验 post/pre 比值。
+- 调试后模型已还原 stock（无残留）。
 
 ---
 
-## 4. 真精度 scale（自校准，本分支不含）
+## 4. 真精度 scale（post-RoPE 自校准，已含，需 NPU）
 
-占位 `scale=0.05` 精度垃圾，仅验证路径。真 per-channel MinMax scale 由自校准产出，
-实现见 `feat/f1-c8-ascend-investigation` 的 `scripts/calibrate_f1_c8.py`（跑模型 + k/v_proj
-forward hook 收集 maxabs → `/127` → 写 safetensors + 更新 index）。移植进库属"可运行探针"
-路径（需 NPU），不在本次"库+配置+测试"范围内。
+占位 `scale=0.05` 精度垃圾，仅验证路径。真 per-channel MinMax scale 由自校准产出——**必须 hook
+post-RoPE K**（见 §3 ②的坑）：
+
+- `scripts/calibrate_c8.py`：跑模型 + monkeypatch `apply_rotary_pos_emb` 抓 post-RoPE K 逐通道 maxabs
+  + `v_proj` 抓 V（无 RoPE）→ `/127` → 注入 model.safetensors。**这是让 C8 输出正确的关键脚本。**
+- `scripts/verify_c8_rope.py`：诊断工具——对比 pre/post-RoPE 逐通道 maxabs + roundtrip 误差，确认
+  校准采的张量是否对得上 cache。换模型/版本前先跑它。
+
+⚠️ `calibrate_c8.py` 的 monkeypatch 针对 **Qwen3**（`transformers.models.qwen3.modeling_qwen3`）；
+换模型族要改 hook 点（其它模型同理：cache 的是 post-RoPE K，校准必须采 post-RoPE）。
 
 ---
 
