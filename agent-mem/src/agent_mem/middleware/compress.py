@@ -93,12 +93,14 @@ class _SubprocessCompressor:
         model_name: str | None,
         use_llmlingua2: bool,
         device: str,
+        num_threads: int = 0,
     ) -> None:
         self.venv_python = venv_python
         self.worker_script = worker_script
         self.model_name = model_name
         self.use_llmlingua2 = use_llmlingua2
         self.device = device
+        self.num_threads = num_threads  # >0 时限制 worker 线程数（避免多 worker 时 torch 超订）
         self._proc: subprocess.Popen | None = None
         self._stderr_fh = None
         self._lock = threading.Lock()  # 并发跑多任务时串行化对单 worker 的访问
@@ -108,6 +110,10 @@ class _SubprocessCompressor:
             return
         # 清掉 PYTHONPATH，避免子进程误用主 venv 的 transformers
         env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        if self.num_threads and self.num_threads > 0:
+            # 限制 worker 线程数：多 worker 并行时，避免 torch 默认各吃满全部核导致超订
+            env["OMP_NUM_THREADS"] = str(self.num_threads)
+            env["MKL_NUM_THREADS"] = str(self.num_threads)
         self._stderr_fh = open(_WORKER_STDERR_LOG, "a")
         self._proc = subprocess.Popen(
             [self.venv_python, self.worker_script],
@@ -229,6 +235,7 @@ class CompressMiddleware(BaseMiddleware):
         worker_venv: str = "",
         worker_script: str = "",
         worker_pool_size: int = 1,
+        worker_threads: int = 0,
         condition_in_question: str = "after",
         dynamic_context_compression_ratio: float = 0.3,
         condition_compare: bool = False,
@@ -257,6 +264,7 @@ class CompressMiddleware(BaseMiddleware):
         self.worker_venv = worker_venv
         self.worker_script = worker_script or _DEFAULT_WORKER
         self.worker_pool_size = max(1, int(worker_pool_size))  # 并发压缩池大小（>= concurrency 才全并行）
+        self.worker_threads = int(worker_threads)  # 每 worker 线程上限(>0 限制；建议 nproc // pool_size)
         if backend not in {"subprocess", "inprocess"}:
             raise ValueError(f"backend 必须是 subprocess 或 inprocess，得到 {backend!r}")
         self.condition_in_question = condition_in_question
@@ -297,6 +305,7 @@ class CompressMiddleware(BaseMiddleware):
                     model_name=self.model_name,
                     use_llmlingua2=(self.method == "llmlingua2"),
                     device=self.device,
+                    num_threads=self.worker_threads,
                 )
                 if self.worker_pool_size > 1:
                     # 并发压缩池：N 个 worker 并行（消除单 worker 串行瓶颈）
