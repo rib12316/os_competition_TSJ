@@ -14,6 +14,7 @@ day-1 默认 ``--runner dry-run``（指标全 0，纯 CPU 跑通落盘）；``--
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -70,6 +71,10 @@ def _build_parser() -> argparse.ArgumentParser:
     # qwen-agent 真跑参数
     p.add_argument("--max-tasks", type=int, default=None, help="限制真跑任务数（qwen-agent）")
     p.add_argument("--max-steps", type=int, default=30, help="单任务最大 tool-calling 步数")
+    p.add_argument(
+        "--concurrency", type=int, default=1,
+        help="任务级并发数（tau-bench 任务相互独立，>1 时并行跑各任务；默认 1=顺序）",
+    )
     p.add_argument("--api-key", default="stub", help="引擎 API key（vLLM 不校验，占位即可）")
     # user-simulator 扩充选项（默认走本地引擎；给 --user-api-base 切外部 OpenAI 兼容 API）
     p.add_argument(
@@ -139,17 +144,26 @@ def main(argv: list[str] | None = None) -> int:
         from agent_mem.middleware import middlewares_from_config
 
         mw_stack = middlewares_from_config(cfg)
+        # user-sim：CLI 参数优先，否则用 cfg.user_sim（默认 mimo，key 从 api_key_env 读环境变量）
+        us = cfg.user_sim
+        user_model = args.user_model or (us.model or None)
+        user_provider = args.user_provider or us.provider
+        user_api_base = args.user_api_base or (us.api_base or None)
+        user_api_key = args.user_api_key
+        if user_api_key is None and us.api_key_env:
+            user_api_key = os.environ.get(us.api_key_env)
         runner = QwenAgentRunner(
             engine_url=args.engine_url,
             model=cfg.engine.model,
             max_tasks=args.max_tasks,
             max_steps=args.max_steps,
             api_key=args.api_key,
-            user_model=args.user_model,
-            user_provider=args.user_provider,
-            user_api_base=args.user_api_base,
-            user_api_key=args.user_api_key,
+            user_model=user_model,
+            user_provider=user_provider,
+            user_api_base=user_api_base,
+            user_api_key=user_api_key,
             middlewares=mw_stack.middlewares,  # 缝D：cfg.middleware 激活的中间件
+            concurrency=args.concurrency,
         )
     else:
         runner = get_runner(args.runner)

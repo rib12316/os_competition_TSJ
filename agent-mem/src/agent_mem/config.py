@@ -108,12 +108,30 @@ class MetricsConfig:
 
 
 @dataclass
+class UserSimConfig:
+    """tau-bench user-simulator 配置（对话的 user 侧）。
+
+    agent 侧始终走本地引擎（被测/被优化对象）；user-sim 默认也走本地引擎（开源可复现），
+    但可切外部 OpenAI 兼容 API（如 mimo / GPT-4o）获得更强、更真实的对话。
+
+    - ``api_base`` 为空 → user-sim 走本地引擎（向后兼容旧行为）。
+    - ``api_key_env``：key 从该环境变量读（**不写进仓库**），如 ``MIMO_KEY``。
+    """
+
+    model: str = ""
+    provider: str = "openai"
+    api_base: str = ""
+    api_key_env: str = ""
+
+
+@dataclass
 class AppConfig:
     engine: EngineConfig = field(default_factory=EngineConfig)
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     middleware: MiddlewareConfig = field(default_factory=MiddlewareConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
+    user_sim: UserSimConfig = field(default_factory=UserSimConfig)
     # 从 yaml 文件 stem 填（如 "prefix_cache"），用于 run 目录命名
     config_name: str = ""
 
@@ -189,6 +207,22 @@ def _build_session(data: Any) -> SessionConfig:
     )
 
 
+def _build_user_sim(data: Any) -> UserSimConfig:
+    """解析 ``user_sim`` 段。缺省 → 空（user-sim 走本地引擎，向后兼容）。"""
+    if data is None:
+        return UserSimConfig()
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"user_sim 段必须是 mapping，得到 {type(data).__name__}"
+        )
+    return UserSimConfig(
+        model=str(data.get("model", "")),
+        provider=str(data.get("provider", "openai")),
+        api_base=str(data.get("api_base", "")),
+        api_key_env=str(data.get("api_key_env", "")),
+    )
+
+
 def validate(cfg: AppConfig) -> None:
     """校验配置（白名单 + 取值范围）。失败抛 :class:`ConfigError`。"""
     e = cfg.engine
@@ -244,6 +278,7 @@ def load_config(path: str | Path) -> AppConfig:
         metrics=_build_metrics(raw.get("metrics")),
         middleware=_build_middleware(raw.get("middleware")),
         session=_build_session(raw.get("session")),
+        user_sim=_build_user_sim(raw.get("user_sim")),
         config_name=p.stem,
     )
     validate(cfg)

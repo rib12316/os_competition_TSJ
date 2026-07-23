@@ -25,8 +25,9 @@ middleware:                       # 缝D
     compress:
       # —— 方案 A：单一方法 + 触发门 ——
       method: longllmlingua      # llmlingua | longllmlingua | llmlingua2（ablation 可切）
-      rate: 0.4                  # 保留比例（0.4=保留 40%≈2.5× 压缩）
-      trigger_tokens: 4000       # 冷历史 < 此值不压（短上下文无 lost-in-the-middle，省延迟）
+      rate: 0.65                 # 保留比例（0.65=保留 65%≈1.5× 压缩；调高护 success）
+      trigger_tokens: 2000       # 冷历史 < 此值不压（tau-bench retail 实测多数任务冷历史 2k~5k，降到 2000 才 engages）
+      recompress_delta_tokens: 4000  # 压过之后新增冷 >= 此值才重压（4000≈每任务压1次复用；8000 太高永不重压）
       keep_hot: 6                # 热尾保留条数（自动 snap 到完整 tool_call→tool 组）
       device: cpu                # 压缩器小模型放 CPU，NPU 让给主 LLM
       model_name: gpt2           # 小模型(开发/冒烟用)；生产可换 NousResearch/Llama-2-7b-hf 提质量
@@ -48,3 +49,9 @@ metrics:
   - kv_cache_hit_rate
   - task_success_rate
   - ttft
+
+user_sim:                         # tau-bench user-simulator（agent 侧仍走本地引擎）
+  model: mimo-v2.5-pro            # 默认用 mimo 演用户（更强、更真实），可改 gpt-4o 等
+  provider: openai
+  api_base: https://token-plan-cn.xiaomimimo.com/v1
+  api_key_env: MIMO_KEY           # key 从 $MIMO_KEY 读，不写进仓库；CLI --user-* 可覆盖

@@ -305,6 +305,64 @@ def test_compress_worker_script_defaults_to_packaged():
     assert os.path.exists(mw.worker_script)
 
 
+# ---- 阈值增量压缩（reuse / recompress）+ 事件日志 ----
+
+
+def test_compress_reuses_within_delta():
+    """同一 session：自上次压缩后新增冷 < delta → 复用缓存，不再调压缩器。"""
+    mw = _compress_mw(keep_hot=1, trigger_tokens=10, recompress_delta_tokens=100000)
+    ctx = MiddlewareContext("s")
+    msgs1 = [
+        {"role": "system", "content": "p"},
+        {"role": "user", "content": "x" * 1000},  # cold（大）
+        {"role": "assistant", "content": "a1"},    # hot
+    ]
+    mw.transform_messages(msgs1, ctx)
+    assert len(mw._compressor.calls) == 1           # 首次压缩
+    msgs2 = msgs1 + [{"role": "assistant", "content": "a2" * 100},
+                     {"role": "assistant", "content": "t"}]  # big 进冷 + trailer 留热
+    mw.transform_messages(msgs2, ctx)
+    assert len(mw._compressor.calls) == 1           # ~50 < 100000 → 复用，没再压
+
+
+def test_compress_recompress_when_delta_exceeded():
+    """同一 session：自上次压缩后新增冷 >= delta → 重新压缩。"""
+    mw = _compress_mw(keep_hot=1, trigger_tokens=10, recompress_delta_tokens=1)
+    ctx = MiddlewareContext("s")
+    msgs1 = [
+        {"role": "system", "content": "p"},
+        {"role": "user", "content": "x" * 1000},
+        {"role": "assistant", "content": "a1"},
+    ]
+    mw.transform_messages(msgs1, ctx)
+    assert len(mw._compressor.calls) == 1
+    msgs2 = msgs1 + [{"role": "assistant", "content": "a2" * 100},
+                     {"role": "assistant", "content": "t"}]  # big 进冷 + trailer 留热
+    mw.transform_messages(msgs2, ctx)
+    assert len(mw._compressor.calls) == 2           # ~50 >= 1 → 重压
+
+
+def test_compress_event_log(tmp_path):
+    """设 event_log 后每步写 JSONL（session/动作/前后 token/耗时）。"""
+    import json as _json
+
+    log = tmp_path / "events.jsonl"
+    mw = CompressMiddleware(keep_hot=1, trigger_tokens=10, event_log=str(log))
+    mw._compressor = _FakeCompressor()
+    msgs = [
+        {"role": "system", "content": "p"},
+        {"role": "user", "content": "x" * 1000},
+        {"role": "assistant", "content": "a"},
+    ]
+    mw.transform_messages(msgs, MiddlewareContext("task-7"))
+    lines = [ln for ln in log.read_text().splitlines() if ln.strip()]
+    assert lines, "应至少写一条事件"
+    ev = _json.loads(lines[0])
+    assert ev["session_id"] == "task-7"
+    assert ev["action"] == "compress"
+    assert "origin_tokens" in ev and "compress_ms" in ev and "cold_tokens" in ev
+
+
 # ---- run_react 接线 ----
 
 

@@ -10,6 +10,12 @@ system 原样保留。命中赛题"降显存/降延迟"——更短的 prompt �
   ``longllmlingua``，最适合长会话 agent 的 question-aware 压缩）；``trigger_tokens``
   是**压/不压**的开关——冷历史太短就**直接放行**（短上下文没有 lost-in-the-middle
   问题，压了反而白费延迟）。不是"两种方法分场景"。
+- **阈值增量压缩（不是每步都压）**：冷历史首次过 ``trigger_tokens`` 才压一次，之后
+  **只有自上次压缩后新增的冷 >= ``recompress_delta_tokens`` 才重压**，其余步**复用**
+  缓存的压缩结果（新增冷 verbatim 补在压缩段后，无信息丢失）。把压缩从 O(步数) 降到
+  偶发。缓存按 session 存 ``ctx.scratch``。
+- **事件日志**：设环境变量 ``F2_EVENT_LOG=<path>`` 后，每步写一条 JSONL（session/步号/
+  上下文 token/动作 skip|compress|reuse/压缩次数/前后 token/耗时），供调阈值与看效果。
 - **正典不动**：只变换发给引擎的副本（详见 ``base.py``），压缩**无序可恢复**。
 - **tool_call 配对安全**：绝不留下孤立的 ``role=tool`` 消息。做法——把整段冷历史
   压成**一条**文本消息（冷的 assistant ``tool_calls`` 与冷的 tool 结果**一起**进
@@ -29,6 +35,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
+import time
 from typing import Any
 
 from agent_mem.middleware.base import BaseMiddleware, MiddlewareContext
@@ -92,6 +100,7 @@ class _SubprocessCompressor:
         self.device = device
         self._proc: subprocess.Popen | None = None
         self._stderr_fh = None
+        self._lock = threading.Lock()  # 并发跑多任务时串行化对单 worker 的访问
 
     def _ensure_started(self) -> None:
         if self._proc is not None and self._proc.poll() is None:
@@ -128,20 +137,21 @@ class _SubprocessCompressor:
             raise RuntimeError(f"compress worker 启动失败: {ready}")
 
     def compress_prompt(self, *args: Any, **kw: Any) -> dict:
-        """透明转发到 worker 的 PromptCompressor.compress_prompt。"""
-        self._ensure_started()
-        assert self._proc is not None and self._proc.stdin is not None
-        self._proc.stdin.write(json.dumps({"args": list(args), "kw": kw}) + "\n")
-        self._proc.stdin.flush()
-        resp_line = self._proc.stdout.readline()
-        if not resp_line:
-            raise RuntimeError(
-                f"compress worker 无响应（可能崩溃），见 {_WORKER_STDERR_LOG}"
-            )
-        resp = json.loads(resp_line)
-        if "error" in resp:
-            raise RuntimeError(f"compress worker 报错: {resp['error']}")
-        return resp["result"]
+        """透明转发到 worker 的 PromptCompressor.compress_prompt（线程安全）。"""
+        with self._lock:
+            self._ensure_started()
+            assert self._proc is not None and self._proc.stdin is not None
+            self._proc.stdin.write(json.dumps({"args": list(args), "kw": kw}) + "\n")
+            self._proc.stdin.flush()
+            resp_line = self._proc.stdout.readline()
+            if not resp_line:
+                raise RuntimeError(
+                    f"compress worker 无响应（可能崩溃），见 {_WORKER_STDERR_LOG}"
+                )
+            resp = json.loads(resp_line)
+            if "error" in resp:
+                raise RuntimeError(f"compress worker 报错: {resp['error']}")
+            return resp["result"]
 
     def close(self) -> None:
         if self._proc and self._proc.poll() is None:
@@ -193,6 +203,8 @@ class CompressMiddleware(BaseMiddleware):
         reorder_context: str = "original",
         force_tokens: list[str] | None = None,
         history_role: str = "system",
+        recompress_delta_tokens: int | None = None,
+        event_log: str | None = None,
     ) -> None:
         if method not in _METHODS:
             raise ValueError(f"method 必须是 {sorted(_METHODS)}，得到 {method!r}")
@@ -220,6 +232,13 @@ class CompressMiddleware(BaseMiddleware):
         self.reorder_context = reorder_context
         self.force_tokens = force_tokens if force_tokens is not None else ["\n", "?", "."]
         self.history_role = history_role
+        self.recompress_delta_tokens = (
+            recompress_delta_tokens if recompress_delta_tokens is not None else trigger_tokens
+        )
+        if self.recompress_delta_tokens < 0:
+            raise ValueError("recompress_delta_tokens 必须 >= 0")
+        self._event_log_path = event_log or os.environ.get("F2_EVENT_LOG") or ""
+        self._log_lock = threading.Lock()  # 并发跑多任务时串行化事件日志写文件
         self._compressor: Any = None  # 懒加载，进程级单例
 
     # ---- 压缩器加载（惰性、缓存）----
@@ -273,6 +292,9 @@ class CompressMiddleware(BaseMiddleware):
 
         # 太短：热尾都凑不齐，全留
         if len(rest) <= self.keep_hot:
+            self._log_event(ctx, {"action": "skip", "n_msgs": len(messages),
+                                  "cold_n": 0, "hot_n": len(rest), "cold_tokens": 0,
+                                  "reason": "history_shorter_than_keep_hot"})
             return list(messages)
 
         # 切冷/热；热尾边界 snap 到完整 tool_call→tool 组（避免孤立 tool）
@@ -281,34 +303,60 @@ class CompressMiddleware(BaseMiddleware):
             split -= 1  # 把 tool 的 caller(assistant) 一起拉进热尾
         cold, hot = rest[:split], rest[split:]
 
-        # 冷历史 → 文本块
         chunks = [t for t in (_msg_to_text(m) for m in cold) if t]
-        if not chunks:
-            return list(messages)
+        cold_tokens = self._est_tokens(chunks)
+        hot_tokens = self._est_tokens([_msg_to_text(m) for m in hot])
 
-        # 触发门：冷历史短就不压（省延迟）
-        if self._est_tokens(chunks) < self.trigger_tokens:
-            return list(messages)
-
-        # question = 最近一条带内容的 user 消息（LongLingua 的相关性锚点）
-        question = next(
-            (
-                m.get("content") or ""
-                for m in reversed(rest)
-                if m.get("role") == "user" and m.get("content")
-            ),
-            "",
+        # 每 session 的压缩缓存（frozen_count=已压进压缩段的冷条数；compressed=压缩文本；count=压缩次数）
+        st = ctx.scratch.setdefault(
+            "compress", {"frozen_count": 0, "compressed": "", "count": 0}
         )
-        if not question:
-            # LongLLMLingua 必须有非空 question（llmlingua 内部 assert）；
-            # 退化用最近一条非空消息，再不行用占位
-            question = (
-                next((m.get("content") or "" for m in reversed(rest) if m.get("content")), "")
-                or "Continue the task."
-            )
+        new_chunks = [t for t in (_msg_to_text(m) for m in cold[st["frozen_count"]:]) if t]
+        new_tokens = self._est_tokens(new_chunks)
 
-        compressed = self._compress_cold(chunks, question)
+        common = {
+            "n_msgs": len(messages), "cold_n": len(cold), "hot_n": len(hot),
+            "cold_tokens": cold_tokens, "hot_tokens": hot_tokens,
+            "new_tokens": new_tokens, "compress_count": st["count"],
+            "frozen_count": st["frozen_count"],
+        }
 
+        # 触发门：冷历史没过阈值 → 完全不压（短上下文无 lost-in-the-middle）
+        if cold_tokens < self.trigger_tokens:
+            st["frozen_count"] = 0
+            st["compressed"] = ""
+            self._log_event(ctx, {**common, "action": "skip", "reason": "below_trigger"})
+            return list(messages)
+
+        # 决定 compress vs reuse：首次压缩，或自上次压缩后新增冷 >= delta
+        do_compress = (not st["compressed"]) or (new_tokens >= self.recompress_delta_tokens)
+        if do_compress:
+            question = self._pick_question(rest)
+            t0 = time.monotonic()
+            res = self._compress_cold(chunks, question)
+            ms = (time.monotonic() - t0) * 1000.0
+            compressed = res.get("compressed_prompt", "")
+            st["compressed"] = compressed
+            st["frozen_count"] = len(cold)  # 当下整段冷都压进去了
+            st["count"] += 1
+            est_comp = self._est_tokens([compressed]) if compressed else 0
+            self._log_event(ctx, {
+                **common,
+                "action": "compress",
+                "compress_count": st["count"],
+                "frozen_count": st["frozen_count"],
+                "origin_tokens": res.get("origin_tokens", cold_tokens),
+                "compressed_tokens": res.get("compressed_tokens", est_comp),
+                "est_compressed_tokens": est_comp,
+                "ratio": res.get("ratio"),
+                "compress_ms": round(ms, 1),
+            })
+        else:
+            compressed = st["compressed"]
+            self._log_event(ctx, {**common, "action": "reuse"})
+
+        # 重建：[sys] + [压缩段(覆盖 cold[:frozen_count])] + [新增冷 cold[frozen_count:] verbatim] + [hot]
+        # tool_call 配对安全：frozen_count 总落在完整 tool_call→tool 组边界（见 _pick 切分）
         out: list[dict] = list(sys_msgs)
         if compressed:
             out.append(
@@ -317,16 +365,48 @@ class CompressMiddleware(BaseMiddleware):
                     "content": f"[compressed history]\n{compressed}",
                 }
             )
+        out.extend(cold[st["frozen_count"]:])  # 自上次压缩后新增的冷（verbatim，不丢信息）
         out.extend(hot)
         return out
 
+    @staticmethod
+    def _pick_question(rest: list[dict]) -> str:
+        """LongLingua 的相关性锚点 = 最近一条带内容的 user 消息（无则退化）。"""
+        q = next(
+            (m.get("content") or "" for m in reversed(rest)
+             if m.get("role") == "user" and m.get("content")),
+            "",
+        )
+        if not q:
+            # LongLLMLingua 必须非空 question（llmlingua 内部 assert）
+            q = next(
+                (m.get("content") or "" for m in reversed(rest) if m.get("content")),
+                "",
+            ) or "Continue the task."
+        return q
+
+    def _log_event(self, ctx: MiddlewareContext, payload: dict) -> None:
+        """每步写一条 JSONL 到 F2_EVENT_LOG（未设则不记）。"""
+        if not self._event_log_path:
+            return
+        payload.setdefault("session_id", ctx.session_id)
+        payload.setdefault("step", ctx.step)
+        payload["ts"] = time.time()
+        try:
+            with self._log_lock:
+                with open(self._event_log_path, "a") as f:
+                    f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except OSError:  # noqa: BLE001 — 日志失败不影响主流程
+            pass
+
     # ---- 压缩分发 ----
 
-    def _compress_cold(self, chunks: list[str], question: str) -> str:
+    def _compress_cold(self, chunks: list[str], question: str) -> dict:
+        """调压缩器，返回 llmlingua 的完整结果 dict（含 compressed_prompt/origin_tokens/...）。"""
         c = self._get_compressor()
         if self.method == "longllmlingua":
             # LongLLMLingua：按块传入，question-aware 打分 + 分段动态率
-            res = c.compress_prompt(
+            return c.compress_prompt(
                 chunks,
                 question=question,
                 rate=self.rate,
@@ -336,14 +416,12 @@ class CompressMiddleware(BaseMiddleware):
                 condition_compare=self.condition_compare,
                 reorder_context=self.reorder_context,
             )
-        else:
-            # llmlingua / llmlingua2：拼成一段文本（compress_prompt 首参 context），按 rate 压
-            context = "\n\n".join(chunks)
-            kw: dict[str, Any] = dict(rate=self.rate, force_tokens=self.force_tokens)
-            if question:
-                kw["question"] = question
-            res = c.compress_prompt(context, **kw)
-        return res.get("compressed_prompt", "")
+        # llmlingua / llmlingua2：拼成一段文本（compress_prompt 首参 context），按 rate 压
+        context = "\n\n".join(chunks)
+        kw: dict[str, Any] = dict(rate=self.rate, force_tokens=self.force_tokens)
+        if question:
+            kw["question"] = question
+        return c.compress_prompt(context, **kw)
 
     @staticmethod
     def _est_tokens(chunks: list[str]) -> int:
