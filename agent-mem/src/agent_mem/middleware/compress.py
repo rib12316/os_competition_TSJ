@@ -15,7 +15,8 @@ system 原样保留。命中赛题"降显存/降延迟"——更短的 prompt �
   缓存的压缩结果（新增冷 verbatim 补在压缩段后，无信息丢失）。把压缩从 O(步数) 降到
   偶发。缓存按 session 存 ``ctx.scratch``。
 - **事件日志**：设环境变量 ``F2_EVENT_LOG=<path>`` 后，每步写一条 JSONL（session/步号/
-  上下文 token/动作 skip|compress|reuse/压缩次数/前后 token/耗时），供调阈值与看效果。
+  上下文 token/动作 skip|compress|reuse/压缩次数/前后 token/耗时）。``sent_tokens`` 来自
+  引擎响应 ``usage.prompt_tokens``；chars/4 粗估只记为 ``estimated_sent_tokens``。
 - **正典不动**：只变换发给引擎的副本（详见 ``base.py``），压缩**无序可恢复**。
 - **tool_call 配对安全**：绝不留下孤立的 ``role=tool`` 消息。做法——把整段冷历史
   压成**一条**文本消息（冷的 assistant ``tool_calls`` 与冷的 tool 结果**一起**进
@@ -347,10 +348,10 @@ class CompressMiddleware(BaseMiddleware):
 
         # 太短：热尾都凑不齐，全留
         if len(rest) <= self.keep_hot:
-            self._log_event(ctx, {"action": "skip", "n_msgs": len(messages),
-                                  "cold_n": 0, "hot_n": len(rest), "cold_tokens": 0,
-                                  "sent_tokens": self._sent_tokens(messages),
-                                  "reason": "history_shorter_than_keep_hot"})
+            self._stage_event(ctx, {"action": "skip", "n_msgs": len(messages),
+                                    "cold_n": 0, "hot_n": len(rest), "cold_tokens": 0,
+                                    "estimated_sent_tokens": self._estimate_message_tokens(messages),
+                                    "reason": "history_shorter_than_keep_hot"})
             return list(messages)
 
         # 切冷/热；热尾边界 snap 到完整 tool_call→tool 组（避免孤立 tool）
@@ -381,8 +382,8 @@ class CompressMiddleware(BaseMiddleware):
         if cold_tokens < self.trigger_tokens:
             st["frozen_count"] = 0
             st["compressed"] = ""
-            self._log_event(ctx, {**common, "action": "skip", "reason": "below_trigger",
-                                  "sent_tokens": self._sent_tokens(messages)})
+            self._stage_event(ctx, {**common, "action": "skip", "reason": "below_trigger",
+                                    "estimated_sent_tokens": self._estimate_message_tokens(messages)})
             return list(messages)
 
         # 决定 compress vs reuse：首次压缩，或自上次压缩后新增冷 >= delta
@@ -425,13 +426,31 @@ class CompressMiddleware(BaseMiddleware):
         out.extend(cold[st["frozen_count"]:])  # 自上次压缩后新增的冷（verbatim，不丢信息）
         out.extend(hot)
 
-        # sent_tokens = 实际发给引擎的 token（按 out 内容估，与 cold_tokens 同口径 chars/4）
-        self._log_event(ctx, {**common, **extra, "sent_tokens": self._sent_tokens(out)})
+        self._stage_event(ctx, {
+            **common, **extra,
+            "estimated_sent_tokens": self._estimate_message_tokens(out),
+        })
         return out
 
-    def _sent_tokens(self, msgs: list[dict]) -> int:
-        """估算实际发给引擎的 token（按 messages 内容，与 cold_tokens 同口径）。"""
+    def _estimate_message_tokens(self, msgs: list[dict]) -> int:
+        """按 messages 文本 chars/4 粗估；仅作诊断，不再冒充真实 sent_tokens。"""
         return self._est_tokens([_msg_to_text(m) for m in msgs])
+
+    def _stage_event(self, ctx: MiddlewareContext, payload: dict) -> None:
+        """暂存本步事件，等模型响应带回真实 prompt token 后再落盘。"""
+        ctx.scratch[f"{self.name}:pending_event"] = payload
+
+    def after_model_call(
+        self, prompt_tokens: int | None, ctx: MiddlewareContext
+    ) -> None:
+        payload = ctx.scratch.pop(f"{self.name}:pending_event", None)
+        if payload is None:
+            return
+        payload["sent_tokens"] = prompt_tokens
+        payload["sent_tokens_source"] = (
+            "response.usage.prompt_tokens" if prompt_tokens is not None else "unavailable"
+        )
+        self._log_event(ctx, payload)
 
     @staticmethod
     def _pick_question(rest: list[dict]) -> str:

@@ -11,9 +11,16 @@ pytest.importorskip("tau_bench")
 from agent_mem.agent.tau_bench_agent import TauBenchAgent  # noqa: E402
 
 
+def _usage_chunk(prompt_tokens=123):
+    return types.SimpleNamespace(
+        choices=[], usage=types.SimpleNamespace(prompt_tokens=prompt_tokens)
+    )
+
+
 def _content_chunks(text):
     return [types.SimpleNamespace(choices=[types.SimpleNamespace(
-        delta=types.SimpleNamespace(content=text, tool_calls=None), finish_reason="stop")])]
+        delta=types.SimpleNamespace(content=text, tool_calls=None), finish_reason="stop")]),
+        _usage_chunk()]
 
 
 def _tool_chunks(name, args, cid="c1"):
@@ -22,7 +29,7 @@ def _tool_chunks(name, args, cid="c1"):
             content=None,
             tool_calls=[types.SimpleNamespace(
                 index=0, id=cid, function=types.SimpleNamespace(name=name, arguments=args))]),
-        finish_reason="tool_calls")])]
+        finish_reason="tool_calls")]), _usage_chunk()]
 
 
 class _FakeStreamClient:
@@ -36,6 +43,7 @@ class _FakeStreamClient:
 
     def _create(self, **kw):
         assert kw.get("stream") is True
+        assert kw.get("stream_options") == {"include_usage": True}
         return iter(self._lists.pop(0))
 
 

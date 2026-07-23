@@ -1,10 +1,12 @@
 """缝D · 上下文中间件接口（F2 Prompt 压缩 / F3 工具数据 lazy-load 的挂载点）。
 
-两个钩子，覆盖 agent loop 里**所有**与 messages / 工具结果交互的位置：
+三个钩子，覆盖 agent loop 里**所有**与 messages / 模型响应 / 工具结果交互的位置：
 
 - :meth:`Middleware.transform_messages` —— 发引擎**前**变换 messages（F2 压缩冷历史、
   F3 注入引用占位）。**只变换发给引擎的副本，不改 agent 的正典历史**——压缩类优化
   因此可在不丢信息的前提下送短 prompt，正典历史仍完整。
+- :meth:`Middleware.after_model_call` —— 引擎响应后观察本次真实
+  ``usage.prompt_tokens``。只用于记账/观测，不改写模型响应。
 - :meth:`Middleware.intercept_tool_result` —— 工具返回值回灌**前**拦截（F3 把长
   HTML/JSON 存外部 store，context 只留 ``<doc id=.. summary=..>``）。**会改写进入
   正典历史的内容**——这正是 lazy-load 的目的。
@@ -63,6 +65,12 @@ class Middleware(Protocol):
         """拦工具返回值，返回回灌进正典历史的（可能改写的）结果文本。"""
         ...
 
+    def after_model_call(
+        self, prompt_tokens: int | None, ctx: MiddlewareContext
+    ) -> None:
+        """观察引擎返回的真实 prompt token；服务端未返回 usage 时为 ``None``。"""
+        ...
+
 
 class BaseMiddleware:
     """中间件基类：默认全 no-op（identity）。F2/F3 子类化它，覆盖需要的钩子。
@@ -87,11 +95,17 @@ class BaseMiddleware:
     ) -> str:
         return result
 
+    def after_model_call(
+        self, prompt_tokens: int | None, ctx: MiddlewareContext
+    ) -> None:
+        return None
+
 
 class MiddlewareStack:
     """有序中间件链：把多个中间件串成 pipeline。
 
     - :meth:`transform_messages`：依次套用，前一个输出喂后一个；入参不被改。
+    - :meth:`after_model_call`：把引擎返回的真实 prompt token 广播给各中间件。
     - :meth:`intercept_tool_result`：依次套用，前一个输出喂后一个。
     - 空栈 = identity（直接返回入参），agent loop 可无脑调用。
     """
@@ -125,3 +139,12 @@ class MiddlewareStack:
         for mw in self._mw:
             out = mw.intercept_tool_result(name, args, out, ctx)
         return out
+
+    def after_model_call(
+        self, prompt_tokens: int | None, ctx: MiddlewareContext
+    ) -> None:
+        for mw in self._mw:
+            # 兼容已有的 duck-typed middleware；BaseMiddleware 子类天然具备该钩子。
+            hook = getattr(mw, "after_model_call", None)
+            if hook is not None:
+                hook(prompt_tokens, ctx)

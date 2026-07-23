@@ -1,7 +1,5 @@
-# baseline-logged：纯 baseline 行为（不压缩）+ 每 step 记录上下文大小。
-# 实现：挂 compress 中间件但 trigger_tokens 极大 → transform_messages 永远走 skip 分支，
-# 返回原始 messages（与无中间件的 baseline 行为完全一致），副作用仅是写 F2_EVENT_LOG。
-# 用途：给 baseline 打 per-task 上下文日志，好和 f2 档做 per-task 对比。
+# baseline-logged：严格 baseline，不启用任何 middleware。
+# 每步真实 prompt token 由 agent 公共层写入 PROMPT_TOKEN_LOG，与 F2 无关。
 engine:
   backend: vllm
   model: Qwen2.5-7B-Instruct
@@ -14,19 +12,8 @@ benchmark:
   seed: 42
 
 middleware:
-  active: [compress]             # 挂上仅为打日志；下面 trigger 极大 → 永不真压缩
-  options:
-    compress:
-      method: longllmlingua
-      rate: 0.5
-      trigger_tokens: 999999     # ← 极大：永远不压，等同 baseline
-      recompress_delta_tokens: 999999
-      keep_hot: 6
-      device: cpu
-      model_name: gpt2
-      backend: subprocess
-      worker_venv: /data/os_competition_TSJ/.venv-compress/bin/python
-      worker_script: ""
+  active: []
+  options: {}
 
 metrics:
   - e2e_latency_p50

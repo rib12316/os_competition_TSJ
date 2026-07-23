@@ -15,6 +15,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent_mem.agent.usage_log import log_prompt_tokens
 from agent_mem.middleware import Middleware, MiddlewareContext, MiddlewareStack
 
 # 工具执行器签名：(name, args_dict) -> 观察文本
@@ -59,6 +60,20 @@ def assistant_message_to_dict(msg: Any) -> dict:
     return d
 
 
+def _prompt_tokens_from_usage(usage: Any) -> int | None:
+    """兼容 OpenAI 对象和 dict，提取服务端 tokenizer 返回的 prompt token。"""
+    if usage is None:
+        return None
+    value = (
+        usage.get("prompt_tokens")
+        if isinstance(usage, dict)
+        else getattr(usage, "prompt_tokens", None)
+    )
+    if isinstance(value, int) and value >= 0:
+        return value
+    return None
+
+
 def stream_chat_with_ttft(
     client: Any,
     *,
@@ -69,15 +84,17 @@ def stream_chat_with_ttft(
     max_tokens: int | None = None,
     extra_body: dict[str, Any] | None = None,
     clock: Callable[[], float] = time.monotonic,
-) -> tuple[dict[str, Any], float]:
-    """流式调用 + 测 TTFT（请求→首个 chunk 的秒数），返回 (可回灌 message dict, ttft_seconds)。
+) -> tuple[dict[str, Any], float, int | None]:
+    """流式调用 + 测 TTFT，返回 message、TTFT 秒数和真实 prompt token。
 
     在流里累积 ``delta.content`` 与 ``delta.tool_calls``（按 index 拼接 arguments 片段），
-    重建出与非流式等价的 message dict，供 ReAct 循环继续用。
+    重建出与非流式等价的 message dict。``stream_options.include_usage`` 让 vLLM/OpenAI
+    在最终 chunk 返回 tokenizer 计数；服务端不支持或未返回时第三项为 ``None``。
     """
     create_kw: dict[str, Any] = dict(
         model=model, messages=messages, tools=tools or None,
         temperature=temperature, stream=True,
+        stream_options={"include_usage": True},
     )
     if max_tokens is not None:
         create_kw["max_tokens"] = max_tokens
@@ -89,10 +106,14 @@ def stream_chat_with_ttft(
     ttft: float | None = None
     content_parts: list[str] = []
     tc_acc: dict[int, dict[str, Any]] = {}
+    prompt_tokens: int | None = None
 
     for chunk in stream:
         if ttft is None:
             ttft = clock() - t0  # 首 chunk 到达
+        chunk_prompt_tokens = _prompt_tokens_from_usage(getattr(chunk, "usage", None))
+        if chunk_prompt_tokens is not None:
+            prompt_tokens = chunk_prompt_tokens
         choices = getattr(chunk, "choices", None) or []
         if not choices:
             continue
@@ -127,7 +148,7 @@ def stream_chat_with_ttft(
             }
             for _, s in sorted(tc_acc.items())
         ]
-    return msg, ttft
+    return msg, ttft, prompt_tokens
 
 
 def run_react(
@@ -173,6 +194,9 @@ def run_react(
         # 缝D：发引擎前变换（副本），正典 msgs 不变
         to_send = stack.transform_messages(msgs, ctx)
         resp = client.chat.completions.create(**base_kw, messages=to_send)
+        prompt_tokens = _prompt_tokens_from_usage(getattr(resp, "usage", None))
+        log_prompt_tokens(ctx, prompt_tokens)
+        stack.after_model_call(prompt_tokens, ctx)
         msg = resp.choices[0].message
         msgs.append(assistant_message_to_dict(msg))
 

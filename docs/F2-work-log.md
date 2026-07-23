@@ -5,7 +5,7 @@
 
 ## 0. 一句话现状
 
-F2（Prompt 压缩 / 缝D）**全量 115 任务验证完成**：**success 无损（-1pp，红线内）、上下文 -45%、延迟 +9.7%（小代价，BERT 可消除）**。代码 + 文档 + 数据全部提交在分支 `feat/f2-prompt-compress`（**未 push**）。
+F2（Prompt 压缩 / 缝D）**全量 115 任务验证完成**：**success 无损（-1pp，红线内）、上下文 -45%、延迟 +9.7%（小代价，BERT 可消除）**。分支 `feat/f2-prompt-compress` 未 push；真实 `usage.prompt_tokens` 计量与静态 prompt 调研为当前未提交改动。
 
 ## 1. 任务与目标
 
@@ -15,7 +15,7 @@ F2（Prompt 压缩 / 缝D）**全量 115 任务验证完成**：**success 无损
 
 ## 2. 分支 / Worktree / 持久性（重要！）
 
-- **分支**：`feat/f2-prompt-compress`（7 个 F2 提交，最新 `6d89f3d`）。提交在主仓库 `.git`（`/data/os_competition_TSJ/.git`），**持久**。
+- **分支**：`feat/f2-prompt-compress`（8 个 F2 提交，最新 `43e13a2`）。提交在主仓库 `.git`（`/data/os_competition_TSJ/.git`），**持久**。
 - **worktree**：`/tmp/f2-wt`（在 `/tmp`，**机器重启会丢**！）。但分支+提交在 `/data` 上不丢。
   - 若 `/tmp/f2-wt` 没了，重建：`git -C /data/os_competition_TSJ worktree add /tmp/f2-wt feat/f2-prompt-compress`
   - 或直接在主 checkout 切过去（注意主 checkout 可能在队友的分支上，别打架）。
@@ -33,7 +33,8 @@ f2-compress.yaml (middleware.active:[compress] + options.compress)
         backend=subprocess → _SubprocessCompressorPool(N worker + queue)
            → 每个 worker 是 .venv-compress 里的 _compress_worker.py（常驻，模型加载一次）
               → llmlingua PromptCompressor(gpt2, transformers 4.43.4)
-     每步写 F2_EVENT_LOG 事件 JSONL（含 sent_tokens=实际发给引擎的 token）
+     每步写 F2_EVENT_LOG 事件 JSONL：sent_tokens=响应 usage.prompt_tokens 真值；
+       estimated_sent_tokens=旧 chars/4 估算，仅诊断
 ```
 
 关键文件（都在 `agent-mem/src/agent_mem/middleware/`）：
@@ -117,11 +118,12 @@ PYTHONPATH=$PWD/src F2_EVENT_LOG=/tmp/ev.jsonl \
 
 ## 8. 未完成 / 下一步（按优先级）
 
-1. **换 BERT(llmlingua2) 压缩器**（用户暂缓，但这是延迟的根本解）：~3-5s/次，把 +9.7% 延迟归零。改 method=llmlingua2 + 换 BERT 模型（注意 512 上下文 + 不 question-aware）。
-2. **push 到远程**（`git push origin feat/f2-prompt-compress`）保险。
-3. **更长上下文场景**：tau-bench retail 冷历史才 2-5k（中等），F2 延迟小亏；上长 RAG/长任务（冷历史几万 token）延迟会翻正（prefill 节省 > 压缩耗时）。
-4. **mem 指标**：换"实际 KV 用量"而非 vllm pool peak，才能体现 -45% 上下文的显存收益。
-5. rate/trigger 还可微调（现 rate=0.65/trigger=2000/recompress=4000 是甜点）。
+1. **静态 prompt 精简 ablation**：详见 `F2-static-prompt-compression-research.md`。先做固定 system policy + 工具描述去重，预计每步省约 900-1200 真 token，运行时零压缩开销。
+2. **换 BERT(llmlingua2) 压缩器**（用户暂缓，但这是延迟的根本解）：~3-5s/次，把 +9.7% 延迟归零。改 method=llmlingua2 + 换 BERT 模型（注意 512 上下文 + 不 question-aware）。
+3. **push 到远程**（`git push origin feat/f2-prompt-compress`）保险。
+4. **更长上下文场景**：tau-bench retail 冷历史才 2-5k（中等），F2 延迟小亏；上长 RAG/长任务（冷历史几万 token）延迟会翻正（prefill 节省 > 压缩耗时）。
+5. **mem 指标**：换"实际 KV 用量"而非 vllm pool peak，才能体现 -45% 上下文的显存收益。
+6. rate/trigger 还可微调（现 rate=0.65/trigger=2000/recompress=4000 是甜点）。
 
 ## 9. 提交链（feat/f2-prompt-compress）
 
@@ -141,3 +143,26 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
 - `env-dependency-conflicts.md` — 依赖冲突处理记录
 - `f2-results/` — 原始产物（comparison、per-task、events jsonl，各档）
 - `F2-prompt-compress.md` — F2 设计/搭建说明
+- `F2-static-prompt-compression-research.md` — system policy / 工具 schema 真 token 构成与压缩方案
+
+## 11. sent_tokens 口径变更（2026-07-23）
+
+- 旧 `docs/f2-results/*events*.jsonl` 的 `sent_tokens` 是 message 文本 `chars/4`，会漏掉通过
+  OpenAI `tools=` 注入的工具 schema、chat template 和结构化 tool calls，不能视为真实输入 token。
+- 当前代码非流式读取 `response.usage.prompt_tokens`；tau-bench 流式请求开启
+  `stream_options.include_usage=true` 并读取最终 usage chunk。
+- 服务端不返回 usage 时，`sent_tokens=null` 且 `sent_tokens_source=unavailable`，不会回退估算。
+- 真机冒烟：短请求 `estimated_sent_tokens=2`，vLLM 返回 `sent_tokens=32`；流式/非流式一致。
+
+## 12. 严格 baseline 真实 token 小测（8+8）
+
+- 新增 agent 公共层 `PROMPT_TOKEN_LOG`，不依赖 middleware；`baseline-logged.yaml` 已改成
+  `middleware.active=[]`，因此 baseline 完全不经过 F2。
+- 相同任务 ID `tau-0..7`，baseline 134 次调用 / 884,845 真 token；F2 145 次调用 /
+  1,013,338 真 token。F2 轨迹多 11 步，独立生成总量不可直接归因于压缩。
+- F2 7/8 任务触发，7 次 compress + 39 次 reuse；压缩平均 19.15s。能配到 baseline
+  相同步号的 6 个首次压缩点合计 token -13.88%，说明命中步骤确实变短。
+- F2 p50 145.92s vs baseline 78.45s；本轮 gpt2 压缩成本和更长随机轨迹共同导致显著变慢。
+- system policy + tools 约占 F2 真输入 60.6%，当前冷历史 F2 不处理。下一步优先固定静态
+  prompt 精简，而不是继续只调 cold rate。
+- 完整报告：`docs/f2-results/comparison_true8_usage.md`；原始运行：`/tmp/f2-true8-usage`。

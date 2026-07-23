@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent_mem.agent.react import _as_stack, stream_chat_with_ttft
+from agent_mem.agent.usage_log import log_prompt_tokens
 from agent_mem.middleware import Middleware, MiddlewareContext, MiddlewareStack
 
 
@@ -96,7 +97,7 @@ class TauBenchAgent:
             # 缝D：发引擎前变换 messages（副本），正典 messages 不动
             to_send = self.stack.transform_messages(messages, ctx)
             # 流式调用：拿到 message dict + 本步 TTFT
-            next_message, ttft_s = stream_chat_with_ttft(
+            next_message, ttft_s, prompt_tokens = stream_chat_with_ttft(
                 self.client,
                 model=self.model,
                 messages=to_send,
@@ -105,6 +106,8 @@ class TauBenchAgent:
                 max_tokens=self.max_tokens,
                 extra_body=self.extra_body,
             )
+            log_prompt_tokens(ctx, prompt_tokens)
+            self.stack.after_model_call(prompt_tokens, ctx)
             ttft_ms_list.append(ttft_s * 1000)
             action = _message_to_action(next_message, Action, RESPOND_ACTION_NAME)
             env_response = env.step(action)

@@ -22,8 +22,14 @@ def _tc(name, args, cid="c1"):
     )
 
 
-def _resp(msg):
-    return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+def _resp(msg, prompt_tokens=None):
+    usage = (
+        types.SimpleNamespace(prompt_tokens=prompt_tokens)
+        if prompt_tokens is not None else None
+    )
+    return types.SimpleNamespace(
+        choices=[types.SimpleNamespace(message=msg)], usage=usage
+    )
 
 
 class _FakeClient:
@@ -86,6 +92,24 @@ def test_run_react_bad_tool_args_recovers():
     assert res.tool_calls_made == 1
 
 
+def test_run_react_logs_prompt_tokens_without_middleware(tmp_path, monkeypatch):
+    import json
+
+    log = tmp_path / "usage.jsonl"
+    monkeypatch.setenv("PROMPT_TOKEN_LOG", str(log))
+    client = _FakeClient([_resp(_msg("done"), prompt_tokens=4321)])
+    run_react(
+        client, "m", [{"role": "user", "content": "hi"}],
+        None, lambda name, args: "", max_steps=1, session_id="baseline-0",
+    )
+
+    event = json.loads(log.read_text().strip())
+    assert event["session_id"] == "baseline-0"
+    assert event["step"] == 1
+    assert event["prompt_tokens"] == 4321
+    assert event["source"] == "response.usage.prompt_tokens"
+
+
 def test_run_react_against_stub_server():
     """真 HTTP：stub 带 tools 返回 tool_call，run_react 能解析并执行工具。"""
     openai = pytest.importorskip("openai")  # 未装 openai 时跳过（不崩收集）
@@ -134,11 +158,18 @@ def test_execute_tool_dispatch():
 # ---- stream_chat_with_ttft ----
 
 
-def _chunk(content=None, tool_calls=None, finish=None):
+def _chunk(content=None, tool_calls=None, finish=None, usage=None):
     import types
 
     return types.SimpleNamespace(choices=[types.SimpleNamespace(
-        delta=types.SimpleNamespace(content=content, tool_calls=tool_calls), finish_reason=finish)])
+        delta=types.SimpleNamespace(content=content, tool_calls=tool_calls),
+        finish_reason=finish)], usage=usage)
+
+
+def _usage_chunk(prompt_tokens):
+    return types.SimpleNamespace(
+        choices=[], usage=types.SimpleNamespace(prompt_tokens=prompt_tokens)
+    )
 
 
 def _tc_delta(index, name=None, args=None, cid=None):
@@ -163,9 +194,10 @@ def test_stream_chat_with_ttft_reconstructs_content_and_tool_calls():
         _chunk(content="lo"),
         _chunk(tool_calls=[_tc_delta(0, name="search", args='{"q":"')]),
         _chunk(tool_calls=[_tc_delta(0, args='x"}')], finish="tool_calls"),
+        _usage_chunk(321),
     ]
     clock_vals = iter([10.0, 10.02])  # t0, first-chunk
-    msg, ttft = stream_chat_with_ttft(
+    msg, ttft, prompt_tokens = stream_chat_with_ttft(
         _C(chunks), model="m", messages=[], tools=[],
         clock=lambda: next(clock_vals),
     )
@@ -174,6 +206,7 @@ def test_stream_chat_with_ttft_reconstructs_content_and_tool_calls():
     # arguments 跨两片拼接
     assert msg["tool_calls"][0]["function"]["arguments"] == '{"q":"x"}'
     assert ttft == pytest.approx(0.02)
+    assert prompt_tokens == 321
 
 
 def test_stream_chat_with_ttft_empty_stream():
@@ -186,8 +219,9 @@ def test_stream_chat_with_ttft_empty_stream():
             )
 
     clock_vals = iter([5.0, 5.5])
-    msg, ttft = stream_chat_with_ttft(
+    msg, ttft, prompt_tokens = stream_chat_with_ttft(
         _C(), model="m", messages=[], clock=lambda: next(clock_vals)
     )
     assert msg["content"] is None
     assert ttft == pytest.approx(0.5)
+    assert prompt_tokens is None

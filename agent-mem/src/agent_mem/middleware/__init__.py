@@ -3,6 +3,7 @@
 核心契约在 :mod:`agent_mem.middleware.base`：::
 
     Middleware.transform_messages()    # 发引擎前变换 messages（F2 压缩）
+    Middleware.after_model_call()      # 响应后观察真实 prompt_tokens
     Middleware.intercept_tool_result() # 拦工具返回值（F3 lazy-load）
 
 本包提供：
@@ -46,7 +47,7 @@ __all__ = [
 
 
 class NoOpMiddleware(BaseMiddleware):
-    """identity 中间件：两个钩子都原样返回。空 ``MiddlewareStack`` 的等价物。"""
+    """identity 中间件：三个钩子均 no-op。空 ``MiddlewareStack`` 的等价物。"""
 
     name = "noop"
 

@@ -354,33 +354,57 @@ def test_compress_event_log(tmp_path):
         {"role": "user", "content": "x" * 1000},
         {"role": "assistant", "content": "a"},
     ]
-    mw.transform_messages(msgs, MiddlewareContext("task-7"))
+    ctx = MiddlewareContext("task-7")
+    mw.transform_messages(msgs, ctx)
+    mw.after_model_call(321, ctx)
     lines = [ln for ln in log.read_text().splitlines() if ln.strip()]
     assert lines, "应至少写一条事件"
     ev = _json.loads(lines[0])
     assert ev["session_id"] == "task-7"
     assert ev["action"] == "compress"
     assert "origin_tokens" in ev and "compress_ms" in ev and "cold_tokens" in ev
-    assert "sent_tokens" in ev  # 实际发给引擎的 token
+    assert ev["sent_tokens"] == 321
+    assert ev["sent_tokens_source"] == "response.usage.prompt_tokens"
+    assert "estimated_sent_tokens" in ev
 
 
 def test_compress_sent_tokens_logged():
-    """sent_tokens 在 compress/skip 分支都记。"""
+    """sent_tokens 只记录响应 usage 返回的真实值。"""
     import json as _json
+    import os
     import tempfile
 
     with tempfile.TemporaryDirectory() as d:
         log = f"{d}/e.jsonl"
         mw = CompressMiddleware(keep_hot=1, trigger_tokens=10, event_log=log)
         mw._compressor = _FakeCompressor()
+        ctx = MiddlewareContext("s")
         mw.transform_messages(
             [{"role": "system", "content": "p"},
              {"role": "user", "content": "x" * 1000},
              {"role": "assistant", "content": "a"}],
-            MiddlewareContext("s"),
+            ctx,
         )
-        ev = _json.loads([l for l in open(log).read().splitlines() if l.strip()][0])
-        assert "sent_tokens" in ev and isinstance(ev["sent_tokens"], int)
+        assert not os.path.exists(log)  # 响应前不能把估算值写成 sent_tokens
+        mw.after_model_call(777, ctx)
+        ev = _json.loads([ln for ln in open(log).read().splitlines() if ln.strip()][0])
+        assert ev["sent_tokens"] == 777
+        assert ev["estimated_sent_tokens"] != ev["sent_tokens"]
+
+
+def test_compress_sent_tokens_unavailable_is_not_estimated(tmp_path):
+    import json as _json
+
+    log = tmp_path / "events.jsonl"
+    mw = CompressMiddleware(keep_hot=6, event_log=str(log))
+    ctx = MiddlewareContext("s")
+    mw.transform_messages([{"role": "user", "content": "hello"}], ctx)
+    mw.after_model_call(None, ctx)
+
+    ev = _json.loads(log.read_text().strip())
+    assert ev["sent_tokens"] is None
+    assert ev["sent_tokens_source"] == "unavailable"
+    assert isinstance(ev["estimated_sent_tokens"], int)
 
 
 def test_compress_worker_pool_distributes():
@@ -429,8 +453,14 @@ def _tc(name, args):
     )
 
 
-def _resp(msg):
-    return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+def _resp(msg, prompt_tokens=None):
+    usage = (
+        types.SimpleNamespace(prompt_tokens=prompt_tokens)
+        if prompt_tokens is not None else None
+    )
+    return types.SimpleNamespace(
+        choices=[types.SimpleNamespace(message=msg)], usage=usage
+    )
 
 
 class _FakeClient:
@@ -519,3 +549,26 @@ def test_run_react_middleware_context_step_increments():
         middlewares=[_Probe()], session_id="s9",
     )
     assert seen_steps == [1, 2]  # 每步引擎调用前 bump
+
+
+def test_run_react_passes_real_prompt_tokens_to_middleware():
+    from agent_mem.agent import tools
+
+    seen = []
+
+    class _Probe(BaseMiddleware):
+        name = "probe"
+
+        def after_model_call(self, prompt_tokens, ctx):
+            seen.append((ctx.step, prompt_tokens))
+
+    client = _FakeClient([
+        _resp(_msg(None, [_tc("search", "{}")]), prompt_tokens=123),
+        _resp(_msg("done"), prompt_tokens=456),
+    ])
+    run_react(
+        client, "m", [{"role": "user", "content": "hi"}],
+        tools.TOOLS, tools.execute_tool, max_steps=5,
+        middlewares=[_Probe()], session_id="s10",
+    )
+    assert seen == [(1, 123), (2, 456)]
