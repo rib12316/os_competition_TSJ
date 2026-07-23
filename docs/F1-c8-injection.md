@@ -83,17 +83,38 @@ python -m agent_mem.server.vllm_server --config agent-mem/configs/f1-int8.yaml \
   `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0`（只解 profiling，不解 FULL）。
 - **根因是 vllm-ascend 的 C8 graph 路径 bug，与模型/scale 无关**。
 
-### 唯一未穷尽的一路（待 NPU 开启后验证）
+### 2026-07-23 真机端到端 debug 结果（Qwen3-0.6B，910B2C）
 
-强制 PIECEWISE capture 跳过挂死的 FULL：
+**前置大坑先解**：vllm-ascend 引擎一启动就崩，根因是 **numpy 2.4.6 ABI 砸了 serving**
+（transformers→sklearn→pandas 崩，`numpy.dtype size changed`）——不是 C8 的问题。
+fix = pin `numpy==1.26.4`（已应用）。详见 memory `numpy-abi-broke-npu-serving`。
 
-```python
-# 通过 VLLM 编译配置（或 extra_args 等价 CLI）
-compilation_config = {"cudagraph_mode": "PIECEWISE"}  # 跳过 FULL graph capture
+**① ✅ FULL_DECODE_ONLY 解开了 graph 死锁**（investigation "此路不通" 只测了 FULL）：
 ```
+--compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}'
+# CUDAGraphMode.FULL_DECODE_ONLY = (FULL, NONE)：prefill 走 FULL graph，decode 走 eager
+```
+引擎正常起（init ~6.6s）、C8 激活（`[kv_c8.py:122] setting kv_cache_torch_dtype to torch.int8`）、
+**不死锁**、正常生成 ~200–260 tok/s。死锁根因确认是 **decode 走 FULL graph capture**；
+decode 改 eager（NONE）即绕开。enum 另有 `FULL_AND_PIECEWISE`（decode=PIECEWISE）未测，可能更快。
 
-本分支**未验证**（NPU 停着，由用户控制）。验证路径：annotate + inject-scales 后起引擎，
-强制 PIECEWISE，看是否仍死锁。详见 memory `npu-start-stop-user-controlled`——动 NPU 前暂停等用户。
+**② ❌ C8 输出是垃圾**（`coholiccoholic...`），即使注入正确自校准 MinMax scale（0.001~0.9，逐通道）。
+同 prompt 的 **bf16 baseline 完全连贯**（"7 multiplied by 8 ... is 56"）。查 `vllm_ascend` 源码：
+scale 方向 / shape / offset=0 / quant-dequant 公式**我方全对**
+（`_c8_k_inv_scale=1/scale` 量化、`_c8_k_aq_scale_nz_bnsd=scale` 反量化，对称 per-channel）
+→ 不是校准/格式问题，是 **vllm-ascend 0.22.1rc1 的 C8 正确性 bug**（与上游 survey 吻合：
+C8 GQA 0.22.1 后仍在 churn 精度 bugfix，release notes 明写 "fix for precision issue caused by
+incorrect KV cache handling"）。placeholder scale(0.05) 和真 scale 都垃圾、baseline 不垃圾 →
+确认是 C8 路径本身。
+
+### 结论与出路
+
+- **graph 死锁已解**（FULL_DECODE_ONLY）——这是 investigation 没试到的解法。
+- **C8 在 0.22.1rc1 上质量不可用**。要 F1 出真 before/after，二选一：
+  1. **升级 vllm-ascend** 到精度 bugfix 后的版本（≥0.23.0 稳定版），重验 C8 输出连贯；或
+  2. 改用上游验过的 **ModelSlim W8A8C8 checkpoint**（PR #7474 的验证模型 Qwen3-32B W8A8C8，
+     自带正确 scale 格式）替代自校准 MinMax。
+- 当前「自校准 MinMax + 0.22.1rc1」这条组合不通。调试后模型已还原 stock（无残留）。
 
 ---
 
