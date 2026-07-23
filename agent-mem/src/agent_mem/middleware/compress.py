@@ -264,7 +264,13 @@ class CompressMiddleware(BaseMiddleware):
         self.worker_venv = worker_venv
         self.worker_script = worker_script or _DEFAULT_WORKER
         self.worker_pool_size = max(1, int(worker_pool_size))  # 并发压缩池大小（>= concurrency 才全并行）
-        self.worker_threads = int(worker_threads)  # 每 worker 线程上限(>0 限制；建议 nproc // pool_size)
+        # 每 worker 线程上限：>0 用指定值；<=0 自动 = 核数 // pool_size
+        # （顺序 pool=1 → 全部核；并发 pool=N → 各占 1/N，避免 torch 超订）
+        wt = int(worker_threads)
+        if wt > 0:
+            self.worker_threads = wt
+        else:
+            self.worker_threads = max(1, (os.cpu_count() or 1) // self.worker_pool_size)
         if backend not in {"subprocess", "inprocess"}:
             raise ValueError(f"backend 必须是 subprocess 或 inprocess，得到 {backend!r}")
         self.condition_in_question = condition_in_question

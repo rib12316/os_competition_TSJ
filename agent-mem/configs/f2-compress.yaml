@@ -36,7 +36,7 @@ middleware:                       # 缝D
       worker_venv: /data/os_competition_TSJ/.venv-compress/bin/python  # 隔离压缩 venv 的 python
       worker_script: ""          # 空=用随包的 agent_mem/middleware/_compress_worker.py
       worker_pool_size: 4        # 并发压缩池大小（应 >= --concurrency 才全并行；默认1=单worker）
-      worker_threads: 32         # 每 worker 线程上限(避免多worker torch超订；建议 nproc//pool_size=128//4)
+      worker_threads: 0          # 0=自动(核数//pool_size：pool1→128核不限, pool4→32核不超订)；>0 手动指定
       # —— LongLLMLingua 专属（method=longllmlingua 才用；枚举值对齐 llmlingua 0.2.2）——
       condition_in_question: after             # question-aware（0.2.2 认 none/before/after）
       dynamic_context_compression_ratio: 0.3   # 分段动态压缩率（冗余段压狠）
