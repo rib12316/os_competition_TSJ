@@ -163,6 +163,46 @@ PYTHONPATH=agent-mem/src:$PYTHONPATH python -m pytest agent-mem/tests/test_kv.py
 
 ---
 
+## 5b. Qwen2.5-7B（目标模型）端到端实测 ✅
+
+Qwen2.5-7B 是 **Qwen2 架构**（`Qwen2ForCausalLM`，4 KV heads，head_dim=128 → ch=512，无 k_norm），
+vllm-ascend 的 `patch_gqa_c8.py` **不覆盖 Qwen2**（只 Qwen3/Glm4Moe/MiniMaxM2）。两个额外坑 + 解法：
+
+**坑①：C8 scale 加载不到 Qwen2** → `c8patch/sitecustomize.py`。
+vLLM V1 在**独立 EngineCore 子进程**里加载模型，api_server 父进程的 monkeypatch 不传播。
+所以用 `sitecustomize.py`（每个解释器启动都跑，含 spawn 出的子进程，PYTHONPATH+env 会继承），
+gated by `QWEN2_C8_PATCH=1`：把 `Qwen2ForCausalLM.load_weights` 用同一个
+`_patched_causal_lm_load_weights` interceptor 包一层（`get_cache_scale` 按后缀映射，模型无关）。
+
+**坑②：校准** → `scripts/calibrate_c8_qwen2.py`（`calibrate_c8.py` 的 Qwen2 版）。
+monkeypatch `transformers.models.qwen2.modeling_qwen2.apply_rotary_pos_emb` 抓 post-RoPE K，
+V 走 `v_proj`，ch=512。注意 Qwen2 无 `head_dim` 字段，脚本用 `getattr(config,"head_dim",None) or hidden//heads`。
+
+**坑③：graph 死锁** → 同 Qwen3，`--compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}'`。
+
+**用法**：
+```bash
+M=models/Qwen2.5-7B-Instruct
+PYTHONPATH=agent-mem/src:$PYTHONPATH python -m agent_mem.kv.c8 annotate "$M"
+PYTHONPATH=c8patch:agent-mem/src:$PYTHONPATH python scripts/calibrate_c8_qwen2.py   # 需 NPU
+QWEN2_C8_PATCH=1 PYTHONPATH=c8patch:agent-mem/src:$PYTHONPATH \
+  VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 \
+  python -m vllm.entrypoints.openai.api_server --model "$M" --quantization ascend \
+  --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' --port 8001 ...
+# 还原：python -m agent_mem.kv.c8 restore "$M"
+```
+
+**实测结果（910B2C，2026-07-23）**：同模型、同 bf16 权重(14.21 GiB)、同 KV 预算(~41.5 GiB)：
+
+| KV dtype | KV pool | token 容量 | 输出 |
+|---|---|---|---|
+| bf16（baseline） | 41.45 GiB | **776,064** | 连贯 |
+| **int8（C8）** | 41.58 GiB | **1,556,992** | 连贯正确（7×8=56 / primary colors / greeting）|
+
+⇒ **2.006× KV 容量**（int8 = bf16 字节一半），输出连贯，无死锁。**F1 在目标模型 Qwen2.5-7B 上端到端跑通。**
+
+---
+
 ## 6. 避雷（与上游 survey 一致）
 
 C8 别叠：Mooncake PD 分离（bf16↔int8 mismatch）、MTP / EAGLE3 投机采样（crash）、
