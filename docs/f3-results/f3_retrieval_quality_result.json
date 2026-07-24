@@ -1,0 +1,487 @@
+{
+  "benchmark": "f3-retrieval-quality",
+  "model": "Qwen2.5-7B-Instruct",
+  "config": {
+    "records": 360,
+    "payload_tokens": 18658,
+    "variants": [
+      "baseline",
+      "f3",
+      "f2_f3"
+    ],
+    "max_steps": 8,
+    "temperature": 0.0
+  },
+  "summary": {
+    "baseline": {
+      "passed": 3,
+      "total": 3,
+      "accuracy": 1.0,
+      "fetch_called": 0,
+      "fetch_calls": 0,
+      "cumulative_prompt_tokens": 57570,
+      "median_wall_ms": 898.612
+    },
+    "f2_f3": {
+      "passed": 3,
+      "total": 3,
+      "accuracy": 1.0,
+      "fetch_called": 3,
+      "fetch_calls": 3,
+      "cumulative_prompt_tokens": 8295,
+      "median_wall_ms": 1647.229
+    },
+    "f3": {
+      "passed": 3,
+      "total": 3,
+      "accuracy": 1.0,
+      "fetch_called": 3,
+      "fetch_calls": 3,
+      "cumulative_prompt_tokens": 8293,
+      "median_wall_ms": 1814.389
+    }
+  },
+  "comparisons": {
+    "f3": {
+      "saved_tokens_vs_baseline": 49277,
+      "saved_percent_vs_baseline": 85.5949
+    },
+    "f2_f3": {
+      "saved_tokens_vs_baseline": 49275,
+      "saved_percent_vs_baseline": 85.5915
+    }
+  },
+  "gates": {
+    "baseline_all_positions_correct": true,
+    "f3_all_positions_correct": true,
+    "f2_f3_all_positions_correct": true,
+    "f3_saves_at_least_70_percent_cumulative_prompt": true,
+    "f2_f3_saves_at_least_70_percent_cumulative_prompt": true,
+    "f3_uses_one_fetch_per_case": true,
+    "f2_f3_uses_one_fetch_per_case": true
+  },
+  "passed": true,
+  "cases": [
+    {
+      "position": "head",
+      "index": 3,
+      "case_id": "CASE-0003",
+      "verification_code": "VC-128486",
+      "variant": "baseline",
+      "success": true,
+      "answer": {
+        "case_id": "CASE-0003",
+        "verification_code": "VC-128486"
+      },
+      "final_text": "{\n  \"case_id\": \"CASE-0003\",\n  \"verification_code\": \"VC-128486\"\n}",
+      "failure_reason": null,
+      "model_steps": 2,
+      "business_calls": 1,
+      "tool_names": [
+        "search_catalog"
+      ],
+      "tool_calls": [
+        {
+          "name": "search_catalog",
+          "arguments": {
+            "query": "CASE-0003"
+          }
+        }
+      ],
+      "fetch_calls": 0,
+      "prompt_tokens_by_step": [
+        245,
+        18945
+      ],
+      "cumulative_prompt_tokens": 19190,
+      "model_wall_ms_by_step": [
+        384.947,
+        528.376
+      ],
+      "total_wall_ms": 913.733
+    },
+    {
+      "position": "middle",
+      "index": 180,
+      "case_id": "CASE-0180",
+      "verification_code": "VC-530149",
+      "variant": "baseline",
+      "success": true,
+      "answer": {
+        "case_id": "CASE-0180",
+        "verification_code": "VC-530149"
+      },
+      "final_text": "{\n  \"case_id\": \"CASE-0180\",\n  \"verification_code\": \"VC-530149\"\n}",
+      "failure_reason": null,
+      "model_steps": 2,
+      "business_calls": 1,
+      "tool_names": [
+        "search_catalog"
+      ],
+      "tool_calls": [
+        {
+          "name": "search_catalog",
+          "arguments": {
+            "query": "CASE-0180"
+          }
+        }
+      ],
+      "fetch_calls": 0,
+      "prompt_tokens_by_step": [
+        245,
+        18945
+      ],
+      "cumulative_prompt_tokens": 19190,
+      "model_wall_ms_by_step": [
+        373.114,
+        525.373
+      ],
+      "total_wall_ms": 898.612
+    },
+    {
+      "position": "tail",
+      "index": 356,
+      "case_id": "CASE-0356",
+      "verification_code": "VC-923893",
+      "variant": "baseline",
+      "success": true,
+      "answer": {
+        "case_id": "CASE-0356",
+        "verification_code": "VC-923893"
+      },
+      "final_text": "{\n  \"case_id\": \"CASE-0356\",\n  \"verification_code\": \"VC-923893\"\n}",
+      "failure_reason": null,
+      "model_steps": 2,
+      "business_calls": 1,
+      "tool_names": [
+        "search_catalog"
+      ],
+      "tool_calls": [
+        {
+          "name": "search_catalog",
+          "arguments": {
+            "query": "CASE-0356"
+          }
+        }
+      ],
+      "fetch_calls": 0,
+      "prompt_tokens_by_step": [
+        245,
+        18945
+      ],
+      "cumulative_prompt_tokens": 19190,
+      "model_wall_ms_by_step": [
+        373.362,
+        524.257
+      ],
+      "total_wall_ms": 897.741
+    },
+    {
+      "position": "head",
+      "index": 3,
+      "case_id": "CASE-0003",
+      "verification_code": "VC-128486",
+      "variant": "f3",
+      "success": true,
+      "answer": {
+        "case_id": "CASE-0003",
+        "verification_code": "VC-128486"
+      },
+      "final_text": "{\"case_id\":\"CASE-0003\",\"verification_code\":\"VC-128486\"}",
+      "failure_reason": null,
+      "model_steps": 3,
+      "business_calls": 1,
+      "tool_names": [
+        "search_catalog",
+        "fetch_tool_result"
+      ],
+      "tool_calls": [
+        {
+          "name": "search_catalog",
+          "arguments": {
+            "query": "all cases"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_IJpMDVKOCWXT3Paf",
+            "json_pointer": "/items",
+            "match_field": "case_id",
+            "match_value": "CASE-0003",
+            "match_mode": "exact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "fetch_calls": 1,
+      "prompt_tokens_by_step": [
+        719,
+        902,
+        1135
+      ],
+      "cumulative_prompt_tokens": 2756,
+      "model_wall_ms_by_step": [
+        340.48,
+        1081.522,
+        366.284
+      ],
+      "total_wall_ms": 1814.389
+    },
+    {
+      "position": "middle",
+      "index": 180,
+      "case_id": "CASE-0180",
+      "verification_code": "VC-530149",
+      "variant": "f3",
+      "success": true,
+      "answer": {
+        "case_id": "CASE-0180",
+        "verification_code": "VC-530149"
+      },
+      "final_text": "{\"case_id\":\"CASE-0180\",\"verification_code\":\"VC-530149\"}",
+      "failure_reason": null,
+      "model_steps": 3,
+      "business_calls": 1,
+      "tool_names": [
+        "search_catalog",
+        "fetch_tool_result"
+      ],
+      "tool_calls": [
+        {
+          "name": "search_catalog",
+          "arguments": {
+            "query": "all cases"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_f283VXGorZBm7I6H",
+            "json_pointer": "/items",
+            "match_field": "case_id",
+            "match_value": "CASE-0180",
+            "match_mode": "exact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "fetch_calls": 1,
+      "prompt_tokens_by_step": [
+        719,
+        910,
+        1155
+      ],
+      "cumulative_prompt_tokens": 2784,
+      "model_wall_ms_by_step": [
+        315.178,
+        1137.907,
+        368.057
+      ],
+      "total_wall_ms": 1843.454
+    },
+    {
+      "position": "tail",
+      "index": 356,
+      "case_id": "CASE-0356",
+      "verification_code": "VC-923893",
+      "variant": "f3",
+      "success": true,
+      "answer": {
+        "case_id": "CASE-0356",
+        "verification_code": "VC-923893"
+      },
+      "final_text": "{\"case_id\":\"CASE-0356\",\"verification_code\":\"VC-923893\"}",
+      "failure_reason": null,
+      "model_steps": 3,
+      "business_calls": 1,
+      "tool_names": [
+        "search_catalog",
+        "fetch_tool_result"
+      ],
+      "tool_calls": [
+        {
+          "name": "search_catalog",
+          "arguments": {
+            "query": "all cases"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_cagghVoyZxl3aTSq",
+            "json_pointer": "/items",
+            "match_field": "case_id",
+            "match_value": "CASE-0356",
+            "match_mode": "exact"
+          }
+        }
+      ],
+      "fetch_calls": 1,
+      "prompt_tokens_by_step": [
+        719,
+        902,
+        1132
+      ],
+      "cumulative_prompt_tokens": 2753,
+      "model_wall_ms_by_step": [
+        316.137,
+        980.641,
+        368.816
+      ],
+      "total_wall_ms": 1688.324
+    },
+    {
+      "position": "head",
+      "index": 3,
+      "case_id": "CASE-0003",
+      "verification_code": "VC-128486",
+      "variant": "f2_f3",
+      "success": true,
+      "answer": {
+        "case_id": "CASE-0003",
+        "verification_code": "VC-128486"
+      },
+      "final_text": "{\"case_id\":\"CASE-0003\",\"verification_code\":\"VC-128486\"}",
+      "failure_reason": null,
+      "model_steps": 3,
+      "business_calls": 1,
+      "tool_names": [
+        "search_catalog",
+        "fetch_tool_result"
+      ],
+      "tool_calls": [
+        {
+          "name": "search_catalog",
+          "arguments": {
+            "query": "all cases"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_4-UjNQF8O0NcYKGF",
+            "match_field": "case_id",
+            "match_value": "CASE-0003",
+            "match_mode": "exact"
+          }
+        }
+      ],
+      "fetch_calls": 1,
+      "prompt_tokens_by_step": [
+        719,
+        910,
+        1137
+      ],
+      "cumulative_prompt_tokens": 2766,
+      "model_wall_ms_by_step": [
+        314.824,
+        938.044,
+        365.667
+      ],
+      "total_wall_ms": 1647.229
+    },
+    {
+      "position": "middle",
+      "index": 180,
+      "case_id": "CASE-0180",
+      "verification_code": "VC-530149",
+      "variant": "f2_f3",
+      "success": true,
+      "answer": {
+        "case_id": "CASE-0180",
+        "verification_code": "VC-530149"
+      },
+      "final_text": "{\"case_id\":\"CASE-0180\",\"verification_code\":\"VC-530149\"}",
+      "failure_reason": null,
+      "model_steps": 3,
+      "business_calls": 1,
+      "tool_names": [
+        "search_catalog",
+        "fetch_tool_result"
+      ],
+      "tool_calls": [
+        {
+          "name": "search_catalog",
+          "arguments": {
+            "query": "all cases"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_CgEuV85MgFAfZnD_",
+            "json_pointer": "/items",
+            "match_field": "case_id",
+            "match_value": "CASE-0180",
+            "match_mode": "exact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "fetch_calls": 1,
+      "prompt_tokens_by_step": [
+        719,
+        908,
+        1150
+      ],
+      "cumulative_prompt_tokens": 2777,
+      "model_wall_ms_by_step": [
+        314.396,
+        1107.83,
+        366.21
+      ],
+      "total_wall_ms": 1816.256
+    },
+    {
+      "position": "tail",
+      "index": 356,
+      "case_id": "CASE-0356",
+      "verification_code": "VC-923893",
+      "variant": "f2_f3",
+      "success": true,
+      "answer": {
+        "case_id": "CASE-0356",
+        "verification_code": "VC-923893"
+      },
+      "final_text": "{\"case_id\":\"CASE-0356\",\"verification_code\":\"VC-923893\"}",
+      "failure_reason": null,
+      "model_steps": 3,
+      "business_calls": 1,
+      "tool_names": [
+        "search_catalog",
+        "fetch_tool_result"
+      ],
+      "tool_calls": [
+        {
+          "name": "search_catalog",
+          "arguments": {
+            "query": "all cases"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_nTG5KFV7C_piz5Y7",
+            "match_field": "case_id",
+            "match_value": "CASE-0356",
+            "match_mode": "exact"
+          }
+        }
+      ],
+      "fetch_calls": 1,
+      "prompt_tokens_by_step": [
+        719,
+        904,
+        1129
+      ],
+      "cumulative_prompt_tokens": 2752,
+      "model_wall_ms_by_step": [
+        314.641,
+        895.602,
+        366.118
+      ],
+      "total_wall_ms": 1604.037
+    }
+  ]
+}

@@ -228,6 +228,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         externalize_ms = []
         fetch_ms = []
         fetch_tokens = []
+        search_ms = []
+        search_tokens = []
         small_ms = []
         perf_lazy = LazyLoadMiddleware(
             store="sqlite",
@@ -268,6 +270,24 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             fetch_ms.append((time.monotonic() - started) * 1000)
             fetch_tokens.append(count_text_tokens(tokenizer, handled.content if handled else ""))
+            target = json.loads(payload)["items"][-1]["document_id"]
+            started = time.monotonic()
+            searched = perf_lazy.handle_internal_tool_call(
+                FETCH_TOOL_NAME,
+                {
+                    "result_id": result_id,
+                    "json_pointer": "/items",
+                    "match_field": "document_id",
+                    "match_value": target,
+                    "match_mode": "exact",
+                    "max_matches": 1,
+                },
+                ctx,
+            )
+            search_ms.append((time.monotonic() - started) * 1000)
+            search_tokens.append(
+                count_text_tokens(tokenizer, searched.content if searched else "")
+            )
 
         baseline = prompt_tokens["baseline"]
         f3_saved_pct = (baseline - prompt_tokens["f3_only"]) / baseline * 100
@@ -279,6 +299,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "fetch_p95_at_most_20ms": _p95(fetch_ms) <= 20.0,
             "small_p95_at_most_5ms": _p95(small_ms) <= 5.0,
             "fetch_at_most_768_tokens": bool(fetch_tokens) and max(fetch_tokens) <= 768,
+            "search_p95_at_most_20ms": _p95(search_ms) <= 20.0,
+            "search_at_most_768_tokens": (
+                bool(search_tokens) and max(search_tokens) <= 768
+            ),
             "all_results_externalized": len(result_ids) == args.results,
         }
 
@@ -305,10 +329,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "externalize_p95": round(_p95(externalize_ms), 3),
                 "fetch_p50": round(statistics.median(fetch_ms), 3),
                 "fetch_p95": round(_p95(fetch_ms), 3),
+                "search_p50": round(statistics.median(search_ms), 3),
+                "search_p95": round(_p95(search_ms), 3),
                 "small_p50": round(statistics.median(small_ms), 3),
                 "small_p95": round(_p95(small_ms), 3),
             },
             "fetch_tokens_max": max(fetch_tokens, default=0),
+            "search_tokens_max": max(search_tokens, default=0),
             "gates": gates,
         }
         if args.engine_url:

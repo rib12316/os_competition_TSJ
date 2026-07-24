@@ -30,15 +30,16 @@ class _DropBodyCompressor:
 
 
 def _lazy(**kwargs) -> LazyLoadMiddleware:
-    middleware = LazyLoadMiddleware(
+    options = dict(
         store="memory",
         tokenizer_model="unit-tokenizer",
         externalize_trigger_tokens=100,
         max_reference_tokens=512,
         fetch_max_tokens=300,
         artifact_store=MemoryArtifactStore(),
-        **kwargs,
     )
+    options.update(kwargs)
+    middleware = LazyLoadMiddleware(**options)
     middleware._tokenizer = _CharacterTokenizer()
     return middleware
 
@@ -145,6 +146,230 @@ def test_fetch_supports_rfc6901_json_pointer():
 
     assert handled is not None
     assert json.loads(handled.content)["content"] == '"ready"'
+
+
+def test_fetch_exact_matches_json_array_field_at_any_position():
+    middleware = _lazy(fetch_max_tokens=600)
+    items = [
+        {"case_id": f"CASE-{index:04d}", "verification_code": f"VC-{index:04d}"}
+        for index in range(200)
+    ]
+    content = json.dumps({"items": items, "padding": "x" * 1000})
+    ctx = MiddlewareContext("s1")
+    reference = middleware.intercept_tool_result("query", {}, content, ctx)
+    result_id = artifact_id_from_reference(reference)
+    assert result_id is not None
+
+    for index in (0, len(items) // 2, len(items) - 1):
+        handled = middleware.handle_internal_tool_call(
+            FETCH_TOOL_NAME,
+            {
+                "result_id": result_id,
+                "json_pointer": "/items",
+                "match_field": "case_id",
+                "match_value": f"CASE-{index:04d}",
+            },
+            ctx,
+        )
+        assert handled is not None
+        payload = json.loads(handled.content)
+        assert json.loads(payload["content"]) == [items[index]]
+        assert payload["scanned_items"] == len(items)
+        assert payload["matches_found"] == 1
+        assert middleware._count(handled.content) <= middleware.fetch_max_tokens
+
+
+def test_fetch_exact_match_caps_duplicate_results():
+    middleware = _lazy(fetch_max_tokens=600)
+    items = [{"status": "open", "index": index} for index in range(20)]
+    content = json.dumps({"items": items, "padding": "x" * 1000})
+    ctx = MiddlewareContext("s1")
+    reference = middleware.intercept_tool_result("query", {}, content, ctx)
+    result_id = artifact_id_from_reference(reference)
+    assert result_id is not None
+
+    handled = middleware.handle_internal_tool_call(
+        FETCH_TOOL_NAME,
+        {
+            "result_id": result_id,
+            "json_pointer": "/items",
+            "match_field": "status",
+            "match_value": "open",
+            "max_matches": 2,
+        },
+        ctx,
+    )
+
+    assert handled is not None
+    payload = json.loads(handled.content)
+    assert len(json.loads(payload["content"])) == 2
+    assert payload["matches_found"] == len(items)
+    assert payload["matches_returned"] == 2
+    assert payload["source_truncated"] is True
+
+
+def test_fetch_match_modes_support_case_insensitive_titles_and_bounded_contains():
+    middleware = _lazy(fetch_max_tokens=600)
+    items = [
+        {"title": "Man at Bath", "text": "film"},
+        {"title": "A Man at Work", "text": "other"},
+    ]
+    content = json.dumps({"documents": items, "padding": "x" * 1000})
+    ctx = MiddlewareContext("s1")
+    reference = middleware.intercept_tool_result("query", {}, content, ctx)
+    result_id = artifact_id_from_reference(reference)
+    assert result_id is not None
+
+    iexact = middleware.handle_internal_tool_call(
+        FETCH_TOOL_NAME,
+        {
+            "result_id": result_id,
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "MAN AT BATH",
+            "match_mode": "iexact",
+        },
+        ctx,
+    )
+    contains = middleware.handle_internal_tool_call(
+        FETCH_TOOL_NAME,
+        {
+            "result_id": result_id,
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "man at",
+            "match_mode": "icontains",
+            "max_matches": 1,
+        },
+        ctx,
+    )
+
+    assert iexact is not None and contains is not None
+    assert json.loads(json.loads(iexact.content)["content"]) == [items[0]]
+    contains_payload = json.loads(contains.content)
+    assert len(json.loads(contains_payload["content"])) == 1
+    assert contains_payload["matches_found"] == 2
+    assert contains_payload["source_truncated"] is True
+
+
+def test_fetch_match_infers_unique_array_and_returns_match_pointer():
+    middleware = _lazy(fetch_max_tokens=600)
+    items = [{"title": "Man at Bath", "text": "film"}]
+    content = json.dumps({"count": 1, "documents": items, "padding": "x" * 1000})
+    ctx = MiddlewareContext("s1")
+    reference = middleware.intercept_tool_result("query", {}, content, ctx)
+    result_id = artifact_id_from_reference(reference)
+    assert result_id is not None
+
+    handled = middleware.handle_internal_tool_call(
+        FETCH_TOOL_NAME,
+        {
+            "result_id": result_id,
+            "match_field": "title",
+            "match_value": "MAN AT BATH",
+            "match_mode": "iexact",
+        },
+        ctx,
+    )
+
+    assert handled is not None
+    payload = json.loads(handled.content)
+    assert json.loads(payload["content"]) == items
+    assert payload["json_pointer"] == "/documents"
+    assert payload["match_pointers"] == ["/documents/0"]
+
+
+def test_fetch_large_match_returns_valid_bounded_preview_and_pointer():
+    middleware = _lazy(fetch_max_tokens=500)
+    item = {"title": "Long document", "text": "important opening " + "x" * 3000}
+    content = json.dumps({"documents": [item], "padding": "y" * 1000})
+    ctx = MiddlewareContext("s1")
+    reference = middleware.intercept_tool_result("query", {}, content, ctx)
+    result_id = artifact_id_from_reference(reference)
+    assert result_id is not None
+
+    handled = middleware.handle_internal_tool_call(
+        FETCH_TOOL_NAME,
+        {
+            "result_id": result_id,
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "Long document",
+        },
+        ctx,
+    )
+
+    assert handled is not None
+    payload = json.loads(handled.content)
+    preview = json.loads(payload["content"])
+    assert preview[0]["title"] == item["title"]
+    assert preview[0]["text"].startswith("important opening")
+    assert preview[0]["text"].endswith("...")
+    assert payload["match_pointers"] == ["/documents/0"]
+    assert payload["token_truncated"] is True
+    assert middleware._count(handled.content) <= middleware.fetch_max_tokens
+
+
+def test_fetch_exact_match_rejects_oversized_json_search():
+    middleware = _lazy(max_parse_bytes=200)
+    content = json.dumps({"items": [{"id": "wanted"}], "padding": "x" * 1000})
+    ctx = MiddlewareContext("s1")
+    reference = middleware.intercept_tool_result("query", {}, content, ctx)
+    result_id = artifact_id_from_reference(reference)
+    assert result_id is not None
+
+    handled = middleware.handle_internal_tool_call(
+        FETCH_TOOL_NAME,
+        {
+            "result_id": result_id,
+            "json_pointer": "/items",
+            "match_field": "id",
+            "match_value": "wanted",
+        },
+        ctx,
+    )
+
+    assert handled is not None
+    assert handled.status == "error"
+    assert json.loads(handled.content)["status"] == "selector_too_large"
+
+
+def test_json_reference_advertises_searchable_array_pointer_and_fields():
+    middleware = _lazy()
+    content = json.dumps({
+        "items": [{"case_id": "CASE-0001", "status": "open"}],
+        "padding": "x" * 1000,
+    })
+
+    reference = middleware.intercept_tool_result(
+        "query", {}, content, MiddlewareContext("s1")
+    )
+
+    arrays = json.loads(reference)["summary"]["arrays"]
+    assert arrays == [{
+        "pointer": "/items",
+        "length": 1,
+        "item_keys": ["case_id", "status"],
+    }]
+
+
+def test_json_reference_lists_bounded_document_titles():
+    middleware = _lazy(fetch_max_tokens=600, max_reference_tokens=1200)
+    content = json.dumps({
+        "documents": [
+            {"title": f"Document {index}", "text": "body"}
+            for index in range(15)
+        ],
+        "padding": "x" * 1000,
+    })
+
+    reference = middleware.intercept_tool_result(
+        "query", {}, content, MiddlewareContext("s1")
+    )
+
+    array = json.loads(reference)["summary"]["arrays"][0]
+    assert array["sample_titles"] == [f"Document {index}" for index in range(12)]
+    assert array["titles_truncated"] is True
 
 
 def test_fetch_can_continue_a_minified_json_value_by_character_offset():

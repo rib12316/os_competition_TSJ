@@ -1,30 +1,32 @@
-# F3 Tool Result Lazy-Load: Implementation and Benchmark Report
+# F3 Tool Result Lazy-Load: Implementation and Quality Report
 
 - Date: 2026-07-24
 - Branch: `feat/f3-tool-data-lazyload`
 - Base: F2 checkpoint `1e64bc8`
-- Upstream design reference: ByteDance DeerFlow `ToolOutputBudgetMiddleware` (MIT)
 - Inference: local Qwen2.5-7B-Instruct served by vllm-ascend
 
 ## Result
 
-F3 now externalizes oversized tool results before they enter Agent history. The
-model sees a deterministic structured reference and can call the local bounded
-`fetch_tool_result` tool. No OpenAI-hosted inference service is used; the Python
-SDK is only the client for vLLM's compatible HTTP endpoint.
+F3 externalizes oversized tool results before they enter Agent history. The model
+sees a deterministic structured reference and can call the local bounded
+`fetch_tool_result` tool. The implementation now supports bounded JSON field search,
+which was required by end-to-end head/middle/tail quality tests.
 
-All acceptance gates frozen in `F3-deerflow-adaptation-plan.md` passed.
+No OpenAI-hosted inference service is used. The Python SDK is only the client for
+vLLM's compatible local HTTP endpoint.
 
 | Metric | Gate | Actual |
 |---|---:|---:|
-| Full Prompt saving, tokenizer replay | at least 70% | 95.33% |
-| Reference size | at most 512 token | at most 120 |
-| Fetch response | at most 768 token | at most 768 |
-| SQLite externalize p95 | at most 50 ms | 8.41 ms |
-| Fetch p95 | at most 20 ms | 5.09 ms |
+| Full Prompt saving, tokenizer replay | at least 70% | 92.98% |
+| Reference size | at most 512 token | at most 222 |
+| Fetch/search response | at most 768 token | at most 768 / 25 |
+| SQLite externalize p95 | at most 50 ms | 8.53 ms |
+| Fetch p95 | at most 20 ms | 5.08 ms |
+| Exact JSON search p95 | at most 20 ms | 0.15 ms |
 | Below-trigger p95 | at most 5 ms | 0.08 ms |
-| F2+F3 Prompt no larger than F3 | required | 996 = 996 |
-| Regression | all pass | 237 passed |
+| Controlled lookup correctness | all head/middle/tail | 3/3 |
+| Controlled F2+F3 correctness | all head/middle/tail | 3/3 |
+| Regression | all pass | 245 passed |
 
 ## Architecture
 
@@ -39,7 +41,7 @@ business tool result
 model fetch_tool_result call
   -> MiddlewareStack.handle_internal_tool_call
   -> session ACL + SHA-256 integrity check
-  -> JSON Pointer / line / character selection
+  -> JSON Pointer / line / character / bounded field search
   -> hard 768-token response cap
   -> tool result enters hot tail; tau-bench env.step is not called
 ```
@@ -47,43 +49,106 @@ model fetch_tool_result call
 The stable fetch schema is injected from the first request whenever F3 is enabled,
 so the tools prefix does not change after the first externalized result.
 
+## Structured search added after quality testing
+
+The first real Qwen retrieval test exposed a concrete failure. With a minified
+18,658-token JSON array, baseline answered head/middle/tail records correctly, but
+the original F3 implementation scored 0/3. Qwen called `fetch_tool_result` in all
+three cases, received only the beginning of the one-line JSON, and returned
+`CASE-0000` instead of the requested record. Storage and fetch activation worked;
+the retrieval interface could not locate a record by ID.
+
+`fetch_tool_result` therefore gained a restricted selector:
+
+- `json_pointer` selects an array, or may be omitted when exactly one searchable
+  top-level array exists;
+- `match_field` selects one direct object field;
+- `match_value` is a string value;
+- `match_mode` is one of `exact`, `iexact`, `contains`, or `icontains`;
+- `max_matches` is capped at 10;
+- JSON search is rejected above the configured 5 MB parse bound;
+- search results include stable RFC 6901 pointers to matched records;
+- oversized matching records return structurally valid bounded previews rather than
+  partial JSON objects;
+- JSON synopses advertise array pointers, item keys, and at most 12 document titles.
+
+There is no regex, expression evaluator, JSONPath engine, or arbitrary query code.
+All search responses retain the existing session ACL, integrity check, and 768-token
+hard limit.
+
+## Controlled end-to-end quality
+
+The benchmark uses a single 360-record JSON result containing 18,658 Qwen tokens.
+The requested records are at indexes 3, 180, and 356. The local Qwen model must call
+the business tool, recognize the externalized reference, construct the selector,
+fetch the record, and return its exact verification code. The benchmark never
+injects the correct JSON pointer or answer.
+
+| Variant | Correct | Cumulative Prompt token | Saving vs baseline | Fetch calls |
+|---|---:|---:|---:|---:|
+| baseline | 3/3 | 57,570 | - | 0 |
+| F3 | 3/3 | 8,293 | 85.59% | 3 |
+| F2 + F3 | 3/3 | 8,295 | 85.59% | 3 |
+
+Every F3 task used exactly one search fetch. The raw tool arguments show that Qwen
+generated the requested `case_id` selector itself. These are controlled exact-ID
+lookups, not evidence that arbitrary long-tool reasoning is quality-neutral.
+
+## Exploratory LongBench probe
+
+Three unmodified `2wikimqa` examples were parsed into ten-document JSON arrays
+(7,152-8,256 Qwen tokens). The reference exposed document titles but not bodies,
+answers, or supporting facts. Qwen was instructed to complete two evidence hops.
+
+| Variant | Correct | Cumulative Prompt token | Fetch calls |
+|---|---:|---:|---:|
+| baseline | 0/3 | 25,019 | 0 |
+| F3 | 0/3 | 10,272 | 3 |
+| F2 + F3 | 0/3 | 10,281 | 3 |
+
+F3 found and read a first-hop document, but Qwen returned the intermediate entity
+instead of fetching the second document. Baseline also scored 0/3 with all documents
+inline, so this tiny probe cannot estimate an F3 quality delta. It proves neither
+quality preservation nor an F3-specific regression. A larger evaluation requires a
+model that first establishes a non-zero baseline on the selected multi-hop tasks.
+
 ## F2 interaction
 
-The combined order is `active: [lazyload, compress]`.
+The combined order remains `active: [lazyload, compress]`.
 
 - Results below 1k tokens remain unchanged.
 - Medium results can use F2 hot tool-aware compression.
 - Results at least 4k tokens are externalized by F3.
 - F2 still compresses static system/tools and accumulated cold synopsis prose.
-- `result_id`, status, tool name, numeric metadata, and fetch arguments use keys
-  covered by F2's critical-field protection.
-- Fetch responses are capped below F2's 1k hot-tool gate and are exempt from F3,
-  preventing processing loops.
-- Prompt metering expands references only in a measurement copy, so baseline vs
-  transformed counts include F3 savings while canonical history remains short.
+- Fetch/search responses are capped below F2's 1k hot-tool gate and are exempt from F3.
+- `result_id` and all assistant tool-call arguments remain protected by F2.
 
-On the long JSON trace, F2-only request transformation took 6.53 seconds because
-LLMLingua-2 ran on the large bodies. After F3 externalization, the F2+F3 request
-transform took 1.92 ms; F3 externalization itself was 8.41 ms p95 per result.
+On the synthetic long JSON trace, F2-only transformation took 6.64 seconds because
+LLMLingua-2 processed the large bodies. F2+F3 transformed the short references in
+3.24 ms; F3 externalization itself was 8.53 ms p95 per result.
 
 ## Strict paired token result
 
-The deterministic trace contains three tool results targeting 5,000 tokens each.
-All stages use the same Qwen tokenizer and complete chat template, including tools.
+All stages use the same deterministic trace, Qwen tokenizer, complete chat template,
+and tool schema.
 
 | Stage | Full Prompt token | Difference from baseline |
 |---|---:|---:|
 | baseline | 21,350 | - |
 | F2 only | 17,075 | -20.02% |
-| F3 only | 996 | -95.33% |
-| F2 + F3 | 996 | -95.33% |
+| F3 only | 1,499 | -92.98% |
+| F2 + F3 | 1,499 | -92.98% |
+
+The previous 996-token result predated structured search and title-aware synopses.
+The larger schema/reference cost 503 tokens on this trace but kept the saving above
+the 70% gate and enabled the controlled lookup tasks to recover the correct data.
 
 ## vLLM verification
 
-Three cache-busted rounds alternated request order. Server-reported usage was
-21,371 tokens for baseline and 1,017 for F3 in every round, a 95.24% decrease.
-Wall time p50 was 1,815.32 ms vs 60.14 ms. Requests generated only one output token,
-so this comparison primarily measures prefill; it does not claim decode acceleration.
+Three cache-busted rounds alternated request order. Server-reported usage was 21,371
+tokens for baseline and 1,520 for F3 in every round, a 92.89% decrease. Wall time p50
+was 1,822.29 ms vs 81.23 ms. Requests generated only one output token, so this
+comparison primarily measures prefill; it does not claim decode acceleration.
 
 ## Reproduce
 
@@ -95,7 +160,20 @@ PYTHONPATH=src HF_HOME=/data/huggingface_home \
   --model Qwen2.5-7B-Instruct --served-model Qwen2.5-7B-Instruct \
   --results 3 --result-tokens 5000 --perf-runs 20 \
   --engine-url http://127.0.0.1:8000/v1 --vllm-rounds 3 \
-  --output /tmp/f3-result.json
+  --output ../docs/f3-results/f3_tool_data_result.json
+
+PYTHONPATH=src HF_HOME=/data/huggingface_home \
+  /data/os_competition_TSJ/.venv/bin/python \
+  benchmarks/f3_retrieval_quality_benchmark.py \
+  --records 360 --variants baseline f3 f2_f3 \
+  --output ../docs/f3-results/f3_retrieval_quality_result.json
+
+PYTHONPATH=src HF_HOME=/data/huggingface_home \
+  /data/os_competition_TSJ/.venv/bin/python \
+  benchmarks/f3_longbench_quality_benchmark.py \
+  --data-zip /tmp/longbench-data.zip --start 0 --limit 3 \
+  --variants baseline f3 f2_f3 \
+  --output ../docs/f3-results/f3_longbench_2wikimqa_probe.json
 
 PYTHONPATH=src /data/os_competition_TSJ/.venv/bin/python -m pytest -q tests
 /data/os_competition_TSJ/.venv/bin/ruff check src/agent_mem tests benchmarks
@@ -103,13 +181,19 @@ PYTHONPATH=src /data/os_competition_TSJ/.venv/bin/python -m pytest -q tests
 
 ## Boundaries
 
-- The token and vLLM results use a deterministic synthetic long-tool trace, not
-  tau-bench task success evaluation.
-- Retail full115 has no hot tool result above 1k tokens, so it is not a meaningful
-  F3 benefit workload; it remains useful for no-trigger regression.
-- vLLM preallocates its KV pool, so these results do not by themselves prove lower
-  process-level HBM peak. They prove fewer prompt/KV tokens and lower paired prefill.
-- SQLite is local-process storage. Distributed Agent workers would need a shared
-  store backend while preserving the same session-scoped interface.
+- Controlled ID lookup now preserves correctness while reducing cumulative Prompt
+  tokens, but arbitrary semantic retrieval and multi-hop quality are not proven.
+- The three-example LongBench probe is diagnostic only; its baseline is zero.
+- Retail full115 has no hot tool result above 1k tokens and remains a no-trigger
+  regression workload rather than an F3 benefit workload.
+- vLLM preallocates its KV pool, so these results prove fewer prompt/KV tokens and
+  lower paired prefill, not lower process-level HBM peak.
+- SQLite is local-process storage. Distributed workers need a shared backend while
+  preserving the session-scoped interface.
 
-Raw result: `docs/f3-results/f3_tool_data_result.json`.
+Raw results:
+
+- `docs/f3-results/f3_tool_data_result.json`
+- `docs/f3-results/f3_retrieval_quality_before_search.json`
+- `docs/f3-results/f3_retrieval_quality_result.json`
+- `docs/f3-results/f3_longbench_2wikimqa_probe.json`

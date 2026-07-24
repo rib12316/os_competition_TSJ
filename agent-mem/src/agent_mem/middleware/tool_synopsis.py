@@ -39,6 +39,10 @@ def _json_shape(value: Any, depth: int = 0) -> str:
     return type(value).__name__
 
 
+def _pointer_part(value: Any) -> str:
+    return str(value).replace("~", "~0").replace("/", "~1")
+
+
 def _json_synopsis(content: str) -> dict[str, Any] | None:
     stripped = content.strip()
     if not stripped.startswith(("{", "[")):
@@ -50,6 +54,29 @@ def _json_synopsis(content: str) -> dict[str, Any] | None:
     out: dict[str, Any] = {"kind": "json", "shape": _json_shape(value)}
     if isinstance(value, dict):
         out["keys"] = [str(key) for key in list(value)[:_MAX_KEYS]]
+        arrays = []
+        for key, child in value.items():
+            if not isinstance(child, list):
+                continue
+            array: dict[str, Any] = {
+                "pointer": f"/{_pointer_part(key)}",
+                "length": len(child),
+            }
+            if child and isinstance(child[0], dict):
+                array["item_keys"] = [str(item_key) for item_key in list(child[0])[:_MAX_KEYS]]
+                titles = [
+                    _clip(str(item["title"]), 80)
+                    for item in child[:12]
+                    if isinstance(item, dict) and isinstance(item.get("title"), str)
+                ]
+                if titles:
+                    array["sample_titles"] = titles
+                    array["titles_truncated"] = len(child) > len(titles)
+            arrays.append(array)
+            if len(arrays) >= 4:
+                break
+        if arrays:
+            out["arrays"] = arrays
     elif isinstance(value, list) and value and isinstance(value[0], dict):
         out["item_keys"] = [str(key) for key in list(value[0])[:_MAX_KEYS]]
     return out

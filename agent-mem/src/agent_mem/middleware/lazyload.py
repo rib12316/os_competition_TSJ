@@ -49,7 +49,38 @@ FETCH_TOOL_SCHEMA: dict[str, Any] = {
                 },
                 "json_pointer": {
                     "type": "string",
-                    "description": "Optional RFC 6901 JSON Pointer, for example /items/0.",
+                    "description": (
+                        "Optional RFC 6901 JSON Pointer, for example /items/0. "
+                        "When match_field is set, point to the array to search, for example /items."
+                    ),
+                },
+                "match_field": {
+                    "type": "string",
+                    "description": (
+                        "Optional direct object field to exact-match within the JSON array "
+                        "selected by json_pointer, for example case_id. Requires match_value."
+                    ),
+                },
+                "match_value": {
+                    "type": "string",
+                    "description": (
+                        "String value to compare with match_field using match_mode. For titles, "
+                        "copy one candidate from the reference summary instead of inventing it."
+                    ),
+                },
+                "match_mode": {
+                    "type": "string",
+                    "enum": ["exact", "iexact", "contains", "icontains"],
+                    "description": (
+                        "String comparison mode. exact is the default; use iexact for titles "
+                        "whose capitalization may differ, or bounded contains/icontains."
+                    ),
+                },
+                "max_matches": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "Maximum matching array items to return. Defaults to 5.",
                 },
                 "start_line": {
                     "type": "integer",
@@ -107,6 +138,32 @@ def _resolve_json_pointer(value: Any, pointer: str) -> Any:
         else:
             raise KeyError(part)
     return current
+
+
+def _pointer_part(value: Any) -> str:
+    return str(value).replace("~", "~0").replace("/", "~1")
+
+
+def _select_match_array(root: Any, pointer: str, match_field: str) -> tuple[list[Any], str]:
+    if pointer:
+        selected = _resolve_json_pointer(root, pointer)
+        if not isinstance(selected, list):
+            raise ValueError("json_pointer must select an array for matching")
+        return selected, pointer
+    if isinstance(root, list):
+        return root, ""
+    if not isinstance(root, dict):
+        raise ValueError("matching requires a JSON array")
+    candidates = [
+        (key, value)
+        for key, value in root.items()
+        if isinstance(value, list)
+        and any(isinstance(item, dict) and match_field in item for item in value)
+    ]
+    if len(candidates) != 1:
+        raise ValueError("omit json_pointer only when one searchable array exists")
+    key, selected = candidates[0]
+    return selected, f"/{_pointer_part(key)}"
 
 
 class LazyLoadMiddleware(BaseMiddleware):
@@ -316,11 +373,57 @@ class LazyLoadMiddleware(BaseMiddleware):
             return HandledToolCall(content=content, status="error")
 
         pointer = str(args.get("json_pointer") or "")
+        match_field = str(args.get("match_field") or "")
+        match_value = args.get("match_value")
+        match_mode = str(args.get("match_mode") or "exact")
+        matched_items: list[Any] | None = None
         try:
-            if pointer:
+            if match_field:
+                if not isinstance(match_value, str):
+                    raise ValueError("match_value is required with match_field")
+                if match_mode not in {"exact", "iexact", "contains", "icontains"}:
+                    raise ValueError("invalid match_mode")
+                if not match_value and match_mode in {"contains", "icontains"}:
+                    raise ValueError("contains match_value must not be empty")
+                if artifact.byte_count > self.max_parse_bytes:
+                    content = json.dumps(
+                        {"status": "selector_too_large", "result_id": result_id},
+                        separators=(",", ":"),
+                    )
+                    return HandledToolCall(content=content, status="error")
+                selected, pointer = _select_match_array(
+                    json.loads(artifact.content), pointer, match_field
+                )
+                max_matches = min(10, max(1, int(args.get("max_matches") or 5)))
+                indexed_matches = [
+                    (index, item)
+                    for index, item in enumerate(selected)
+                    if isinstance(item, dict)
+                    and isinstance(item.get(match_field), str)
+                    and self._string_matches(item[match_field], match_value, match_mode)
+                ]
+                returned_pairs = indexed_matches[:max_matches]
+                returned = [item for _, item in returned_pairs]
+                matched_items = returned
+                text = json.dumps(returned, ensure_ascii=False, separators=(",", ":"))
+                meta = {
+                    "json_pointer": pointer,
+                    "match_field": match_field,
+                    "match_value": match_value,
+                    "match_mode": match_mode,
+                    "scanned_items": len(selected),
+                    "matches_found": len(indexed_matches),
+                    "matches_returned": len(returned),
+                    "match_pointers": [
+                        f"{pointer}/{index}" if pointer else f"/{index}"
+                        for index, _ in returned_pairs
+                    ],
+                }
+                source_truncated = len(indexed_matches) > len(returned)
+            elif pointer:
                 selected = _resolve_json_pointer(json.loads(artifact.content), pointer)
                 text = json.dumps(selected, ensure_ascii=False, separators=(",", ":"))
-                meta: dict[str, Any] = {"json_pointer": pointer}
+                meta = {"json_pointer": pointer}
                 source_truncated = False
             else:
                 start_line = max(1, int(args.get("start_line") or 1))
@@ -353,14 +456,23 @@ class LazyLoadMiddleware(BaseMiddleware):
         char_truncated = char_end < len(text)
         meta["start_char"] = start_char
 
-        content, token_truncated = self._bounded_fetch_response(
-            result_id=result_id,
-            text=selected_text,
-            meta=meta,
-            source_truncated=source_truncated or char_truncated,
-            source_start_char=start_char,
-            has_more_chars=char_truncated,
-        )
+        if matched_items is not None and start_char == 0:
+            meta.pop("start_char", None)
+            content, token_truncated = self._bounded_match_response(
+                result_id=result_id,
+                items=matched_items,
+                meta=meta,
+                source_truncated=source_truncated,
+            )
+        else:
+            content, token_truncated = self._bounded_fetch_response(
+                result_id=result_id,
+                text=selected_text,
+                meta=meta,
+                source_truncated=source_truncated or char_truncated,
+                source_start_char=start_char,
+                has_more_chars=char_truncated,
+            )
         self._log_event(ctx, {
             "action": "fetch",
             "tool_name": name,
@@ -372,6 +484,94 @@ class LazyLoadMiddleware(BaseMiddleware):
             "token_count_source": self.token_count_source,
         })
         return HandledToolCall(content=content)
+
+    @staticmethod
+    def _string_matches(candidate: str, query: str, mode: str) -> bool:
+        if mode == "exact":
+            return candidate == query
+        if mode == "iexact":
+            return candidate.casefold() == query.casefold()
+        if mode == "contains":
+            return query in candidate
+        return query.casefold() in candidate.casefold()
+
+    def _bounded_match_response(
+        self,
+        *,
+        result_id: str,
+        items: list[Any],
+        meta: dict[str, Any],
+        source_truncated: bool,
+    ) -> tuple[str, bool]:
+        """Fit exact-match results by whole JSON records, never partial JSON text."""
+        def render(selected: list[Any], token_truncated: bool) -> str:
+            selected_meta = dict(meta)
+            pointers = selected_meta.get("match_pointers")
+            if isinstance(pointers, list):
+                selected_meta["match_pointers"] = pointers[: len(selected)]
+            payload = {
+                "status": "ok",
+                "result_id": result_id,
+                **selected_meta,
+                "matches_returned": len(selected),
+                "source_truncated": source_truncated or token_truncated,
+                "token_truncated": token_truncated,
+                "content": json.dumps(
+                    selected, ensure_ascii=False, separators=(",", ":")
+                ),
+            }
+            return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+        if not items:
+            rendered = render([], False)
+            if self._count(rendered) <= self.fetch_max_tokens:
+                return rendered, False
+
+        for take in range(len(items), 0, -1):
+            token_truncated = take < len(items)
+            rendered = render(items[:take], token_truncated)
+            if self._count(rendered) <= self.fetch_max_tokens:
+                return rendered, token_truncated
+
+        if items and isinstance(items[0], dict):
+            preview = {
+                key: value
+                if isinstance(value, (str, int, float, bool)) or value is None
+                else f"<{type(value).__name__} omitted>"
+                for key, value in items[0].items()
+            }
+            for _ in range(12):
+                rendered = render([preview], True)
+                count = self._count(rendered)
+                if count <= self.fetch_max_tokens:
+                    return rendered, True
+                strings = sorted(
+                    (
+                        (len(value), key, value)
+                        for key, value in preview.items()
+                        if isinstance(value, str) and len(value) > 16
+                    ),
+                    reverse=True,
+                )
+                if not strings:
+                    break
+                _, key, value = strings[0]
+                ratio = max(0.1, min(0.8, self.fetch_max_tokens / max(1, count) * 0.8))
+                keep = max(16, int(len(value) * ratio))
+                preview[key] = value[: max(13, keep - 3)] + "..."
+        fallback = {
+            "status": "ok",
+            "result_id": result_id,
+            "matches_found": int(meta.get("matches_found") or 0),
+            "matches_returned": 0,
+            "source_truncated": True,
+            "token_truncated": True,
+            "content": "[]",
+        }
+        pointers = meta.get("match_pointers")
+        if isinstance(pointers, list) and pointers:
+            fallback["match_pointers"] = pointers[:1]
+        return json.dumps(fallback, separators=(",", ":")), True
 
     def measurement_baseline(
         self, messages: list[dict], tools: list[dict], ctx: MiddlewareContext
