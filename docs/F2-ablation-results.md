@@ -206,6 +206,31 @@ f2 压缩开销：74 次压缩 + 256 复用 + 1567 skip，**总压缩耗时 1452
 
 ---
 
-**一句话（最终）**：F2（tau-bench retail 全量 115）= **success 无损（-1pp，红线内）、上下文 -45%、
-延迟 -10%（小代价，已从 -16% 减半）**。success/上下文是净赢；延迟这块的剩余成本是 gpt2 压缩
+**一句话（当时结论）**：F2（tau-bench retail 全量 115）= **success 无损（-1pp，红线内）、上下文 -45%、
+延迟 +9.7%（代价已从 +16% 减半）**。success/上下文是净赢；延迟这块的剩余成本是 gpt2 压缩
 本身的耗时，换 BERT 即可彻底解决。worker 池 + 限线程（你提的"128÷并发"）验证有效。
+
+---
+
+## 11. 最终综合方案 full115：完整 prompt -19.32%，动态 BERT 未触发
+
+2026-07-24 使用最终配置（compact system/tools、hot 1k、cold 8k、LLMLingua-2）运行
+tau-bench retail 115 任务，并发 4：
+
+| 指标 | 本轮结果 |
+|---|---:|
+| task success | 23/115（20.00%） |
+| latency p50 / p95 | 98.02s / 161.64s |
+| canonical / transformed prompt | 10,933,355 / 8,820,495 |
+| 完整 prompt 降幅 | **2,112,860（19.32%）** |
+| 有收益调用 | 1,780/1,780 |
+| hot / cold BERT | 0 / 0 |
+
+最大 compressible cold body 只有 4,097 token，未达到 8k；也没有单个 hot tool result 达到
+1k。因此 19.32% 全部来自 system/tools 的确定性精简，动态 LLMLingua 在本轮 retail 中没有
+贡献，也没有带来 BERT 延迟。p50 与最近 strict baseline 99.51s 基本持平（-1.50%）。
+
+success 需谨慎解释：本轮 23/115，相对最近 baseline 26/115 为 -2.61pp，名义上超过 2pp
+红线 0.61pp；但另一次 full115 baseline 本身也是 23/115。两次独立轨迹不能区分策略影响与
+user-sim 波动，故不能标记为严格通过或确定失败。完整报告见
+`docs/f2-results/comparison_comprehensive_full115.md`。

@@ -5,7 +5,11 @@
 
 ## 0. 一句话现状
 
-F2（Prompt 压缩 / 缝D）**全量 115 任务验证完成**：**success 无损（-1pp，红线内）、上下文 -45%、延迟 +9.7%（小代价，BERT 可消除）**。分支 `feat/f2-prompt-compress` 未 push；真实 `usage.prompt_tokens` 计量与静态 prompt 调研为当前未提交改动。
+F2 最终综合方案（compact system/tools + hot 1k + cold 8k）已完成 full115：严格同轨迹
+`10,933,355 -> 8,820,495`，**完整 prompt -19.32%**，1,780/1,780 次调用受益。本轮
+hot/cold BERT 均未触发，收益全部来自确定性静态前缀优化；p50 98.02s。success 为
+23/115；相对两次历史 baseline（23/115、26/115）分别为 0pp、-2.61pp，因此处于历史波动
+范围，但尚不能严格宣称通过 <=2pp 红线。分支 `feat/f2-prompt-compress` 未 push。
 
 ## 1. 任务与目标
 
@@ -211,3 +215,18 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
 - system 语义审计补回三项规则后，首轮实测 `4,272 -> 3,085`（-1,187，-27.79%）；
   最终 8k 配置按该轨迹预计约 16.96% token 收益，且不支付本次 cold BERT 成本。
 - 报告：`docs/f2-results/comparison_comprehensive8.md`；原始：`/tmp/f2-comprehensive8-v3`。
+
+## 16. 最终综合方案 full115（2026-07-24）
+
+- tau-bench retail 115/115 完成，并发 4，共 1,780 次模型调用。
+- 严格配对完整 prompt：`10,933,355 -> 8,820,495`，节省 2,112,860 token（19.32%）；
+  每次调用固定节省 1,187 token。
+- vLLM 实际 usage 合计 8,798,998 token；与本地 transformed meter 差 -21,497（-0.24%）。
+- 1,780 次 F2 action 全为 skip；最大 compressible cold body 4,097 < 8,000，hot BERT 0 次、
+  cold BERT 0 次。也就是说本轮 dynamic LLMLingua 贡献为 0，且没有 BERT 延迟。
+- success 23/115（20.00%）；历史两次 strict baseline 为 23/115、26/115。相对最近 baseline
+  名义下降 2.61pp，超过红线 0.61pp；但 baseline 自身也波动 2.61pp，单次独立轨迹不足以
+  判断 compact policy 是否导致下降。
+- p50 98.02s、p95 161.64s；相对最近 strict baseline 分别 -1.50%、+3.57%。
+- 报告：`docs/f2-results/comparison_comprehensive_full115.md`；原始：
+  `/tmp/f2-comprehensive-full115`。
