@@ -256,7 +256,8 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
 - 新增 `benchmarks/generic_context_benchmark.py`，45 轮、8 工具、181 条消息，原始 Prompt
   28,860 token；静态 policy+tool dedup 为 28,712（-0.51%），静态+动态 LLMLingua-2
   为 20,936（-27.46%）。
-- 动态可压 body 估算 30,681 > 8k，BERT 36.27s；同 session reuse 5.5ms；通用 incident
+- 动态可压 body 的 Qwen 精确值为 20,772 token；`chars/4` 触发估算为 30,681（高估
+  47.7%），两者均 > 8k。BERT 36.27s；同 session reuse 5.5ms；通用 incident
   ID/call ID/arguments/severity/status/owner/time 审计全部保留。该实验未运行
   full115，仅用于通用长上下文 token/压缩性能验证。
 - 报告：`docs/f2-results/generic-policy-long-context.md`。
