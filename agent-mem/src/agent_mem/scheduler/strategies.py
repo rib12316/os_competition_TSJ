@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from agent_mem.scheduler.eviction import EvictionTracker
 from agent_mem.scheduler.session import Session, SessionManager, SessionState
 
 # 机制回调签名（由 缝C connector 注入；策略不解释其内部）：
@@ -105,6 +106,69 @@ class IdleEvictionStrategy(BaseStrategy):
         session.state = SessionState.ACTIVE
         session.touch()
         return True
+
+
+class PriorityEvictionStrategy(BaseStrategy):
+    """F5 · 动态优先级回收（Phase 1 lossy 机制）。
+
+    idle 超阈值 → 抬高该 session 的调度优先级数值（写 ``session.metadata["priority"]``），
+    让开了 ``--scheduling-policy priority`` 的 vLLM 在 HBM 吃紧时**先抢占 idle session**，
+    达到"回收闲的、保护忙的"——即动态资源回收。被抢占的 KV **不搬**（区别于
+    :class:`IdleEvictionStrategy` 的无损 offload），恢复成本交给 APC / lazy offload。
+
+    vLLM priority 语义：数值越小越受保护、越大越先被抢占；故 ``active_priority=0``、
+    ``idle_priority=100``。
+
+    每个从 active→idle 的"抬优先级"算一次软驱逐，上报 :class:`EvictionTracker`
+    （``was_idle=True``），供 metrics 算 eviction-hit-idle%。
+
+    ``metadata["priority"]`` 由 agent 的 ``priority_fn`` 每请求读取透传给 vLLM；
+    session 重新活跃时调 :meth:`mark_active` 立即回落（driver 在 on_turn_start 调，
+    避免 touch 与下一轮 sweep 之间读到旧 idle 值）。本策略不改 ``session.state``
+    （KV 仍在显存，只是被打上"可先抢"标记），故不在 ``sweep`` 的状态变更返回值里。
+    """
+
+    name = "priority-evict"
+
+    def __init__(
+        self,
+        *,
+        idle_timeout_s: float,
+        idle_priority: int = 100,
+        active_priority: int = 0,
+        tracker: EvictionTracker | None = None,
+    ):
+        if idle_timeout_s < 0:
+            raise ValueError("idle_timeout_s 必须 >= 0")
+        if idle_priority <= active_priority:
+            raise ValueError("idle_priority 必须大于 active_priority（vLLM 数值越大越先被抢占）")
+        self.idle_timeout_s = idle_timeout_s
+        self.idle_priority = idle_priority
+        self.active_priority = active_priority
+        self.tracker = tracker
+
+    def mark_active(self, session: Session) -> None:
+        """session 重新活跃（driver on_turn_start 调）：立即回落 priority、清计数标志。"""
+        session.metadata["priority"] = self.active_priority
+        session.metadata["_pe_counted"] = False
+
+    def on_sweep(self, session: Session, mgr: SessionManager) -> None:
+        if session.state is not SessionState.ACTIVE:
+            return
+        idle = mgr.idle_seconds(session.session_id) >= self.idle_timeout_s
+        cur = session.metadata.get("priority", self.active_priority)
+        if idle:
+            if cur != self.idle_priority:
+                session.metadata["priority"] = self.idle_priority
+            # 每个 active→idle 转换只计一次软驱逐
+            if not session.metadata.get("_pe_counted"):
+                session.metadata["_pe_counted"] = True
+                if self.tracker is not None:
+                    self.tracker.record_eviction(
+                        session.session_id, was_idle=True, reason="priority-raise"
+                    )
+        elif cur != self.active_priority:
+            session.metadata["priority"] = self.active_priority
 
 
 class CheckpointStrategy(BaseStrategy):

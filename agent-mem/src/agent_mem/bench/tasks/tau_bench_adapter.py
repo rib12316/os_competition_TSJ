@@ -14,6 +14,7 @@ day-1 骨架：:func:`run_task_stub` 不调 agent，直接返回占位结果（r
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from agent_mem.bench.stats import median
@@ -179,6 +180,8 @@ def run_task(
     max_steps: int = 30,
     priority: int = 0,
     middlewares: list | None = None,
+    priority_fn: Callable[[], int] | None = None,
+    on_turn_start: Callable[[], None] | None = None,
 ) -> TaskRunResult:
     """真路径：用本地引擎跑 agent，返回带真 reward/latency/ttft 的结果。
 
@@ -187,6 +190,9 @@ def run_task(
     （默认本地引擎；可通过 ``user_api_base`` 切外部 OpenAI 兼容 API）。
 
     ``priority``：vLLM 调度优先级（0=最高，数值越大越先被踢，见 F5）。
+    ``priority_fn`` / ``on_turn_start``：F5 动态调度回调（由 ``ConcurrentSessionDriver``
+        注入）。``priority_fn`` 每轮读 session 当前 priority；``on_turn_start`` 每轮开始
+        标记 session 活跃。两者为 ``None`` 时退回静态 ``priority``（后向兼容）。
     ``middlewares``：缝D 中间件链（F2/F3），透传给 :class:`TauBenchAgent`。
     """
     import os
@@ -215,7 +221,10 @@ def run_task(
         task_index=task_id,
     )
     client = OpenAI(base_url=engine_url, api_key=api_key)  # agent 侧：始终本地引擎
-    agent = TauBenchAgent(client, model, priority=priority, middlewares=middlewares)
+    agent = TauBenchAgent(
+        client, model, priority=priority, priority_fn=priority_fn,
+        on_turn_start=on_turn_start, middlewares=middlewares,
+    )
 
     t0 = time.monotonic()
     try:

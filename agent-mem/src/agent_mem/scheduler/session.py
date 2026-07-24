@@ -9,6 +9,7 @@ F5（idle eviction）/ F6（KV checkpoint/恢复）都把 ``session`` 当一等�
 from __future__ import annotations
 
 import enum
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -48,68 +49,87 @@ class SessionManager:
     """session 注册表 + idle 追踪 + 策略驱动入口。
 
     ``clock`` 可注入（测试用可控时钟）；默认 :func:`time.monotonic`。
-    线程模型：非线程安全——单 driver 线程 sweep（与 benchmark 串行任务驱动一致）。
+    线程模型：**线程安全**（:class:`threading.RLock`）——支持 N 个并发 session 线程
+    ``touch()`` 与单个后台 sweep 线程并发（F5 并发 benchmark 场景）。
+
+    注：``sweep`` 在锁内只取 session 快照，锁外跑策略回调（策略回调会重新调
+    ``idle_seconds``→重新加锁）。注册表在一次 run 内只增不删，故快照遍历安全；
+    session 的 ``state`` 仅由 sweep 改、``last_active`` 仅由 touch 改，无写写冲突。
     """
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic):
         self._sessions: dict[str, Session] = {}
         self._clock = clock
+        self._lock = threading.RLock()
 
     # ---- 注册 / 访问 ----
 
     def register(self, session_id: str, **metadata: Any) -> Session:
         """注册一个新 session（已存在则刷新 metadata 并返回既有）。"""
-        if session_id in self._sessions:
-            s = self._sessions[session_id]
-            s.metadata.update(metadata)
-            s.touch(self._clock())
+        with self._lock:
+            if session_id in self._sessions:
+                s = self._sessions[session_id]
+                s.metadata.update(metadata)
+                s.touch(self._clock())
+                return s
+            s = Session(session_id=session_id, metadata=dict(metadata))
+            s.created_at = s.last_active = self._clock()
+            self._sessions[session_id] = s
             return s
-        s = Session(session_id=session_id, metadata=dict(metadata))
-        s.created_at = s.last_active = self._clock()
-        self._sessions[session_id] = s
-        return s
 
     def get(self, session_id: str) -> Session | None:
-        return self._sessions.get(session_id)
+        with self._lock:
+            return self._sessions.get(session_id)
 
     def __contains__(self, session_id: str) -> bool:
-        return session_id in self._sessions
+        with self._lock:
+            return session_id in self._sessions
 
     def __len__(self) -> int:
-        return len(self._sessions)
+        with self._lock:
+            return len(self._sessions)
 
     def all_sessions(self) -> list[Session]:
-        return list(self._sessions.values())
+        with self._lock:
+            return list(self._sessions.values())
 
     # ---- idle 计算 ----
 
     def touch(self, session_id: str) -> Session:
-        """标记 session 活跃；不存在则按需注册。"""
-        s = self._sessions.get(session_id) or self.register(session_id)
-        s.touch(self._clock())
-        return s
+        """标记 session 活跃（reset idle）；不存在则按需注册。"""
+        with self._lock:
+            s = self._sessions.get(session_id)
+            if s is None:
+                return self.register(session_id)  # RLock 可重入
+            s.touch(self._clock())
+            return s
 
     def idle_seconds(self, session_id: str) -> float:
         """距上次活跃的秒数（不存在返回 +inf）。"""
-        s = self._sessions.get(session_id)
-        if s is None:
-            return float("inf")
-        return max(0.0, self._clock() - s.last_active)
+        with self._lock:
+            s = self._sessions.get(session_id)
+            if s is None:
+                return float("inf")
+            return max(0.0, self._clock() - s.last_active)
 
     def idle_sessions(self, idle_timeout_s: float) -> list[Session]:
         """返回 idle >= ``idle_timeout_s`` 的 session（任意状态）。"""
-        return [s for s in self._sessions.values() if self.idle_seconds(s.session_id) >= idle_timeout_s]
+        with self._lock:
+            now = self._clock()
+            return [s for s in self._sessions.values() if (now - s.last_active) >= idle_timeout_s]
 
     # ---- 策略驱动 ----
 
     def sweep(self, strategy: Any) -> list[Session]:
-        """遍历所有 session，交由策略决定动作（offload/checkpoint/...）。
+        """遍历所有 session，交由策略决定动作（offload/checkpoint/抬优先级/...）。
 
         返回本轮被策略**改过状态**的 session（供观测/日志）。策略自己负责判定条件
         与调用机制回调。
         """
+        with self._lock:
+            sessions = list(self._sessions.values())
         touched: list[Session] = []
-        for s in list(self._sessions.values()):
+        for s in sessions:
             before = s.state
             strategy.on_sweep(s, self)
             if s.state != before:

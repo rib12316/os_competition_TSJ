@@ -54,6 +54,21 @@ def build_serve_args(
         args.extend(shlex.split(a))
     # 缝C（F4）：lmcache.enabled → 结构化附加 --enable-lmcache（config_file 走环境变量）
     args += lmcache_serve_flag(cfg.engine.lmcache)
+    # F5（缝A）：priority 调度 —— HBM 满时 vLLM 先踢低优先级（priority 数值大）请求
+    if cfg.engine.priority_scheduling:
+        args += ["--scheduling-policy", "priority"]
+    # F5（缝C）：lazy CPU offload connector —— 被回收的 KV 留 CPU 副本，便宜 reload
+    if cfg.engine.kv_offload:
+        from agent_mem.kv.connector import KVConnectorConfig, render_kv_connector_args
+
+        ko = cfg.engine.kv_offload
+        kcc = KVConnectorConfig(
+            connector=ko["connector"],
+            transfer_format=ko.get("transfer_format", "by_layer"),
+            connector_opts=dict(ko.get("connector_opts") or {}),
+            extra=list(ko.get("extra") or []),
+        )
+        args += render_kv_connector_args(kcc)
     # NPU 由 vllm-ascend 插件自动识别——**不要**传 --device（vllm api_server 不认 npu/auto）。
     # 仅当显式指定 cpu/cuda/tpu/xpu（如 CPU 冒烟）时才传 --device。
     if device and device in {"cpu", "cuda", "tpu", "xpu"}:

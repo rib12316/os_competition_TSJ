@@ -1,0 +1,45 @@
+# F5 实验组 C：动态资源回收（priority 抢占 + 应用层 HBM 准入 + idle 抬 priority）。
+# session.strategy=priority-evict 触发 ConcurrentSessionDriver：HBM 驱动动态并发 +
+# 后台 sweep 把 idle session 的 priority 抬到 100（vLLM 先抢它 = 回收闲的、保护忙的）。
+# 与 A/B 比 = "动态 + 应用层协调"，目标：mem_peak 受控、活跃 session 延迟/成功率不掉、
+# eviction 命中 idle >90%。
+#
+# 引擎须用本档启动：
+#   python -m agent_mem.server.vllm_server --config configs/f5-evict-dynamic.yaml \
+#     --model-path models/Qwen2.5-7B-Instruct --tool-call-parser hermes
+# 再跑（dynamic 由 session.strategy=priority-evict 自动开启）：
+#   python benchmarks/runner.py --config configs/f5-evict-dynamic.yaml --runner qwen-agent \
+#     --engine-url http://localhost:8000/v1 --max-concurrency 6 --device npu
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  priority_scheduling: true       # F5：渲染 --scheduling-policy priority
+  # kv_offload:                   # Phase1 真机核 connector 名后启用（默认 SimpleCPUOffloadConnector；
+  #   connector: SimpleCPUOffloadConnector  # Ascend 可能需 AscendSimpleCPUOffloadConnector）
+  #   connector_opts:
+  #     kv_role: kv_both
+  #     lazy_offload: true
+  #     cpu_bytes_to_use: 8589934592   # 8 GiB CPU 缓冲
+  extra_args:
+    - "--gpu-memory-utilization 0.3"
+    - "--max-model-len 32768"
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+session:                          # 缝E：动态优先级回收
+  strategy: priority-evict
+  idle_timeout_s: 30             # session idle 30s → 抬 priority（让 vLLM 先抢）
+  options: {}
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

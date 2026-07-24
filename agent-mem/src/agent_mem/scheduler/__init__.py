@@ -8,17 +8,20 @@
 from __future__ import annotations
 
 from agent_mem.scheduler.admission import AdmissionController
+from agent_mem.scheduler.eviction import EvictionTracker
 from agent_mem.scheduler.session import Session, SessionManager, SessionState
 from agent_mem.scheduler.strategies import (
     BaseStrategy,
     CheckpointStrategy,
     IdleEvictionStrategy,
     NoOpStrategy,
+    PriorityEvictionStrategy,
     SessionStrategy,
 )
 
 __all__ = [
     "AdmissionController",
+    "EvictionTracker",
     "Session",
     "SessionManager",
     "SessionState",
@@ -26,5 +29,6 @@ __all__ = [
     "BaseStrategy",
     "NoOpStrategy",
     "IdleEvictionStrategy",
+    "PriorityEvictionStrategy",
     "CheckpointStrategy",
 ]

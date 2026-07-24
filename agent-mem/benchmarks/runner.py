@@ -154,6 +154,9 @@ def main(argv: list[str] | None = None) -> int:
             max_concurrency=args.max_concurrency,
             priority=args.priority,
             middlewares=mw_stack.middlewares,  # 缝D：cfg.middleware 激活的中间件
+            # F5：session.strategy=priority-evict → 动态调度（HBM 准入 + 后台 sweep 抬 idle priority）
+            dynamic=(cfg.session.strategy == "priority-evict"),
+            idle_timeout_s=cfg.session.idle_timeout_s,
         )
     else:
         runner = get_runner(args.runner)

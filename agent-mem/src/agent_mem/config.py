@@ -30,7 +30,7 @@ _DOMAINS = ("retail", "airline")
 _SUITES = ("tau-bench", "agentbench")
 _SPLITS = ("train", "test", "dev")
 # 缝E 策略名（对齐 scheduler.strategies 的类 name）
-_SESSION_STRATEGIES = ("noop", "idle-evict", "checkpoint")
+_SESSION_STRATEGIES = ("noop", "idle-evict", "checkpoint", "priority-evict")
 
 # 6 大必采指标（赛题硬指标）
 DEFAULT_METRICS: tuple[str, ...] = (
@@ -74,7 +74,8 @@ class MiddlewareConfig:
 class SessionConfig:
     """缝E session 生命周期配置（F5 idle eviction / F6 checkpoint）。
 
-    - ``strategy``：策略名（``noop`` / ``idle-evict`` / ``checkpoint``）。
+    - ``strategy``：策略名（``noop`` / ``idle-evict`` / ``checkpoint`` / ``priority-evict``）。
+      ``priority-evict`` = F5 动态优先级回收（Phase 1 lossy：idle→抬 priority，让 vLLM 先抢）。
     - ``idle_timeout_s``：F5 的 idle 阈值（秒）；策略由 scheduler 消费。
     - ``options``：策略构造的额外 kwargs（如 checkpoint 路径）。
     机制（offload/save 回调）由运行时注入，不在配置里。
@@ -91,6 +92,8 @@ class EngineConfig:
     model: str = ""
     extra_args: list[str] = field(default_factory=list)
     lmcache: LmCacheConfig = field(default_factory=LmCacheConfig)
+    priority_scheduling: bool = False  # F5：渲染 --scheduling-policy priority（HBM 满先踢低优）
+    kv_offload: dict[str, Any] | None = None  # F5：lazy CPU offload connector 声明（缝C，由 vllm_server 渲染）
 
 
 @dataclass
@@ -120,6 +123,7 @@ class AppConfig:
 
 def _build_engine(data: dict[str, Any]) -> EngineConfig:
     lm_data = data.get("lmcache") or {}
+    kv_offload = data.get("kv_offload")
     return EngineConfig(
         backend=data.get("backend", "vllm"),
         model=data.get("model", ""),
@@ -128,6 +132,8 @@ def _build_engine(data: dict[str, Any]) -> EngineConfig:
             enabled=bool(lm_data.get("enabled", False)),
             config_file=lm_data.get("config_file"),
         ),
+        priority_scheduling=bool(data.get("priority_scheduling", False)),
+        kv_offload=dict(kv_offload) if kv_offload else None,
     )
 
 
@@ -198,6 +204,9 @@ def validate(cfg: AppConfig) -> None:
         raise ConfigError("engine.model 不能为空")
     if e.extra_args and not all(isinstance(a, str) for a in e.extra_args):
         raise ConfigError("engine.extra_args 必须是字符串列表")
+    if e.kv_offload is not None:
+        if not isinstance(e.kv_offload, dict) or not e.kv_offload.get("connector"):
+            raise ConfigError("engine.kv_offload 必须是含 'connector' 键的 mapping")
 
     b = cfg.benchmark
     if b.suite not in _SUITES:
