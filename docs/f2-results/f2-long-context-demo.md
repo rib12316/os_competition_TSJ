@@ -1,7 +1,7 @@
 # F2 长上下文 LLMLingua-2 示例
 
-日期：2026-07-24  
-脚本：`agent-mem/benchmarks/f2_long_context_demo.py`  
+日期：2026-07-24
+脚本：`agent-mem/benchmarks/f2_long_context_demo.py`
 结果：`f2_long_context_demo_result.json`
 
 ## 历史 5k→2.5k 记录
