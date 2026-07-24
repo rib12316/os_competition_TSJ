@@ -230,3 +230,17 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
 - p50 98.02s、p95 161.64s；相对最近 strict baseline 分别 -1.50%、+3.57%。
 - 报告：`docs/f2-results/comparison_comprehensive_full115.md`；原始：
   `/tmp/f2-comprehensive-full115`。
+
+## 17. 长上下文 LLMLingua-2 示例（2026-07-24）
+
+- 历史日志确认旧非 tool-aware 路径有 `5,036 -> 2,049`（2.5x）和
+  `5,113 -> 2,155`（2.4x）记录；它们不是完整 Prompt，也不保护 tool protocol/关键 JSON。
+- 新增 `agent-mem/benchmarks/f2_long_context_demo.py`，用当前 tool-aware LLMLingua-2
+  生成 5k/9k tool-heavy retail 历史，执行真实隔离 worker，并审计字段与缓存复用。
+- 纯 5,000-token narrative direct 压缩：`5,000 -> 2,720`（-45.60%，2.76s），重现早期
+  5k→约2.5k 现象。
+- 当前安全 middleware：5k forced 的压缩段 `7,750 -> 5,782`（-25.39%），完整 Prompt
+  `8,491 -> 6,722`（-20.83%）；9k production case 的压缩段 `13,057 -> 9,736`
+  （-25.43%），完整 Prompt `13,666 -> 10,676`（-21.88%），首次压缩 17.48s。
+- user/arguments/ID/status/金额/address 均保留，第二次 transform 命中 reuse（约 1--3ms，
+  输出一致）。完整说明：`docs/f2-results/f2-long-context-demo.md`。
