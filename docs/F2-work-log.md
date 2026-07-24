@@ -5,11 +5,11 @@
 
 ## 0. 一句话现状
 
-F2 最终综合方案（compact system/tools + hot 1k + cold 8k）已完成 full115：严格同轨迹
-`10,933,355 -> 8,820,495`，**完整 prompt -19.32%**，1,780/1,780 次调用受益。本轮
-hot/cold BERT 均未触发，收益全部来自确定性静态前缀优化；p50 98.02s。success 为
-23/115；相对两次历史 baseline（23/115、26/115）分别为 0pp、-2.61pp，因此处于历史波动
-范围，但尚不能严格宣称通过 <=2pp 红线。分支 `feat/f2-prompt-compress` 未 push。
+F2 安全基线已经完成：retail full115 严格同轨迹 `10,933,355 -> 8,820,495`
+（**完整 prompt -19.32%**）；现又加入 MIMO 离线编译的通用 policy artifact，非 retail
+28,860-token 轨迹实测 `28,860 -> 20,936`（**-27.46%**），且通用 incident 硬字段全部
+保留。现有 `retail_compact` 路径没有改动；success 相对两次历史 baseline 分别为 0pp、
+-2.61pp，仍不能严格宣称通过 <=2pp 红线。分支 `feat/f2-prompt-compress` 未 push。
 
 ## 1. 任务与目标
 
@@ -261,3 +261,17 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
   ID/call ID/arguments/severity/status/owner/time 审计全部保留。该实验未运行
   full115，仅用于通用长上下文 token/压缩性能验证。
 - 报告：`docs/f2-results/generic-policy-long-context.md`。
+
+## 19. 当前默认压缩率、有效性结论与冻结决策
+
+- 当前 tool-aware 路径不是对完整 Prompt 统一设一个 rate：user、arguments、tool ID 和关键
+  JSON 字段保留 100%；assistant narrative 使用 `assistant_rate=0.75`；tool result narrative
+  使用 `tool_result_rate=0.60`；最近 6 条 hot 默认保留。配置中的 `rate=0.65` 只用于
+  非 tool-aware 回退路径。
+- 纯 5,000-token narrative 在 `rate=0.60` 下实测 `5,000 -> 2,720`（-45.60%）；真实
+  tool-aware 长轨迹把受保护字段重新合并后，完整 Prompt 降幅为 27.46%。
+- 当前证据证明“token 缩减机制有效、协议/硬字段保护有效、非 retail 接入可行”；尚未证明
+  所有模型/任务都无损，也没有把 synthetic token 降幅当作显存或 task success 结果。
+- 决策：冻结当前 0.75/0.60 安全档，不直接提高默认压缩强度。未来单独对
+  `(assistant, tool)=(0.70,0.55)/(0.65,0.50)` 做质量 ablation。
+- 下一会话统一入口：`docs/F2-next-session-handoff.md`。
