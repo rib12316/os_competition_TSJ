@@ -63,7 +63,9 @@ _WORKER_STDERR_LOG = "/tmp/llmlingua_worker.stderr.log"
 _CRITICAL_KEY_PARTS = {
     "id", "status", "state", "amount", "price", "total", "balance",
     "quantity", "count", "time", "date", "email", "address", "payment",
-    "reason", "confirm", "error", "name", "zip", "refund",
+    "reason", "confirm", "error", "name", "zip", "refund", "severity",
+    "priority", "owner", "assignee", "organization", "tenant", "account",
+    "permission", "role",
 }
 
 
@@ -82,7 +84,9 @@ class _HistorySegment:
 def _is_critical_key(key: str) -> bool:
     normalized = key.lower().replace("-", "_")
     parts = set(normalized.split("_"))
-    return bool(parts & _CRITICAL_KEY_PARTS) or normalized.endswith(("_id", "_ids"))
+    return bool(parts & _CRITICAL_KEY_PARTS) or normalized.endswith(
+        ("_id", "_ids", "_at", "_time", "_date", "_timestamp")
+    )
 
 
 def _extract_critical_json(value: Any, key: str = "") -> Any:
@@ -393,6 +397,8 @@ class CompressMiddleware(BaseMiddleware):
         hot_tool_trigger_tokens: int = 0,
         optimize_static_prompt: bool = False,
         system_prompt_mode: str = "none",
+        policy_artifact_path: str = "",
+        policy_artifact_strict: bool = False,
         deduplicate_tool_descriptions: bool = True,
         recompress_delta_tokens: int | None = None,
         event_log: str | None = None,
@@ -437,6 +443,8 @@ class CompressMiddleware(BaseMiddleware):
         self.hot_tool_trigger_tokens = int(hot_tool_trigger_tokens)
         self.optimize_static_prompt = bool(optimize_static_prompt)
         self.system_prompt_mode = system_prompt_mode
+        self.policy_artifact_path = policy_artifact_path
+        self.policy_artifact_strict = bool(policy_artifact_strict)
         self.deduplicate_tool_descriptions = bool(deduplicate_tool_descriptions)
         if self.tool_aware and self.method != "llmlingua2":
             raise ValueError("tool_aware 当前要求 method=llmlingua2（结构字段由外层保护）")
@@ -446,8 +454,10 @@ class CompressMiddleware(BaseMiddleware):
             raise ValueError("tool_result_rate 必须在 (0, 1]")
         if self.hot_tool_trigger_tokens < 0:
             raise ValueError("hot_tool_trigger_tokens 必须 >= 0")
-        if self.system_prompt_mode not in {"none", "retail_compact"}:
-            raise ValueError("system_prompt_mode 必须是 none 或 retail_compact")
+        if self.system_prompt_mode not in {"none", "retail_compact", "compiled"}:
+            raise ValueError("system_prompt_mode 必须是 none、retail_compact 或 compiled")
+        if self.system_prompt_mode == "compiled" and not self.policy_artifact_path:
+            raise ValueError("system_prompt_mode=compiled 需要 policy_artifact_path")
         self.recompress_delta_tokens = (
             recompress_delta_tokens if recompress_delta_tokens is not None else trigger_tokens
         )
@@ -540,11 +550,16 @@ class CompressMiddleware(BaseMiddleware):
                 "tool_conventions": 0,
                 "confirmation_sentences_removed": 0,
             }
-        out_messages, compacted = compact_system_messages(
-            messages, mode=self.system_prompt_mode, conventions=conventions
+        out_messages, compacted, policy_meta = compact_system_messages(
+            messages,
+            mode=self.system_prompt_mode,
+            conventions=conventions,
+            policy_artifact_path=self.policy_artifact_path,
+            policy_artifact_strict=self.policy_artifact_strict,
         )
         ctx.scratch["compress:static_metrics"] = {
             **stats,
+            **policy_meta,
             "system_prompt_compacted": compacted,
         }
         return self.transform_messages(out_messages, ctx), out_tools

@@ -244,3 +244,19 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
   （-25.43%），完整 Prompt `13,666 -> 10,676`（-21.88%），首次压缩 17.48s。
 - user/arguments/ID/status/金额/address 均保留，第二次 transform 命中 reuse（约 1--3ms，
   输出一致）。完整说明：`docs/f2-results/f2-long-context-demo.md`。
+
+## 18. 通用 Policy artifact + 数万 token benchmark（2026-07-24）
+
+- 新增 `middleware/policy.py`：source SHA-256、逐条 source unit、数字/字面量/modal 校验；
+  失败默认回退原始 system，strict 模式抛错。
+- 新增 `benchmarks/compile_policy.py`：MIMO 只在离线编译阶段使用，生成 generic policy
+  artifact；运行时不请求模型。现有 `retail_compact` 路径保持不变。
+- MIMO 成功编译非 retail 的 knowledge/incident policy：862 chars -> 818 chars，11 units，
+  validation passed。
+- 新增 `benchmarks/generic_context_benchmark.py`，45 轮、8 工具、181 条消息，原始 Prompt
+  28,860 token；静态 policy+tool dedup 为 28,712（-0.51%），静态+动态 LLMLingua-2
+  为 20,936（-27.46%）。
+- 动态可压 body 估算 30,681 > 8k，BERT 36.27s；同 session reuse 5.5ms；通用 incident
+  ID/call ID/arguments/severity/status/owner/time 审计全部保留。该实验未运行
+  full115，仅用于通用长上下文 token/压缩性能验证。
+- 报告：`docs/f2-results/generic-policy-long-context.md`。

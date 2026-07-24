@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import types
 
 import pytest
@@ -23,6 +24,12 @@ from agent_mem.middleware import (
     unregister,
 )
 from agent_mem.middleware.examples import ToolResultTruncator
+from agent_mem.middleware.policy import (
+    PolicyArtifactError,
+    extract_policy_units,
+    make_policy_artifact,
+    validate_policy_artifact,
+)
 
 # ---- Context / Base / Stack ----
 
@@ -256,6 +263,39 @@ def test_tool_aware_preserves_tool_protocol_semantics():
     assert all(call[1]["use_context_level_filter"] is False for call in fake.calls)
 
 
+def test_tool_aware_preserves_generic_incident_hard_fields():
+    mw = CompressMiddleware(
+        method="llmlingua2", tool_aware=True, keep_hot=1, trigger_tokens=1,
+        backend="inprocess",
+    )
+    fake = _ToolAwareFakeCompressor()
+    mw._compressor = fake
+    result = json.dumps({
+        "incident_id": "INC-00001",
+        "severity": "P0",
+        "status": "open",
+        "owner": "team-platform",
+        "created_at": "2026-07-24T10:00:00Z",
+        "description": "verbose incident narrative " * 40,
+    })
+    messages = [
+        {"role": "user", "content": "Investigate INC-00001."},
+        {"role": "assistant", "content": "checking", "tool_calls": [{
+            "id": "incident-call", "type": "function",
+            "function": {"name": "get_incident", "arguments": '{"incident_id":"INC-00001"}'},
+        }]},
+        {"role": "tool", "tool_call_id": "incident-call", "name": "get_incident",
+         "content": result},
+        {"role": "assistant", "content": "hot tail"},
+    ]
+    out = mw.transform_messages(messages, MiddlewareContext("incident"))
+    memory = out[0]["content"]
+    assert '"severity":"P0"' in memory
+    assert '"status":"open"' in memory
+    assert '"owner":"team-platform"' in memory
+    assert '"created_at":"2026-07-24T10:00:00Z"' in memory
+
+
 def test_tool_aware_recompression_reuses_body_cache():
     mw = CompressMiddleware(
         method="llmlingua2", tool_aware=True, keep_hot=1, trigger_tokens=1,
@@ -407,6 +447,126 @@ def test_static_prompt_optimization_compacts_system_and_deduplicates_tools():
 def test_bad_system_prompt_mode_rejected():
     with pytest.raises(ValueError, match="system_prompt_mode"):
         CompressMiddleware(system_prompt_mode="unknown")
+
+
+def _write_policy_artifact(tmp_path, source: str):
+    units = extract_policy_units(source)
+    artifact = make_policy_artifact(
+        policy_id="generic-test",
+        source=source,
+        compact_units=[
+            {"id": f"u{index:04d}", "source": unit, "compact": unit}
+            for index, unit in enumerate(units, start=1)
+        ],
+    )
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    return path, artifact
+
+
+def test_compiled_policy_artifact_applies_to_non_retail_system(tmp_path):
+    source = (
+        "You must authenticate the caller.\n"
+        "Never reveal private records.\n"
+        "Only search documents for the authenticated organization."
+    )
+    units = extract_policy_units(source)
+    compact_units = [
+        {"id": "u0001", "source": units[0], "compact": "Must authenticate caller."},
+        {"id": "u0002", "source": units[1], "compact": "Never reveal private records."},
+        {"id": "u0003", "source": units[2],
+         "compact": "Only search authenticated-organization documents."},
+    ]
+    artifact = make_policy_artifact(
+        policy_id="knowledge-support",
+        source=source,
+        compact_units=compact_units,
+    )
+    assert validate_policy_artifact(source, artifact) == []
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    mw = CompressMiddleware(
+        method="llmlingua2",
+        optimize_static_prompt=True,
+        system_prompt_mode="compiled",
+        policy_artifact_path=str(path),
+        keep_hot=6,
+        backend="inprocess",
+    )
+    ctx = MiddlewareContext("compiled")
+    messages = [
+        {"role": "system", "content": source},
+        {"role": "user", "content": "Find my incident."},
+    ]
+    out, _ = mw.transform_request(messages, [], ctx)
+    assert out[0]["content"] == artifact["compact_policy"]
+    assert messages[0]["content"] == source
+    metrics = ctx.scratch["compress:static_metrics"]
+    assert metrics["policy_artifact_status"] == "applied"
+    assert metrics["policy_id"] == "knowledge-support"
+
+
+def test_compiled_policy_stale_hash_falls_back_to_original(tmp_path):
+    source = "You must authenticate. Never expose private data."
+    path, _ = _write_policy_artifact(tmp_path, source)
+    changed = source + " Only use approved tools."
+    mw = CompressMiddleware(
+        method="llmlingua2",
+        optimize_static_prompt=True,
+        system_prompt_mode="compiled",
+        policy_artifact_path=str(path),
+        keep_hot=6,
+        backend="inprocess",
+    )
+    ctx = MiddlewareContext("stale")
+    messages = [{"role": "system", "content": changed}]
+    out, _ = mw.transform_request(messages, [], ctx)
+    assert out == messages
+    metrics = ctx.scratch["compress:static_metrics"]
+    assert metrics["policy_artifact_status"] == "fallback_original"
+    assert "source_sha256" in metrics["policy_artifact_error"]
+
+
+def test_compiled_policy_strict_mode_rejects_invalid_artifact(tmp_path):
+    source = "You must authenticate."
+    path, _ = _write_policy_artifact(tmp_path, source)
+    mw = CompressMiddleware(
+        method="llmlingua2",
+        optimize_static_prompt=True,
+        system_prompt_mode="compiled",
+        policy_artifact_path=str(path),
+        policy_artifact_strict=True,
+        keep_hot=6,
+        backend="inprocess",
+    )
+    with pytest.raises(PolicyArtifactError, match="source_sha256"):
+        mw.transform_request(
+            [{"role": "system", "content": source + " Changed."}],
+            [],
+            MiddlewareContext("strict"),
+        )
+
+
+def test_compiled_policy_requires_artifact_path():
+    with pytest.raises(ValueError, match="policy_artifact_path"):
+        CompressMiddleware(system_prompt_mode="compiled")
+
+
+def test_policy_validator_rejects_per_rule_literal_or_modal_loss():
+    source = 'Only severity "P0" is valid. Never expose private data.'
+    units = extract_policy_units(source)
+    artifact = make_policy_artifact(
+        policy_id="unsafe",
+        source=source,
+        compact_units=[
+            {"id": "u0001", "source": units[0], "compact": "Severity is valid."},
+            {"id": "u0002", "source": units[1], "compact": "Avoid exposing private data."},
+        ],
+    )
+    errors = validate_policy_artifact(source, artifact)
+    assert any("'P0'" in error for error in errors)
+    assert any("modal phrase 'only'" in error for error in errors)
+    assert any("modal phrase 'never'" in error for error in errors)
 
 
 def test_compress_gate_skips_short_history():

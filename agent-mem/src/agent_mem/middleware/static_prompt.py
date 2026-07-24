@@ -5,7 +5,10 @@ from __future__ import annotations
 import copy
 import re
 from collections import Counter
+from pathlib import Path
 from typing import Any
+
+from agent_mem.middleware.policy import PolicyArtifactError, load_policy_artifact
 
 COMPACT_RETAIL_POLICY = """# Retail support policy
 Scope: help the authenticated user with their profile, orders and related products; cancel or modify pending orders; return or exchange delivered orders; or change their default address.
@@ -29,11 +32,16 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
 def compact_system_messages(
-    messages: list[dict], *, mode: str, conventions: list[str]
-) -> tuple[list[dict], bool]:
+    messages: list[dict], *, mode: str, conventions: list[str],
+    policy_artifact_path: str = "", policy_artifact_strict: bool = False,
+) -> tuple[list[dict], bool, dict[str, Any]]:
     """替换已识别的 retail policy，并把共享工具约定只注入一次。"""
     out = [copy.deepcopy(message) for message in messages]
     compacted = False
+    policy_meta: dict[str, Any] = {
+        "policy_mode": mode,
+        "policy_artifact_status": "not_configured",
+    }
     for message in out:
         if message.get("role") != "system":
             continue
@@ -41,16 +49,31 @@ def compact_system_messages(
         if mode == "retail_compact" and content.lstrip().startswith("# Retail agent policy"):
             message["content"] = COMPACT_RETAIL_POLICY
             compacted = True
+            policy_meta["policy_artifact_status"] = "builtin_retail"
+        elif mode == "compiled":
+            try:
+                artifact = load_policy_artifact(policy_artifact_path, content)
+            except PolicyArtifactError as exc:
+                policy_meta["policy_artifact_status"] = "fallback_original"
+                policy_meta["policy_artifact_error"] = str(exc)
+                if policy_artifact_strict:
+                    raise
+            else:
+                message["content"] = artifact["compact_policy"]
+                compacted = True
+                policy_meta["policy_artifact_status"] = "applied"
+                policy_meta["policy_id"] = artifact["policy_id"]
+                policy_meta["policy_artifact_path"] = str(Path(policy_artifact_path))
         if conventions:
             suffix = "# Shared tool conventions\n" + "\n".join(conventions)
             message["content"] = f"{message.get('content') or ''}\n\n{suffix}"
-        return out, compacted
+        return out, compacted, policy_meta
     if conventions:
         out.insert(0, {
             "role": "system",
             "content": "# Shared tool conventions\n" + "\n".join(conventions),
         })
-    return out, compacted
+    return out, compacted, policy_meta
 
 
 def _description_slots(tools: list[dict]) -> list[tuple[dict, str]]:
