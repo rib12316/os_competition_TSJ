@@ -124,6 +124,12 @@ per-task：F2 在 **5/6 任务** engages（之前本地 user 仅 2/6），压缩
 
 ## 8. 甜点配置（rate=0.65 / recompress_delta=4000）—— success 无损 + 延迟最优
 
+> **口径澄清（2026-07-24）**：本节 `20219 → 7772（-62%）` 是历史的“每任务峰值
+> 冷区表示”指标，不是完整 prompt token，也不是同一轨迹配对。baseline/F2 由两次独立
+> 生成得到，任务步数明显不同（如 tau-0 为 20/11），因此该数字同时包含轨迹长度差异，
+> 不能解释为 LLMLingua 让真实发送 token 降低 62%。当前严格口径见
+> `docs/f2-results/comparison_paired8.md` 和 `comparison_comprehensive8.md`。
+
 针对 §7 的 success 隐忧做的调参：`rate` 0.5→**0.65**（少压护精度）+ `recompress_delta` 2000→**4000**
 （少重复压）+ `trigger` 2000 不变 + mimo user-sim。结果（产物
 `docs/f2-results/*_rate065.*`）：
@@ -140,7 +146,7 @@ per-task：F2 在 **5/6 任务** engages（之前本地 user 仅 2/6），压缩
   总压缩耗时 107s→91s。
 - 5/6 任务 engages，压缩比 1.79–2.45×（rate=0.65 比 0.5 保留更多，比率略降属预期）。
 
-**这是 F2 的目标形态：延迟 -32%、上下文 -62%、success 无损。** 唯一仍待验证的是 n=6 太小
+**按当时历史口径，这是 F2 的目标形态：延迟 -32%、峰值冷区表示 -62%、success 无损。** 唯一仍待验证的是 n=6 太小
 （success 2/6=2/6 鼓励人但粒度粗），**需扩到 30–50 任务**才能把 ≤2pp 红线坐实。
 
 ---
