@@ -53,6 +53,10 @@ class Middleware(Protocol):
 
     name: str
 
+    def prepare(self) -> None:
+        """Warm process-wide resources before task latency measurement starts."""
+        ...
+
     def transform_messages(
         self, messages: list[dict], ctx: MiddlewareContext
     ) -> list[dict]:
@@ -96,6 +100,9 @@ class BaseMiddleware:
     """
 
     name: str = "base"
+
+    def prepare(self) -> None:
+        return None
 
     def transform_messages(
         self, messages: list[dict], ctx: MiddlewareContext
@@ -145,6 +152,12 @@ class MiddlewareStack:
 
     def is_empty(self) -> bool:
         return not self._mw
+
+    def prepare(self) -> None:
+        for mw in self._mw:
+            hook = getattr(mw, "prepare", None)
+            if hook is not None:
+                hook()
 
     def transform_messages(
         self, messages: list[dict], ctx: MiddlewareContext

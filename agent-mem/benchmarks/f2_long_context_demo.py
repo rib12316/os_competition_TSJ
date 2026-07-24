@@ -20,7 +20,7 @@ DEFAULT_WORKER = "/data/os_competition_TSJ/.venv-compress/bin/python"
 DEFAULT_MODEL = "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank"
 
 
-def _middleware(*, trigger_tokens: int) -> CompressMiddleware:
+def _middleware(*, trigger_tokens: int, tokenizer_model: str = DEFAULT_TOKENIZER) -> CompressMiddleware:
     return CompressMiddleware(
         method="llmlingua2",
         rate=0.65,
@@ -38,6 +38,7 @@ def _middleware(*, trigger_tokens: int) -> CompressMiddleware:
         worker_venv=DEFAULT_WORKER,
         worker_pool_size=1,
         worker_threads=32,
+        tokenizer_model=tokenizer_model,
     )
 
 
@@ -316,7 +317,7 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(
         args.tokenizer, trust_remote_code=True, local_files_only=True
     )
-    sizing_middleware = _middleware(trigger_tokens=8000)
+    sizing_middleware = _middleware(trigger_tokens=8000, tokenizer_model=args.tokenizer)
     messages_5k = _messages_for_target(5000, sizing_middleware, tokenizer)
     messages_9k = _messages_for_target(9000, sizing_middleware, tokenizer)
 
@@ -327,7 +328,7 @@ def main() -> None:
     gate_ms = (time.monotonic() - gate_started) * 1000
     gate_event = _pending_event(gate_ctx)
 
-    forced = _middleware(trigger_tokens=1)
+    forced = _middleware(trigger_tokens=1, tokenizer_model=args.tokenizer)
     compressor = forced._get_compressor()
     try:
         warmup_started = time.monotonic()
@@ -353,7 +354,8 @@ def main() -> None:
             "five_k_production_gate": {
                 "action": gate_event.get("action"),
                 "reason": gate_event.get("reason"),
-                "compressible_cold_tokens_est": gate_event.get("compressible_cold_tokens"),
+                "compressible_cold_tokens": gate_event.get("compressible_cold_tokens"),
+                "token_count_source": gate_event.get("token_count_source"),
                 "transform_ms": round(gate_ms, 1),
             },
             "raw_llmlingua2_case": _run_raw_case(compressor, tokenizer),
@@ -367,7 +369,9 @@ def main() -> None:
                 ),
                 _run_case(
                     name="nine_k_production_threshold",
-                    middleware=_middleware(trigger_tokens=8000),
+                    middleware=_middleware(
+                        trigger_tokens=8000, tokenizer_model=args.tokenizer
+                    ),
                     messages=messages_9k,
                     tokenizer=tokenizer,
                     shared_compressor=compressor,

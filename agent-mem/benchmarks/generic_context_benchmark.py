@@ -133,6 +133,7 @@ def make_middleware(
     artifact_path: Path,
     trigger_tokens: int,
     optimize_static_prompt: bool,
+    tokenizer_model: str = DEFAULT_TOKENIZER,
 ) -> CompressMiddleware:
     return CompressMiddleware(
         method="llmlingua2",
@@ -153,6 +154,7 @@ def make_middleware(
         worker_venv=DEFAULT_WORKER,
         worker_pool_size=1,
         worker_threads=32,
+        tokenizer_model=tokenizer_model,
     )
 
 
@@ -255,12 +257,14 @@ def main() -> None:
     canonical_tokens = count_prompt(tokenizer, messages, tools)
 
     static_mw = make_middleware(
-        artifact_path=args.artifact, trigger_tokens=10**9, optimize_static_prompt=True
+        artifact_path=args.artifact, trigger_tokens=10**9, optimize_static_prompt=True,
+        tokenizer_model=args.tokenizer,
     )
     static = run_transform(static_mw, messages, tools, tokenizer, "generic-static")
 
     full_mw = make_middleware(
-        artifact_path=args.artifact, trigger_tokens=8000, optimize_static_prompt=True
+        artifact_path=args.artifact, trigger_tokens=8000, optimize_static_prompt=True,
+        tokenizer_model=args.tokenizer,
     )
     compressor = full_mw._get_compressor()
     warm_started = time.monotonic()

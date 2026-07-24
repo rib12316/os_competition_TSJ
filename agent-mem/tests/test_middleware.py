@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import types
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,7 @@ from agent_mem.middleware import (
     MiddlewareStack,
     NoOpMiddleware,
     build_middlewares,
+    middlewares_from_config,
     register,
     registry,
     unregister,
@@ -74,6 +76,18 @@ def test_stack_chains_in_order():
         [{"role": "user", "content": "x"}], MiddlewareContext("s")
     )
     assert out[0]["content"] == "x-a-b"  # 顺序串联
+
+
+def test_stack_prepare_calls_each_middleware():
+    prepared = []
+
+    class _Prepared(BaseMiddleware):
+        def prepare(self):
+            prepared.append(self.name)
+
+    MiddlewareStack([_Prepared(), _Prepared()]).prepare()
+
+    assert prepared == ["base", "base"]
 
 
 def test_stack_intercept_pipeline():
@@ -187,6 +201,23 @@ def _compress_mw(**kw) -> CompressMiddleware:
     mw = CompressMiddleware(**kw)
     mw._compressor = _FakeCompressor()
     return mw
+
+
+class _CharacterTokenizer:
+    """Deterministic tokenizer: one input character equals one token."""
+
+    @staticmethod
+    def encode(text, add_special_tokens=False):
+        return list(text)
+
+
+class _CountingCharacterTokenizer:
+    def __init__(self):
+        self.calls = 0
+
+    def encode(self, text, add_special_tokens=False):
+        self.calls += 1
+        return list(text)
 
 
 def _assert_no_orphan_tool(messages: list[dict]) -> None:
@@ -576,6 +607,93 @@ def test_compress_gate_skips_short_history():
     out = mw.transform_messages(msgs, MiddlewareContext("s"))
     assert out == msgs
     assert mw._compressor.calls == []
+
+
+def test_compress_gate_uses_configured_tokenizer_not_chars_div_four():
+    mw = _compress_mw(keep_hot=1, trigger_tokens=80, tokenizer_model="unit-tokenizer")
+    mw._tokenizer = _CharacterTokenizer()
+    messages = [
+        {"role": "user", "content": "x" * 100},
+        {"role": "assistant", "content": "tail"},
+    ]
+    ctx = MiddlewareContext("exact-gate")
+
+    mw.transform_messages(messages, ctx)
+
+    assert len(mw._compressor.calls) == 1
+    event = ctx.scratch["compress:pending_event"]
+    assert event["cold_tokens"] == 100
+    assert event["token_count_source"] == "tokenizer:unit-tokenizer"
+
+
+def test_hot_tool_gate_uses_configured_tokenizer_not_chars_div_four():
+    mw = CompressMiddleware(
+        method="llmlingua2",
+        tool_aware=True,
+        keep_hot=6,
+        trigger_tokens=999999,
+        hot_tool_trigger_tokens=80,
+        tokenizer_model="unit-tokenizer",
+        backend="inprocess",
+    )
+    mw._tokenizer = _CharacterTokenizer()
+    mw._compressor = _ToolAwareFakeCompressor()
+    messages = [
+        {"role": "assistant", "content": None, "tool_calls": [{
+            "id": "c-hot", "type": "function",
+            "function": {"name": "search", "arguments": "{}"},
+        }]},
+        {"role": "tool", "tool_call_id": "c-hot", "name": "search",
+         "content": "verbose result " * 10},
+    ]
+
+    out = mw.transform_messages(messages, MiddlewareContext("exact-hot"))
+
+    assert "[compressed tool result]" in out[-1]["content"]
+
+
+def test_recompress_delta_uses_configured_tokenizer_not_chars_div_four():
+    mw = _compress_mw(
+        keep_hot=1,
+        trigger_tokens=80,
+        recompress_delta_tokens=80,
+        tokenizer_model="unit-tokenizer",
+    )
+    mw._tokenizer = _CharacterTokenizer()
+    ctx = MiddlewareContext("exact-delta")
+    initial = [
+        {"role": "user", "content": "x" * 100},
+        {"role": "assistant", "content": "tail"},
+    ]
+    mw.transform_messages(initial, ctx)
+    extended = initial + [
+        {"role": "assistant", "content": "y" * 100},
+        {"role": "assistant", "content": "new tail"},
+    ]
+
+    mw.transform_messages(extended, ctx)
+
+    assert len(mw._compressor.calls) == 2
+
+
+def test_config_factory_injects_engine_model_as_trigger_tokenizer():
+    from agent_mem.config import load_config
+
+    config = load_config(Path(__file__).resolve().parent.parent / "configs/f2-compress.yaml")
+    middleware = middlewares_from_config(config).middlewares[0]
+
+    assert isinstance(middleware, CompressMiddleware)
+    assert middleware.tokenizer_model == config.engine.model
+
+
+def test_exact_token_counts_are_cached_by_serialized_text():
+    mw = CompressMiddleware(tokenizer_model="unit-tokenizer")
+    tokenizer = _CountingCharacterTokenizer()
+    mw._tokenizer = tokenizer
+
+    assert mw._count_tokens(["same", "history"]) == 13
+    assert mw._count_tokens(["same", "history"]) == 13
+    assert tokenizer.calls == 1
 
 
 def test_compress_skips_when_history_shorter_than_keep_hot():

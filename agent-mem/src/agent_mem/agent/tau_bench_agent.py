@@ -76,6 +76,7 @@ class TauBenchAgent:
         )
         # 缝D：上下文中间件（F2 压缩 / F3 lazy-load）。None → 空 stack = identity。
         self.stack: MiddlewareStack = _as_stack(middlewares)
+        self.stack.prepare()
         prepare_prompt_meter(model)
 
     def solve(self, env: Any, task_index: int | None = None, max_num_steps: int = 30) -> SolveOutcome:

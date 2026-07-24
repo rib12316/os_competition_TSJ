@@ -15,8 +15,8 @@ system 原样保留。命中赛题"降显存/降延迟"——更短的 prompt �
   缓存的压缩结果（新增冷 verbatim 补在压缩段后，无信息丢失）。把压缩从 O(步数) 降到
   偶发。缓存按 session 存 ``ctx.scratch``。
 - **事件日志**：设环境变量 ``F2_EVENT_LOG=<path>`` 后，每步写一条 JSONL（session/步号/
-  上下文 token/动作 skip|compress|reuse/压缩次数/前后 token/耗时）。``sent_tokens`` 来自
-  引擎响应 ``usage.prompt_tokens``；chars/4 粗估只记为 ``estimated_sent_tokens``。
+  上下文 token/动作 skip|compress|reuse/压缩次数/前后 token/耗时）。触发计量使用与引擎
+  一致的 tokenizer；``sent_tokens`` 仍来自引擎响应 ``usage.prompt_tokens``。
 - **正典不动**：只变换发给引擎的副本（详见 ``base.py``），压缩**无序可恢复**。
 - **tool_call 配对安全**：绝不留下孤立的 ``role=tool`` 消息。做法——把整段冷历史
   压成**一条**文本消息（冷的 assistant ``tool_calls`` 与冷的 tool 结果**一起**进
@@ -48,12 +48,15 @@ from agent_mem.middleware.static_prompt import (
     compact_system_messages,
     optimize_tool_descriptions,
 )
+from agent_mem.token_counting import (
+    count_text_chunks,
+    estimate_text_tokens,
+    get_tokenizer,
+    resolve_tokenizer_path,
+)
 
 # 支持的压缩方法（同一套配置切，便于 ablation）
 _METHODS: set[str] = {"llmlingua", "longllmlingua", "llmlingua2"}
-
-# 粗略 chars→tokens 估计（英文 ~4 char/token；仅用于触发门判定，无需精确）
-_CHARS_PER_TOKEN = 4
 
 # 随包发布的压缩 worker 脚本（在隔离 venv 里跑，见 _SubprocessCompressor）
 _DEFAULT_WORKER = os.path.join(os.path.dirname(__file__), "_compress_worker.py")
@@ -400,6 +403,7 @@ class CompressMiddleware(BaseMiddleware):
         policy_artifact_path: str = "",
         policy_artifact_strict: bool = False,
         deduplicate_tool_descriptions: bool = True,
+        tokenizer_model: str = "",
         recompress_delta_tokens: int | None = None,
         event_log: str | None = None,
     ) -> None:
@@ -446,6 +450,11 @@ class CompressMiddleware(BaseMiddleware):
         self.policy_artifact_path = policy_artifact_path
         self.policy_artifact_strict = bool(policy_artifact_strict)
         self.deduplicate_tool_descriptions = bool(deduplicate_tool_descriptions)
+        self.tokenizer_model = tokenizer_model
+        self._tokenizer: Any = None
+        self._tokenizer_lock = threading.Lock()
+        self._token_count_cache: dict[bytes, int] = {}
+        self._token_count_cache_lock = threading.Lock()
         if self.tool_aware and self.method != "llmlingua2":
             raise ValueError("tool_aware 当前要求 method=llmlingua2（结构字段由外层保护）")
         if not (0.0 < self.assistant_rate <= 1.0):
@@ -467,6 +476,24 @@ class CompressMiddleware(BaseMiddleware):
         self._log_lock = threading.Lock()  # 并发跑多任务时串行化事件日志写文件
         self._compressor_lock = threading.Lock()  # 首次并发触发时只构造一个 worker pool
         self._compressor: Any = None  # 懒加载，进程级单例
+
+    def prepare(self) -> None:
+        """Load the configured engine tokenizer before benchmark timing starts."""
+        if self.tokenizer_model:
+            self._get_tokenizer()
+
+    def _get_tokenizer(self) -> Any:
+        if self._tokenizer is None:
+            with self._tokenizer_lock:
+                if self._tokenizer is None:
+                    self._tokenizer = get_tokenizer(self.tokenizer_model)
+        return self._tokenizer
+
+    @property
+    def token_count_source(self) -> str:
+        if self.tokenizer_model:
+            return f"tokenizer:{resolve_tokenizer_path(self.tokenizer_model)}"
+        return "unicode_heuristic"
 
     # ---- 压缩器加载（惰性、缓存）----
 
@@ -583,6 +610,7 @@ class CompressMiddleware(BaseMiddleware):
             out = list(sys_msgs) + send_rest
             self._stage_event(ctx, {"action": "skip", "n_msgs": len(messages),
                                     "cold_n": 0, "hot_n": len(rest), "cold_tokens": 0,
+                                    "token_count_source": self.token_count_source,
                                     **self._static_metrics(ctx),
                                     **hot_extra,
                                     "estimated_sent_tokens": self._estimate_message_tokens(out),
@@ -597,15 +625,15 @@ class CompressMiddleware(BaseMiddleware):
         send_hot, hot_extra = self._compress_hot_tool_results(hot, ctx)
 
         chunks = self._history_texts(cold)
-        cold_tokens = self._est_tokens(chunks)
-        compressible_cold_tokens = self._est_tokens(
+        cold_tokens = self._count_tokens(chunks)
+        compressible_cold_tokens = self._count_tokens(
             self._compressible_history_texts(cold)
         )
-        hot_tokens = self._est_tokens([_msg_to_text(m) for m in hot])
+        hot_tokens = self._count_tokens([_msg_to_text(m) for m in hot])
 
         # 每 session 的压缩缓存（frozen_count=已压进压缩段的冷条数；compressed=压缩文本；count=压缩次数）
         st = self._state(ctx)
-        new_tokens = self._est_tokens(
+        new_tokens = self._count_tokens(
             self._compressible_history_texts(cold[st["frozen_count"]:])
         )
 
@@ -615,7 +643,9 @@ class CompressMiddleware(BaseMiddleware):
             "compressible_cold_tokens": compressible_cold_tokens,
             "hot_tokens": hot_tokens,
             "new_tokens": new_tokens, "compress_count": st["count"],
-            "frozen_count": st["frozen_count"], **self._static_metrics(ctx),
+            "frozen_count": st["frozen_count"],
+            "token_count_source": self.token_count_source,
+            **self._static_metrics(ctx),
             **hot_extra,
         }
 
@@ -641,7 +671,7 @@ class CompressMiddleware(BaseMiddleware):
             st["compressed"] = compressed
             st["frozen_count"] = len(cold)  # 当下整段冷都压进去了
             st["count"] += 1
-            est_comp = self._est_tokens([compressed]) if compressed else 0
+            est_comp = self._count_tokens([compressed]) if compressed else 0
             extra = {
                 "action": "compress",
                 "compress_count": st["count"],
@@ -681,7 +711,7 @@ class CompressMiddleware(BaseMiddleware):
         """保持 hot tool 协议结构，仅压超过阈值的 result content。"""
         empty = {
             "hot_tool_compressed": 0,
-            "hot_tool_saved_tokens_est": 0,
+            "hot_tool_saved_tokens": 0,
             "hot_compress_ms": 0.0,
         }
         if not self.tool_aware or self.hot_tool_trigger_tokens <= 0:
@@ -692,7 +722,7 @@ class CompressMiddleware(BaseMiddleware):
             if message.get("role") != "tool":
                 continue
             content = str(message.get("content") or "")
-            if self._est_tokens([content]) >= self.hot_tool_trigger_tokens:
+            if self._count_tokens([content]) >= self.hot_tool_trigger_tokens:
                 candidates.append((
                     idx,
                     content,
@@ -721,8 +751,8 @@ class CompressMiddleware(BaseMiddleware):
                 pieces.append(f"critical_fields={critical}")
             pieces.append(body)
             replacement = "\n".join(pieces)
-            original_tokens = self._est_tokens([original])
-            replacement_tokens = self._est_tokens([replacement])
+            original_tokens = self._count_tokens([original])
+            replacement_tokens = self._count_tokens([replacement])
             if replacement_tokens >= original_tokens:
                 continue
             out[idx] = {**hot[idx], "content": replacement}
@@ -730,7 +760,7 @@ class CompressMiddleware(BaseMiddleware):
             saved += original_tokens - replacement_tokens
         return out, {
             "hot_tool_compressed": count,
-            "hot_tool_saved_tokens_est": saved,
+            "hot_tool_saved_tokens": saved,
             "hot_compress_ms": round(elapsed_ms, 1),
         }
 
@@ -794,7 +824,7 @@ class CompressMiddleware(BaseMiddleware):
             for (idx, key, original), value in zip(pending, compressed):
                 value = value if isinstance(value, str) and value.strip() else original
                 # 压完更长时保留原文；结构保护不能以负收益为代价。
-                if self._est_tokens([value]) >= self._est_tokens([original]):
+                if self._count_tokens([value]) >= self._count_tokens([original]):
                     value = original
                 cache[key] = value
                 output[idx] = value
@@ -823,8 +853,8 @@ class CompressMiddleware(BaseMiddleware):
             ))
         original = "\n\n".join(segment.original_text() for segment in segments)
         compressed = "\n\n".join(pieces)
-        origin_tokens = self._est_tokens([original])
-        compressed_tokens = self._est_tokens([compressed])
+        origin_tokens = self._count_tokens([original])
+        compressed_tokens = self._count_tokens([compressed])
         ratio = origin_tokens / max(1, compressed_tokens)
         return {
             "compressed_prompt": compressed,
@@ -834,8 +864,8 @@ class CompressMiddleware(BaseMiddleware):
         }
 
     def _estimate_message_tokens(self, msgs: list[dict]) -> int:
-        """按 messages 文本 chars/4 粗估；仅作诊断，不再冒充真实 sent_tokens。"""
-        return self._est_tokens([_msg_to_text(m) for m in msgs])
+        """Count serialized message text; tools/chat-template overhead remains excluded."""
+        return self._count_tokens([_msg_to_text(m) for m in msgs])
 
     def _stage_event(self, ctx: MiddlewareContext, payload: dict) -> None:
         """暂存本步事件，等模型响应带回真实 prompt token 后再落盘。"""
@@ -918,7 +948,23 @@ class CompressMiddleware(BaseMiddleware):
             kw["question"] = question
         return c.compress_prompt(context, **kw)
 
-    @staticmethod
-    def _est_tokens(chunks: list[str]) -> int:
-        """粗估 token 数（仅用于触发门判定）。"""
-        return sum(len(c) for c in chunks) // _CHARS_PER_TOKEN
+    def _count_tokens(self, chunks: list[str]) -> int:
+        """Count trigger tokens with the engine tokenizer when one is configured."""
+        text = "\n\n".join(chunk for chunk in chunks if chunk)
+        if not text:
+            return 0
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        with self._token_count_cache_lock:
+            cached = self._token_count_cache.get(digest)
+        if cached is not None:
+            return cached
+        count = (
+            count_text_chunks(self._get_tokenizer(), [text])
+            if self.tokenizer_model
+            else estimate_text_tokens([text])
+        )
+        with self._token_count_cache_lock:
+            if len(self._token_count_cache) >= 4096:
+                self._token_count_cache.pop(next(iter(self._token_count_cache)))
+            self._token_count_cache[digest] = count
+        return count

@@ -112,4 +112,7 @@ def middlewares_from_config(cfg: Any) -> MiddlewareStack:
     CLI 在启动 agent 前一次性构造。
     """
     mw = cfg.middleware
-    return build_middlewares(mw.active, mw.options)
+    options = {name: dict(value) for name, value in mw.options.items()}
+    if "compress" in mw.active:
+        options.setdefault("compress", {}).setdefault("tokenizer_model", cfg.engine.model)
+    return build_middlewares(mw.active, options)

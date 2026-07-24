@@ -14,6 +14,9 @@ F2 已形成可冻结的安全基线：
 安全保护：user、arguments、call ID、业务硬字段和 hot tail
 ```
 
+触发门已于 2026-07-24 从固定 `chars/4` 修正为与引擎一致的 tokenizer 精确计量，并为
+重复历史增加有界 token-count cache。
+
 retail full115 完整 Prompt 严格配对下降 19.32%；非 retail 28.9k synthetic trace 下降
 27.46%。通用代码 checkpoint 是 `1fb6e51`，计量澄清是 `9ad0100`；本文件对应的最新提交
 以 `git log -1` 为准。本轮没有在通用化改动后重跑 full115。
@@ -77,11 +80,13 @@ worker_pool_size: 4
 - tool result 的 ID/status/state/金额/数量/时间/address/payment/error/name/refund 等保留；
 - 通用化新增 severity/priority/owner/assignee/organization/tenant/account/permission/role，
   以及 `_at/_time/_date/_timestamp` 后缀；
-- 最近 hot tail 保留；若单个 hot tool result 估算超过 1k，只压 narrative body；
+- 最近 hot tail 保留；若单个 hot tool result 经引擎 tokenizer 计量超过 1k，只压
+  narrative body；
 - cold 边界 snap 到完整 assistant-tool 组，压缩后不会留下孤立 `tool_call_id`。
 
-缓存有两层：session 级压缩段复用，以及 `rate + SHA-256(body)` 正文缓存。首次超过 8k 才
-压缩；新增可压 body 小于 4k 时直接复用，新增部分原样附加。
+缓存有三层：session 级压缩段复用、`rate + SHA-256(body)` 正文缓存，以及有界的精确
+token-count cache。首次超过 8k 才压缩；新增可压 body 小于 4k 时直接复用，新增部分原样
+附加。正式配置由 `engine.model` 自动注入 tokenizer；`PROMPT_TOKENIZER_PATH` 可覆盖路径。
 
 ### 3.3 Worker
 
@@ -116,6 +121,7 @@ Success 与两次历史 baseline 23/115、26/115 比分别是 0pp、-2.61pp，�
 - 当前 LLMLingua-2 纯 narrative：`5,000 -> 2,720`（-45.60%，2.76s）。
 - 当前 5k 级 tool-aware：完整 Prompt `8,491 -> 6,722`（-20.83%），硬字段保留。
 - 当前 9k 级 tool-aware：完整 Prompt `13,666 -> 10,676`（-21.88%）。
+- 修正后的触发正文计量：5k case 为 5,136，低于 8k；9k case 为 8,667，按预期触发。
 
 ### 4.3 非 retail 数万 token
 
@@ -127,9 +133,9 @@ MIMO 离线编译 knowledge/incident policy，运行 45 轮、181 消息、8 工
 | compiled policy + tool dedup | 28,712 | 0.51% |
 | 静态 + LLMLingua-2 | 20,936 | 27.46% |
 
-- Qwen 精确可压 body：20,772 token。
-- middleware `chars/4` 触发估算：30,681，高估 47.7%；不要把它当真实 token。
-- 首次 BERT：36.27s；相同 session reuse：5.5ms。
+- Qwen 逐 body 计数为 20,772 token；按实际 `\n\n` 序列化边界计数为 20,815。
+- middleware 现使用后者作为触发真值；旧 `chars/4` 的 30,681 仅是历史数据。
+- 首次 BERT：36.27s；相同 session 历史运行 reuse 5.5ms，修正后缓存探针 5.9ms。
 - 43 个 cold incident ID、所有 call ID/arguments、severity/status/owner/time 均保留；hot tail
   完全一致。
 
@@ -159,6 +165,8 @@ MIMO 离线编译 knowledge/incident policy，运行 45 轮、181 消息、8 工
    severity/owner/created_at 等通用硬字段保护。
 7. 发现 `chars/4` 将 20,772 精确 body 高估为 30,681，修正文档；提交 `9ad0100`。
 8. 决定冻结安全压缩率，后续再做门槛计量、rate 和端到端质量/延迟改进。
+9. 将 cold/hot/recompress 全部切换到共享 Qwen tokenizer；5k/9k/28.9k 复核值分别为
+   5,136/8,667/20,815，并用 token-count cache 将 28.9k 相同历史复用恢复到 5.9ms。
 
 ## 7. 复现命令
 
@@ -189,7 +197,7 @@ PYTHONPATH=/tmp/f2-wt/agent-mem/src \
 /data/os_competition_TSJ/.venv/bin/ruff check /tmp/f2-wt/agent-mem/src/agent_mem
 ```
 
-最后一次结果：215 passed，Ruff 通过。
+最后一次结果：223 passed，Ruff 通过。
 
 ## 8. 关键代码与文档
 
@@ -198,6 +206,7 @@ PYTHONPATH=/tmp/f2-wt/agent-mem/src \
 - `agent-mem/src/agent_mem/middleware/compress.py`：hot/cold/tool-aware/缓存/worker 接线。
 - `agent-mem/src/agent_mem/middleware/static_prompt.py`：retail compact、compiled artifact、工具去重。
 - `agent-mem/src/agent_mem/middleware/policy.py`：通用 artifact 和 fail-closed 校验。
+- `agent-mem/src/agent_mem/token_counting.py`：共享 tokenizer 解析、缓存与精确计数。
 - `agent-mem/benchmarks/compile_policy.py`：MIMO 离线编译器。
 - `agent-mem/benchmarks/generic_context_benchmark.py`：28.9k synthetic benchmark。
 
@@ -208,18 +217,18 @@ PYTHONPATH=/tmp/f2-wt/agent-mem/src \
 - `docs/f2-results/comparison_comprehensive_full115.md`：最终 retail full115。
 - `docs/f2-results/f2-long-context-demo.md`：5k/9k LLMLingua-2 示例。
 - `docs/f2-results/generic-policy-long-context.md`：通用 policy 和 28.9k 结果。
+- `docs/f2-results/f2-trigger-tokenizer-fix.md`：触发门修正及复核结果。
 - `docs/F2-static-prompt-compression-research.md`：system/tools token 构成和风险分析。
 - `docs/F2-tool-aware-llmlingua-plan.md`：tool-aware 设计依据。
 
 ## 9. 下一步优先级
 
-1. 修正触发门计量：用 Qwen tokenizer、校准估算或语言自适应估算替换固定 `chars/4`。
-2. 在非 tau 的长上下文任务上做端到端模型正确率和 prefill/latency 对照；当前 synthetic 只证明
+1. 在非 tau 的长上下文任务上做端到端模型正确率和 prefill/latency 对照；当前 synthetic 只证明
    token 与结构保护。
-3. 对 0.75/0.60、0.70/0.55、0.65/0.50 做质量 ablation，不直接改默认值。
-4. 降低 20k body 首次 BERT 36s 成本，评估分块、线程、worker 调度或更小模型。
-5. 用实际 KV block/可承载并发证明显存收益；vLLM 预分配 `mem_peak` 看不出来。
-6. 如需严格证明 success <=2pp，做同环境 baseline/F2 多 run；不要用两次独立轨迹总 token
+2. 对 0.75/0.60、0.70/0.55、0.65/0.50 做质量 ablation，不直接改默认值。
+3. 降低 20k body 首次 BERT 36s 成本，评估分块、线程、worker 调度或更小模型。
+4. 用实际 KV block/可承载并发证明显存收益；vLLM 预分配 `mem_peak` 看不出来。
+5. 如需严格证明 success <=2pp，做同环境 baseline/F2 多 run；不要用两次独立轨迹总 token
    归因。
 
 ## 10. 结论边界

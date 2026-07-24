@@ -44,9 +44,9 @@ order/status/amount/address 等硬字段；使用当前配置的 LLMLingua-2 BER
 `5,000 → 2,720`，节省 **45.60%**，耗时 2.76s。它接近早期的 5k→2.5k 现象，说明
 压缩器本身仍能达到这个力度；差异来自当前 tool-aware 外层保护，而不是 BERT 失效。
 
-5k 生产门槛检查结果为 `skip / below_trigger`：当前触发器用 chars/4 估算的
-`compressible_cold_tokens=7,620`，低于 8,000。9k case 估算值为 12,858，因此真实触发
-一次 cold 压缩。
+触发门改为 Qwen tokenizer 后，5k 生产门槛检查为 `skip / below_trigger`，serialized
+`compressible_cold_tokens=5,136`；9k case 为 8,667，因此真实触发一次 cold 压缩。旧
+`chars/4` 值 7,620/12,858 只保留为历史对照。
 
 ## 安全性与复用
 

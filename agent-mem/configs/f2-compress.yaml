@@ -1,5 +1,5 @@
 # F2 · Prompt / 上下文压缩（缝D：上下文中间件 transform_messages）。
-# 对冷历史用压缩器（LLMLingua）压短，system prompt / 工具 schema 当前保持原样。
+# 对冷历史用压缩器（LLMLingua）压短，并确定性精简 system prompt / 工具 schema。
 # 纯 agent 层，与硬件无关。
 #
 # ⚠️ 红线：压过头伤成功率，必须配 ablation，成功率下降 ≤ 2pp。
@@ -27,6 +27,7 @@ middleware:                       # 缝D
       method: llmlingua2         # BERT token classifier，比 GPT-2 LLMLingua 快 3-6×
       rate: 0.65                 # 非 tool-aware 回退路径的默认保留比例
       trigger_tokens: 8000       # 累计长 body 才压；大单次结果由 hot 1k 路径处理
+      # 触发计量自动使用 engine.model 的 tokenizer；PROMPT_TOKENIZER_PATH 可覆盖本地路径
       recompress_delta_tokens: 4000  # 压过之后新增冷 >= 此值才重压（4000≈每任务压1次复用；8000 太高永不重压）
       keep_hot: 6                # 热尾保留条数（自动 snap 到完整 tool_call→tool 组）
       tool_aware: true           # 保留 user/tool name/arguments/关键 JSON，仅压正文

@@ -61,11 +61,11 @@ policy_artifact_path: agent-mem/configs/policies/knowledge_incident.json
 
 动态事件显示：
 
-- 可压 cold body 的 Qwen 精确值为 20,772 token；middleware 的 `chars/4` 触发估算为
-  30,681（高估 47.7%），两者都超过当前 8k 门槛；
+- 可压 cold body 逐段 Qwen 计数为 20,772 token；按 middleware 实际 `\n\n` 序列化边界
+  精确计数为 20,815，超过当前 8k 门槛；旧 `chars/4` 值 30,681 仅作历史对照；
 - cold BERT 触发 1 次，压缩耗时 36.27s；
 - worker 预热耗时 4.63s；
-- 相同 session 第二次 action=`reuse`，耗时 5.5ms；
+- 相同 session 第二次 action=`reuse`；修正后有界 token-count cache 探针为 5.9ms；
 - hot tool result 没有触发，因为本例大数据位于 cold history。
 - 43 个 cold incident ID、所有 call ID/arguments、severity/status/owner/time 全部保留；
   最近 hot tail 与原始轨迹一致。

@@ -6,39 +6,21 @@ import json
 import os
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
+from agent_mem import token_counting
 from agent_mem.middleware import MiddlewareContext
 
 _LOG_LOCK = threading.Lock()
-_TOKENIZER_LOCK = threading.Lock()
-_TOKENIZER_CACHE: dict[str, Any] = {}
 
 
+# Keep these wrappers local because tests and diagnostic callers patch them.
 def _resolve_tokenizer_path(model: str) -> str:
-    override = os.environ.get("PROMPT_TOKENIZER_PATH", "")
-    if override:
-        return override
-    candidates = [
-        Path("/data/os_competition_TSJ/models") / model,
-        Path.cwd() / "models" / model,
-        Path(model),
-    ]
-    return str(next((path for path in candidates if path.exists()), Path(model)))
+    return token_counting.resolve_tokenizer_path(model)
 
 
 def _get_tokenizer(model: str) -> Any:
-    path = _resolve_tokenizer_path(model)
-    if path not in _TOKENIZER_CACHE:
-        with _TOKENIZER_LOCK:
-            if path not in _TOKENIZER_CACHE:
-                from transformers import AutoTokenizer
-
-                _TOKENIZER_CACHE[path] = AutoTokenizer.from_pretrained(
-                    path, local_files_only=Path(path).exists()
-                )
-    return _TOKENIZER_CACHE[path]
+    return token_counting.get_tokenizer(model)
 
 
 def prepare_prompt_meter(model: str) -> None:
@@ -53,17 +35,9 @@ def _count_chat_tokens(
     tools: list[dict] | None,
     chat_template_kwargs: dict[str, Any] | None,
 ) -> int:
-    encoded = tokenizer.apply_chat_template(
-        messages,
-        tools=tools or None,
-        tokenize=True,
-        add_generation_prompt=True,
-        **(chat_template_kwargs or {}),
+    return token_counting.count_chat_tokens(
+        tokenizer, messages, tools, chat_template_kwargs
     )
-    token_ids = encoded.input_ids if hasattr(encoded, "input_ids") else encoded
-    if token_ids and isinstance(token_ids[0], list):
-        token_ids = token_ids[0]
-    return len(token_ids)
 
 
 def measure_prompt_pair(

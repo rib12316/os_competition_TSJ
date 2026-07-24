@@ -173,6 +173,7 @@ def run_react(
     进入正典历史的内容——lazy-load 的目的）。``None`` / 空栈 = identity，零开销。
     """
     stack = _as_stack(middlewares)
+    stack.prepare()
     ctx = MiddlewareContext(session_id=session_id)
 
     msgs = list(messages)

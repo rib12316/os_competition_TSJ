@@ -39,8 +39,9 @@ f2-compress.yaml (middleware.active:[compress] + options.compress)
               → llmlingua PromptCompressor(LLMLingua-2 BERT, transformers 4.43.4)
      tool-aware：user/tool name/arguments/关键 JSON 外层保护；只压 assistant/tool body
        + hot 大工具结果提前压缩 + body SHA-256 缓存
+     触发门：与 engine.model 一致的 tokenizer 精确计量 + SHA-256 有界计数缓存
      每步写 F2_EVENT_LOG 事件 JSONL：sent_tokens=响应 usage.prompt_tokens 真值；
-       estimated_sent_tokens=旧 chars/4 估算，仅诊断
+       estimated_sent_tokens=消息文本计量（不含 tools/chat template），仅诊断
 ```
 
 关键文件（都在 `agent-mem/src/agent_mem/middleware/`）：
@@ -256,8 +257,8 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
 - 新增 `benchmarks/generic_context_benchmark.py`，45 轮、8 工具、181 条消息，原始 Prompt
   28,860 token；静态 policy+tool dedup 为 28,712（-0.51%），静态+动态 LLMLingua-2
   为 20,936（-27.46%）。
-- 动态可压 body 的 Qwen 精确值为 20,772 token；`chars/4` 触发估算为 30,681（高估
-  47.7%），两者均 > 8k。BERT 36.27s；同 session reuse 5.5ms；通用 incident
+- 动态可压 body 的逐段 Qwen 值为 20,772 token；修正后按实际序列化边界的触发值为
+  20,815。旧 `chars/4` 值 30,681 高估 47.7%。BERT 36.27s；通用 incident
   ID/call ID/arguments/severity/status/owner/time 审计全部保留。该实验未运行
   full115，仅用于通用长上下文 token/压缩性能验证。
 - 报告：`docs/f2-results/generic-policy-long-context.md`。
@@ -275,3 +276,16 @@ b756269 feat: 阈值增量压缩 + 并发支持 + 全量 ablation
 - 决策：冻结当前 0.75/0.60 安全档，不直接提高默认压缩强度。未来单独对
   `(assistant, tool)=(0.70,0.55)/(0.65,0.50)` 做质量 ablation。
 - 下一会话统一入口：`docs/F2-next-session-handoff.md`。
+
+## 20. 触发门改为 Qwen tokenizer 精确计量（2026-07-24）
+
+- 新增 `agent_mem/token_counting.py`，Prompt meter 与 F2 共享 tokenizer 路径解析和进程级缓存；
+  `middlewares_from_config()` 自动把 `engine.model` 注入 F2。
+- cold 8k、hot tool 1k、recompress 4k 以及压缩前后长度判断全部使用同一 tokenizer；未配置
+  模型的轻量调用明确回退到 Unicode-aware heuristic，不再使用固定 `chars/4`。
+- 事件新增 `token_count_source`；`cold_tokens/compressible_cold_tokens/new_tokens` 现在是精确
+  tokenizer 值。旧 JSONL 保留其产生时的历史口径。
+- 复核：5k/9k tool-aware 的 serialized compressible body 为 5,136/8,667，前者 skip、后者
+  compress；28.9k 通用轨迹为 20,815，仍触发且完整 Prompt 仍为 `28,860 -> 20,936`。
+- 精确计数加入 4,096 项 SHA-256 有界缓存；28.9k 相同历史探针首次 120.6ms、复用 5.9ms。
+- 回归：223 passed；Ruff 通过。报告：`docs/f2-results/f2-trigger-tokenizer-fix.md`。
