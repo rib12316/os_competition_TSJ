@@ -39,6 +39,8 @@ _NUMERIC_FIELDS = (
     "kv_cache_hit_rate",
     "task_success_rate",
     "ttft_ms",
+    "evictions",
+    "idle_hit_rate",
 )
 
 
@@ -171,6 +173,20 @@ def run_once(
             metrics.kv_cache_hit_rate = vllm_metrics.kv_cache_hit_rate(text)
         except Exception as e:  # noqa: BLE001 — 引擎未就绪时不阻断 run
             print(f"[runner] /metrics 抓取失败，跳过 KV 命中率：{e}", file=sys.stderr)
+    # F5：动态调度路径下抓 eviction 统计（仅 session.strategy=priority-evict 时 runner
+    # 有 last_driver）。eviction_tracker 记 PriorityEvictionStrategy 的 priority 抬升计数。
+    driver = getattr(runner, "last_driver", None)
+    if driver is not None:
+        et = driver.snapshot().get("eviction_tracker", {})
+        metrics.evictions = int(et.get("evictions", 0))
+        metrics.idle_hits = int(et.get("idle_hits", 0))
+        metrics.idle_hit_rate = float(et.get("idle_hit_rate", 0.0))
+        # 完整快照（含并发度/HBM 时序统计）落 sidecar，供分析/可视化
+        import json
+
+        (run_dir / "f5_driver_snapshot.json").write_text(
+            json.dumps(driver.snapshot(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
     write_metrics(run_dir, metrics)
     return metrics
 

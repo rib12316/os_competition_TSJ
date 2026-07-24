@@ -26,6 +26,10 @@ class RunMetrics:
     kv_cache_hit_rate: float = 0.0
     task_success_rate: float = 0.0
     ttft_ms: float = 0.0
+    # F5 动态资源回收指标（仅 session.strategy=priority-evict 的 dynamic 路径采集）
+    evictions: int = 0  # 回收次数（PriorityEvictionStrategy 的 priority 抬升计数）
+    idle_hits: int = 0  # 其中命中 idle session 的次数
+    idle_hit_rate: float = 0.0  # eviction 命中 idle 比例（0~1），越高说明"回收闲的"越准
     seed: int = 0
     started_at: str = ""
 

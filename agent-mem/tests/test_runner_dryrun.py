@@ -128,3 +128,58 @@ def test_run_once_samples_memory_with_fake_backend(tmp_path, monkeypatch):
     d = tmp_path / m.run_id
     assert (d / "mem_timeseries.csv").exists()
     assert m.mem_peak_mb == 1234
+
+
+# ---- F5 eviction 指标采集（dynamic 路径的 last_driver → metrics + sidecar）----
+
+
+class _FakeDriver:
+    def __init__(self, snap):
+        self._snap = snap
+
+    def snapshot(self):
+        return self._snap
+
+
+class _FakeDynamicRunner:
+    """模拟 QwenAgentRunner dynamic 路径：run_all 里设置 last_driver。"""
+
+    def __init__(self, snap):
+        self._snap = snap
+        self.last_driver = None
+
+    def run_all(self, cfg):
+        self.last_driver = _FakeDriver(self._snap)
+        from agent_mem.bench.tasks.tau_bench_adapter import TaskRunResult
+
+        return [TaskRunResult(task_id=0, reward=1.0, success=True,
+                              latency_ms=10.0, n_steps=1, error=None)]
+
+    def name(self):
+        return "fake-dyn"
+
+
+def test_run_once_captures_f5_eviction_metrics(tmp_path):
+    snap = {
+        "eviction_tracker": {"evictions": 7, "idle_hits": 6, "idle_hit_rate": 6 / 7},
+        "current_workers": 0, "admits": 7,
+    }
+    m = run_once(
+        _cfg(), _FakeDynamicRunner(snap), run_n=1, run_root=tmp_path,
+        config_text="# snap", ts="20260718-143022",
+    )
+    assert m.evictions == 7
+    assert m.idle_hits == 6
+    assert m.idle_hit_rate == pytest.approx(6 / 7)
+    sidecar = json.loads((tmp_path / m.run_id / "f5_driver_snapshot.json").read_text())
+    assert sidecar["eviction_tracker"]["evictions"] == 7
+
+
+def test_run_once_no_driver_keeps_zero_evictions(tmp_path):
+    """无 last_driver（DryRunRunner）→ eviction 指标保持 0、不写 sidecar。"""
+    m = run_once(
+        _cfg(), DryRunRunner(), run_n=1, run_root=tmp_path,
+        config_text="# snap", ts="20260718-143022",
+    )
+    assert m.evictions == 0 and m.idle_hit_rate == 0.0
+    assert not (tmp_path / m.run_id / "f5_driver_snapshot.json").exists()

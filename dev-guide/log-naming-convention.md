@@ -54,6 +54,9 @@ logs/20260718-160120_vllm_minicpm3-4b_lmcache_run1/
   "kv_cache_hit_rate": 0.0,
   "task_success_rate": 0.0,
   "ttft_ms": 0.0,
+  "evictions": 0,
+  "idle_hits": 0,
+  "idle_hit_rate": 0.0,
   "seed": 42,
   "started_at": "2026-07-18T14:30:22"
 }

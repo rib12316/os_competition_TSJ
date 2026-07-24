@@ -19,6 +19,9 @@ _EXPECTED_FIELDS = (
     "kv_cache_hit_rate",
     "task_success_rate",
     "ttft_ms",
+    "evictions",
+    "idle_hits",
+    "idle_hit_rate",
     "seed",
     "started_at",
 )
