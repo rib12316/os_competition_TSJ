@@ -14,6 +14,11 @@ from agent_mem.middleware import MiddlewareContext
 _LOG_LOCK = threading.Lock()
 
 
+def prompt_meter_enabled() -> bool:
+    """Return whether strict prompt metering is enabled for this process."""
+    return bool(os.environ.get("PROMPT_TOKEN_LOG"))
+
+
 # Keep these wrappers local because tests and diagnostic callers patch them.
 def _resolve_tokenizer_path(model: str) -> str:
     return token_counting.resolve_tokenizer_path(model)
@@ -25,7 +30,7 @@ def _get_tokenizer(model: str) -> Any:
 
 def prepare_prompt_meter(model: str) -> None:
     """在 benchmark 计时前预热 tokenizer；未开启日志时不加载。"""
-    if os.environ.get("PROMPT_TOKEN_LOG"):
+    if prompt_meter_enabled():
         _get_tokenizer(model)
 
 
@@ -50,7 +55,7 @@ def measure_prompt_pair(
     extra_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """同一 tokenizer/chat template 下配对计算变换前后的完整 prompt。"""
-    if not os.environ.get("PROMPT_TOKEN_LOG"):
+    if not prompt_meter_enabled():
         return {}
     t0 = time.monotonic()
     try:

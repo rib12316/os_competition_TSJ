@@ -47,6 +47,14 @@ class MiddlewareContext:
         return self.step
 
 
+@dataclass(frozen=True, slots=True)
+class HandledToolCall:
+    """Result returned by a middleware-owned internal tool."""
+
+    content: str
+    status: str = "success"
+
+
 @runtime_checkable
 class Middleware(Protocol):
     """缝D 中间件契约。实现者继承 :class:`BaseMiddleware` 更省事（带默认 no-op）。"""
@@ -79,6 +87,18 @@ class Middleware(Protocol):
         self, name: str, args: dict[str, Any], result: str, ctx: MiddlewareContext
     ) -> str:
         """拦工具返回值，返回回灌进正典历史的（可能改写的）结果文本。"""
+        ...
+
+    def handle_internal_tool_call(
+        self, name: str, args: dict[str, Any], ctx: MiddlewareContext
+    ) -> HandledToolCall | None:
+        """Handle a middleware-owned tool; ``None`` delegates to the business runtime."""
+        ...
+
+    def measurement_baseline(
+        self, messages: list[dict], tools: list[dict], ctx: MiddlewareContext
+    ) -> tuple[list[dict], list[dict]]:
+        """Restore a measurement-only request representing the unoptimized baseline."""
         ...
 
     def after_model_call(
@@ -123,6 +143,16 @@ class BaseMiddleware:
         self, name: str, args: dict[str, Any], result: str, ctx: MiddlewareContext
     ) -> str:
         return result
+
+    def handle_internal_tool_call(
+        self, name: str, args: dict[str, Any], ctx: MiddlewareContext
+    ) -> HandledToolCall | None:
+        return None
+
+    def measurement_baseline(
+        self, messages: list[dict], tools: list[dict], ctx: MiddlewareContext
+    ) -> tuple[list[dict], list[dict]]:
+        return messages, tools
 
     def after_model_call(
         self, prompt_tokens: int | None, ctx: MiddlewareContext
@@ -190,6 +220,31 @@ class MiddlewareStack:
         for mw in self._mw:
             out = mw.intercept_tool_result(name, args, out, ctx)
         return out
+
+    def handle_internal_tool_call(
+        self, name: str, args: dict[str, Any], ctx: MiddlewareContext
+    ) -> HandledToolCall | None:
+        """Return the first middleware-owned tool result, if any."""
+        for mw in self._mw:
+            hook = getattr(mw, "handle_internal_tool_call", None)
+            if hook is None:
+                continue
+            handled = hook(name, args, ctx)
+            if handled is not None:
+                return handled
+        return None
+
+    def measurement_baseline(
+        self, messages: list[dict], tools: list[dict], ctx: MiddlewareContext
+    ) -> tuple[list[dict], list[dict]]:
+        """Restore externalized data only in the copy consumed by Prompt metering."""
+        out_messages = list(messages)
+        out_tools = list(tools)
+        for mw in reversed(self._mw):
+            hook = getattr(mw, "measurement_baseline", None)
+            if hook is not None:
+                out_messages, out_tools = hook(out_messages, out_tools, ctx)
+        return out_messages, out_tools
 
     def after_model_call(
         self, prompt_tokens: int | None, ctx: MiddlewareContext

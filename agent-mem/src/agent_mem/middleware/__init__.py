@@ -26,19 +26,23 @@ from typing import Any
 
 from agent_mem.middleware.base import (
     BaseMiddleware,
+    HandledToolCall,
     Middleware,
     MiddlewareContext,
     MiddlewareStack,
 )
 from agent_mem.middleware.compress import CompressMiddleware
+from agent_mem.middleware.lazyload import LazyLoadMiddleware
 
 __all__ = [
     "BaseMiddleware",
+    "HandledToolCall",
     "Middleware",
     "MiddlewareContext",
     "MiddlewareStack",
     "NoOpMiddleware",
     "CompressMiddleware",
+    "LazyLoadMiddleware",
     "registry",
     "register",
     "unregister",
@@ -58,6 +62,7 @@ class NoOpMiddleware(BaseMiddleware):
 _REGISTRY: dict[str, type[BaseMiddleware]] = {
     "noop": NoOpMiddleware,
     "compress": CompressMiddleware,
+    "lazyload": LazyLoadMiddleware,
 }
 
 
@@ -115,4 +120,6 @@ def middlewares_from_config(cfg: Any) -> MiddlewareStack:
     options = {name: dict(value) for name, value in mw.options.items()}
     if "compress" in mw.active:
         options.setdefault("compress", {}).setdefault("tokenizer_model", cfg.engine.model)
+    if "lazyload" in mw.active:
+        options.setdefault("lazyload", {}).setdefault("tokenizer_model", cfg.engine.model)
     return build_middlewares(mw.active, options)

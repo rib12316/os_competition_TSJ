@@ -1,7 +1,7 @@
-"""τ-bench agent：自定义 ``Agent`` 子类，用 openai SDK 驱动 τ-bench env 拿真 reward。
+"""τ-bench agent：通过兼容客户端连接本地 vLLM，并驱动环境取得真实 reward。
 
 镜像官方 ``ToolCallingAgent`` 的消息协议（``message_to_action`` + respond 分支），
-但把 LLM 调用换成 openai SDK 直连我们的引擎/stub，绕开 litellm。每个 tool_call 转
+但把 LLM 调用换成兼容客户端直连本地 vLLM/stub，绕开 litellm。每个 tool_call 转
 ``Action(name, kwargs)`` 调 ``env.step``；respond 时 env 算 reward 并 done。
 
 惰性 import：顶层**零** ``tau_bench.*`` import（会拖入 litellm），全在 ``solve()`` 内。
@@ -20,6 +20,7 @@ from agent_mem.agent.usage_log import (
     log_prompt_tokens,
     measure_prompt_pair,
     prepare_prompt_meter,
+    prompt_meter_enabled,
 )
 from agent_mem.middleware import Middleware, MiddlewareContext, MiddlewareStack
 
@@ -50,7 +51,7 @@ def _message_to_action(next_message: dict, Action: Any, respond_name: str) -> An
 
 
 class TauBenchAgent:
-    """驱动 τ-bench env 的 ReAct agent（openai SDK）。
+    """驱动 τ-bench env 的 ReAct agent（推理由本地 vLLM 提供）。
 
     不继承 tau_bench.agents.base.Agent（避免顶层 import tau_bench）；duck-type 兼容。
     """
@@ -100,15 +101,21 @@ class TauBenchAgent:
         for _ in range(max_num_steps):
             steps += 1
             ctx.bump_step()
+            if prompt_meter_enabled():
+                baseline_messages, baseline_tools = self.stack.measurement_baseline(
+                    messages, env.tools_info, ctx
+                )
+            else:
+                baseline_messages, baseline_tools = messages, env.tools_info
             # 缝D：联合变换 messages/tools（副本），正典输入不动
             to_send, to_tools = self.stack.transform_request(
                 messages, env.tools_info, ctx
             )
             token_measurement = measure_prompt_pair(
                 model=self.model,
-                original_messages=messages,
+                original_messages=baseline_messages,
                 transformed_messages=to_send,
-                original_tools=env.tools_info,
+                original_tools=baseline_tools,
                 transformed_tools=to_tools,
                 extra_body=self.extra_body,
             )
@@ -126,16 +133,30 @@ class TauBenchAgent:
             self.stack.after_model_call(prompt_tokens, ctx)
             ttft_ms_list.append(ttft_s * 1000)
             action = _message_to_action(next_message, Action, RESPOND_ACTION_NAME)
-            env_response = env.step(action)
-            reward = env_response.reward
-            if hasattr(env_response.info, "model_dump"):
-                info.update(env_response.info.model_dump())
 
             if action.name != RESPOND_ACTION_NAME:
                 tcs = next_message.get("tool_calls") or []
                 next_message["tool_calls"] = tcs[:1]  # τ-bench 每步一个 action
                 tc = tcs[0] if tcs else {"id": "x", "function": {"name": action.name}}
                 messages.append(next_message)
+                internal = self.stack.handle_internal_tool_call(
+                    action.name, dict(action.kwargs), ctx
+                )
+                if internal is not None:
+                    obs = self.stack.intercept_tool_result(
+                        action.name, dict(action.kwargs), internal.content, ctx
+                    )
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "name": tc["function"]["name"],
+                        "content": obs,
+                    })
+                    continue
+                env_response = env.step(action)
+                reward = env_response.reward
+                if hasattr(env_response.info, "model_dump"):
+                    info.update(env_response.info.model_dump())
                 # 缝D：工具（env）返回值回灌前拦截（F3 把长 JSON 换成引用）
                 obs = self.stack.intercept_tool_result(
                     action.name, dict(action.kwargs), env_response.observation, ctx
@@ -147,6 +168,10 @@ class TauBenchAgent:
                     "content": obs,
                 })
             else:
+                env_response = env.step(action)
+                reward = env_response.reward
+                if hasattr(env_response.info, "model_dump"):
+                    info.update(env_response.info.model_dump())
                 messages.append(next_message)
                 messages.append({"role": "user", "content": env_response.observation})
 

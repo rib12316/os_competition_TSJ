@@ -8,6 +8,7 @@ import pytest
 
 from agent_mem.agent import tools
 from agent_mem.agent.react import run_react
+from agent_mem.middleware import BaseMiddleware, HandledToolCall
 from agent_mem.server import stub_openai
 
 
@@ -45,6 +46,35 @@ class _FakeClient:
     def _create(self, **kw):
         self.calls.append(kw)
         return self._responses.pop(0)
+
+
+def test_run_react_internal_tool_bypasses_business_executor():
+    called = []
+
+    class _Internal(BaseMiddleware):
+        def handle_internal_tool_call(self, name, args, ctx):
+            if name == "fetch_tool_result":
+                return HandledToolCall('{"status":"ok","content":"slice"}')
+            return None
+
+    client = _FakeClient([
+        _resp(_msg(None, [_tc("fetch_tool_result", '{"result_id":"tr_x"}')])),
+        _resp(_msg("done")),
+    ])
+
+    result = run_react(
+        client,
+        "m",
+        [{"role": "user", "content": "inspect result"}],
+        [],
+        lambda name, args: called.append(name) or "business",
+        middlewares=[_Internal()],
+    )
+
+    assert called == []
+    assert result.final_text == "done"
+    tool_message = next(message for message in result.messages if message["role"] == "tool")
+    assert "slice" in tool_message["content"]
 
 
 def test_run_react_one_tool_then_finish():

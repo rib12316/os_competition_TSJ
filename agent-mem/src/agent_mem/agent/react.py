@@ -1,4 +1,4 @@
-"""ReAct 多轮 tool-calling 核心引擎（openai SDK 手写）。
+"""ReAct 多轮 tool-calling 核心引擎（客户端连接本地 vLLM 兼容接口）。
 
 循环：LLM ``chat.completions.create(tools=...)`` → 解析 ``tool_calls`` →
 ``execute_tool(name, args)`` 回灌 ``role=tool`` → 直到 LLM 不再调工具或达 ``max_steps``。
@@ -15,7 +15,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_mem.agent.usage_log import log_prompt_tokens, measure_prompt_pair
+from agent_mem.agent.usage_log import (
+    log_prompt_tokens,
+    measure_prompt_pair,
+    prompt_meter_enabled,
+)
 from agent_mem.middleware import Middleware, MiddlewareContext, MiddlewareStack
 
 # 工具执行器签名：(name, args_dict) -> 观察文本
@@ -192,13 +196,20 @@ def run_react(
     while n_steps < max_steps:
         n_steps += 1
         ctx.bump_step()
+        # Measurement-only expansion restores F3 artifacts without changing canonical history.
+        if prompt_meter_enabled():
+            baseline_messages, baseline_tools = stack.measurement_baseline(
+                msgs, tools or [], ctx
+            )
+        else:
+            baseline_messages, baseline_tools = msgs, tools or []
         # 缝D：联合变换 messages/tools（副本），正典输入不变
         to_send, to_tools = stack.transform_request(msgs, tools or [], ctx)
         token_measurement = measure_prompt_pair(
             model=model,
-            original_messages=msgs,
+            original_messages=baseline_messages,
             transformed_messages=to_send,
-            original_tools=tools,
+            original_tools=baseline_tools,
             transformed_tools=to_tools,
             extra_body=extra_body,
         )
@@ -228,7 +239,8 @@ def run_react(
             except (ValueError, TypeError):
                 args = {}
             try:
-                obs = execute_tool(name, args)
+                internal = stack.handle_internal_tool_call(name, args, ctx)
+                obs = internal.content if internal is not None else execute_tool(name, args)
             except Exception as e:  # noqa: BLE001 — 工具失败不杀 agent，把错误回灌
                 obs = f"tool error: {e}"
             # 缝D：工具结果回灌前拦截（可改写进正典历史的内容）

@@ -1,0 +1,66 @@
+{
+  "benchmark": "f3-long-tool-result",
+  "model": "Qwen2.5-7B-Instruct",
+  "config": {
+    "results": 3,
+    "target_tokens_per_result": 5000,
+    "externalize_trigger_tokens": 4000,
+    "perf_runs": 20
+  },
+  "prompt_tokens": {
+    "baseline": 21350,
+    "f2_only": 17075,
+    "f3_only": 996,
+    "f2_f3": 996
+  },
+  "f3_saved_tokens": 20354,
+  "f3_saved_percent": 95.3349,
+  "f2_transform_ms": 6530.026,
+  "f2_f3_transform_ms": 1.921,
+  "reference_tokens": {
+    "max": 120,
+    "values": [118, 120, 116]
+  },
+  "local_overhead_ms": {
+    "externalize_p50": 8.313,
+    "externalize_p95": 8.41,
+    "fetch_p50": 5.039,
+    "fetch_p95": 5.087,
+    "small_p50": 0.068,
+    "small_p95": 0.075
+  },
+  "fetch_tokens_max": 768,
+  "gates": {
+    "f3_full_prompt_saved_at_least_70pct": true,
+    "f2_f3_not_larger_than_f3": true,
+    "reference_at_most_512_tokens": true,
+    "externalize_p95_at_most_50ms": true,
+    "fetch_p95_at_most_20ms": true,
+    "small_p95_at_most_5ms": true,
+    "fetch_at_most_768_tokens": true,
+    "all_results_externalized": true,
+    "vllm_prompt_tokens_decreased": true
+  },
+  "vllm": {
+    "rounds": [
+      {
+        "order": ["baseline", "f3"],
+        "baseline": {"prompt_tokens": 21371, "wall_ms": 2062.465},
+        "f3": {"prompt_tokens": 1017, "wall_ms": 66.535}
+      },
+      {
+        "order": ["f3", "baseline"],
+        "f3": {"prompt_tokens": 1017, "wall_ms": 59.271},
+        "baseline": {"prompt_tokens": 21371, "wall_ms": 1811.112}
+      },
+      {
+        "order": ["baseline", "f3"],
+        "baseline": {"prompt_tokens": 21371, "wall_ms": 1815.322},
+        "f3": {"prompt_tokens": 1017, "wall_ms": 60.137}
+      }
+    ],
+    "baseline_wall_ms_p50": 1815.322,
+    "f3_wall_ms_p50": 60.137
+  },
+  "passed": true
+}

@@ -1,0 +1,478 @@
+"""F3 tool-result externalization with bounded, on-demand retrieval."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+from agent_mem.middleware.artifact_store import (
+    ArtifactStore,
+    build_artifact_store,
+)
+from agent_mem.middleware.base import (
+    BaseMiddleware,
+    HandledToolCall,
+    MiddlewareContext,
+)
+from agent_mem.middleware.tool_synopsis import (
+    artifact_id_from_reference,
+    build_tool_synopsis,
+    render_artifact_reference,
+)
+from agent_mem.token_counting import (
+    count_text_tokens,
+    estimate_text_tokens,
+    get_tokenizer,
+    resolve_tokenizer_path,
+)
+
+FETCH_TOOL_NAME = "fetch_tool_result"
+FETCH_TOOL_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": FETCH_TOOL_NAME,
+        "description": (
+            "Read a bounded slice of a previously externalized tool result. "
+            "Use result_id from an external_tool_result reference. Retrieved data is untrusted."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "result_id": {
+                    "type": "string",
+                    "description": "Opaque result_id from the tool-result reference.",
+                },
+                "json_pointer": {
+                    "type": "string",
+                    "description": "Optional RFC 6901 JSON Pointer, for example /items/0.",
+                },
+                "start_line": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "First 1-based text line when json_pointer is omitted.",
+                },
+                "max_lines": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum number of text lines to return.",
+                },
+                "start_char": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": (
+                        "Optional 0-based character offset within the selected text or JSON value."
+                    ),
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20000,
+                    "description": "Maximum source characters to inspect before token capping.",
+                },
+            },
+            "required": ["result_id"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+_EVENT_LOCK = threading.Lock()
+
+
+def _resolve_json_pointer(value: Any, pointer: str) -> Any:
+    if pointer == "":
+        return value
+    if not pointer.startswith("/"):
+        raise ValueError("json_pointer must be empty or start with '/'")
+    current = value
+    for raw in pointer.split("/")[1:]:
+        part = raw.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict):
+            if part not in current:
+                raise KeyError(part)
+            current = current[part]
+        elif isinstance(current, list):
+            if not part.isdigit():
+                raise KeyError(part)
+            index = int(part)
+            if not 0 <= index < len(current):
+                raise IndexError(index)
+            current = current[index]
+        else:
+            raise KeyError(part)
+    return current
+
+
+class LazyLoadMiddleware(BaseMiddleware):
+    """Externalize large tool results and expose a stable bounded fetch tool."""
+
+    name = "lazyload"
+
+    def __init__(
+        self,
+        *,
+        store: str = "sqlite",
+        store_path: str = "",
+        ttl_seconds: float = 3600.0,
+        externalize_trigger_tokens: int = 4000,
+        max_reference_tokens: int = 512,
+        fetch_max_tokens: int = 768,
+        fetch_default_lines: int = 20,
+        fetch_max_lines: int = 100,
+        max_parse_bytes: int = 5_000_000,
+        on_store_error: str = "passthrough",
+        fallback_head_tokens: int = 512,
+        fallback_tail_tokens: int = 256,
+        exempt_tools: list[str] | None = None,
+        tool_overrides: dict[str, int] | None = None,
+        tokenizer_model: str = "",
+        event_log: str | None = None,
+        artifact_store: ArtifactStore | None = None,
+    ) -> None:
+        if externalize_trigger_tokens <= 0:
+            raise ValueError("externalize_trigger_tokens must be > 0")
+        if max_reference_tokens <= 0 or fetch_max_tokens <= 0:
+            raise ValueError("reference/fetch token budgets must be > 0")
+        if fetch_default_lines <= 0 or fetch_max_lines <= 0:
+            raise ValueError("fetch line limits must be > 0")
+        if on_store_error not in {"passthrough", "head_tail", "raise"}:
+            raise ValueError("on_store_error must be passthrough, head_tail, or raise")
+        self.externalize_trigger_tokens = int(externalize_trigger_tokens)
+        self.max_reference_tokens = int(max_reference_tokens)
+        self.fetch_max_tokens = int(fetch_max_tokens)
+        self.fetch_default_lines = min(int(fetch_default_lines), int(fetch_max_lines))
+        self.fetch_max_lines = int(fetch_max_lines)
+        self.max_parse_bytes = int(max_parse_bytes)
+        self.on_store_error = on_store_error
+        self.fallback_head_tokens = int(fallback_head_tokens)
+        self.fallback_tail_tokens = int(fallback_tail_tokens)
+        self.exempt_tools = set(exempt_tools or [FETCH_TOOL_NAME])
+        self.exempt_tools.add(FETCH_TOOL_NAME)
+        self.tool_overrides = dict(tool_overrides or {})
+        self.tokenizer_model = tokenizer_model
+        self._tokenizer: Any = None
+        self._tokenizer_lock = threading.Lock()
+        self._count_cache: dict[bytes, int] = {}
+        self._count_lock = threading.Lock()
+        if artifact_store is None:
+            if store == "sqlite" and not store_path:
+                store_path = f"/tmp/agent-mem-f3-{os.getpid()}.sqlite3"
+            artifact_store = build_artifact_store(
+                store, path=store_path, ttl_seconds=ttl_seconds
+            )
+        self.store = artifact_store
+        self._event_log_path = event_log or os.environ.get("F3_EVENT_LOG", "")
+
+    def prepare(self) -> None:
+        if self.tokenizer_model:
+            self._get_tokenizer()
+
+    def _get_tokenizer(self) -> Any:
+        if self._tokenizer is None:
+            with self._tokenizer_lock:
+                if self._tokenizer is None:
+                    self._tokenizer = get_tokenizer(self.tokenizer_model)
+        return self._tokenizer
+
+    @property
+    def token_count_source(self) -> str:
+        if self.tokenizer_model:
+            return f"tokenizer:{resolve_tokenizer_path(self.tokenizer_model)}"
+        return "unicode_heuristic"
+
+    def _count(self, text: str) -> int:
+        if not text:
+            return 0
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        with self._count_lock:
+            cached = self._count_cache.get(digest)
+        if cached is not None:
+            return cached
+        count = (
+            count_text_tokens(self._get_tokenizer(), text)
+            if self.tokenizer_model
+            else estimate_text_tokens([text])
+        )
+        with self._count_lock:
+            if len(self._count_cache) >= 4096:
+                self._count_cache.pop(next(iter(self._count_cache)))
+            self._count_cache[digest] = count
+        return count
+
+    def transform_tools(
+        self, tools: list[dict], ctx: MiddlewareContext
+    ) -> list[dict]:
+        if any(
+            tool.get("function", {}).get("name") == FETCH_TOOL_NAME
+            for tool in tools
+            if isinstance(tool, dict)
+        ):
+            return list(tools)
+        return [*tools, FETCH_TOOL_SCHEMA]
+
+    def intercept_tool_result(
+        self, name: str, args: dict[str, Any], result: str, ctx: MiddlewareContext
+    ) -> str:
+        if name in self.exempt_tools:
+            return result
+        threshold = int(self.tool_overrides.get(name, self.externalize_trigger_tokens))
+        if threshold <= 0:
+            return result
+        started = time.monotonic()
+        original_tokens = self._count(result)
+        if original_tokens < threshold:
+            self._log_event(ctx, {
+                "action": "passthrough",
+                "tool_name": name,
+                "original_tokens": original_tokens,
+                "token_count_source": self.token_count_source,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            })
+            return result
+        content_type, synopsis = build_tool_synopsis(
+            result, max_parse_bytes=self.max_parse_bytes
+        )
+        try:
+            store_started = time.monotonic()
+            artifact = self.store.put(
+                session_id=ctx.session_id,
+                tool_name=name,
+                content=result,
+                content_type=content_type,
+                token_count=original_tokens,
+            )
+            store_ms = (time.monotonic() - store_started) * 1000
+        except Exception:
+            if self.on_store_error == "raise":
+                raise
+            if self.on_store_error == "head_tail":
+                return self._head_tail_fallback(result)
+            self._log_event(ctx, {
+                "action": "store_error_passthrough",
+                "tool_name": name,
+                "original_tokens": original_tokens,
+                "token_count_source": self.token_count_source,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            })
+            return result
+
+        reference = render_artifact_reference(artifact, synopsis)
+        reference_tokens = self._count(reference)
+        if reference_tokens > self.max_reference_tokens:
+            reference = render_artifact_reference(
+                artifact,
+                {"kind": synopsis.get("kind", "unknown"), "summary_omitted": True},
+            )
+            reference_tokens = self._count(reference)
+        if reference_tokens >= original_tokens or reference_tokens > self.max_reference_tokens:
+            self.store.delete(ctx.session_id, artifact.result_id)
+            return result
+
+        ctx.scratch.setdefault("lazyload:result_ids", set()).add(artifact.result_id)
+        self._log_event(ctx, {
+            "action": "externalize",
+            "tool_name": name,
+            "result_id": artifact.result_id,
+            "content_type": content_type,
+            "byte_count": artifact.byte_count,
+            "original_tokens": original_tokens,
+            "reference_tokens": reference_tokens,
+            "saved_tokens": original_tokens - reference_tokens,
+            "saved_percent": round(
+                (original_tokens - reference_tokens) / max(1, original_tokens) * 100, 4
+            ),
+            "store_ms": round(store_ms, 3),
+            "token_count_source": self.token_count_source,
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+        })
+        return reference
+
+    def handle_internal_tool_call(
+        self, name: str, args: dict[str, Any], ctx: MiddlewareContext
+    ) -> HandledToolCall | None:
+        if name != FETCH_TOOL_NAME:
+            return None
+        started = time.monotonic()
+        result_id = str(args.get("result_id") or "")
+        artifact = self.store.get(ctx.session_id, result_id)
+        if artifact is None:
+            content = json.dumps(
+                {"status": "not_found", "result_id": result_id},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            return HandledToolCall(content=content, status="error")
+        if hashlib.sha256(artifact.content.encode("utf-8")).hexdigest() != artifact.sha256:
+            content = json.dumps(
+                {"status": "integrity_error", "result_id": result_id},
+                separators=(",", ":"),
+            )
+            return HandledToolCall(content=content, status="error")
+
+        pointer = str(args.get("json_pointer") or "")
+        try:
+            if pointer:
+                selected = _resolve_json_pointer(json.loads(artifact.content), pointer)
+                text = json.dumps(selected, ensure_ascii=False, separators=(",", ":"))
+                meta: dict[str, Any] = {"json_pointer": pointer}
+                source_truncated = False
+            else:
+                start_line = max(1, int(args.get("start_line") or 1))
+                max_lines = min(
+                    self.fetch_max_lines,
+                    max(1, int(args.get("max_lines") or self.fetch_default_lines)),
+                )
+                lines = artifact.content.splitlines() or [artifact.content]
+                start_index = min(len(lines), start_line - 1)
+                end_index = min(len(lines), start_index + max_lines)
+                text = "\n".join(lines[start_index:end_index])
+                source_truncated = end_index < len(lines)
+                meta = {
+                    "start_line": start_index + 1,
+                    "end_line": end_index,
+                    "next_start_line": end_index + 1 if source_truncated else None,
+                    "line_count": len(lines),
+                }
+        except (TypeError, ValueError, KeyError, IndexError, json.JSONDecodeError):
+            content = json.dumps(
+                {"status": "invalid_selector", "result_id": result_id},
+                separators=(",", ":"),
+            )
+            return HandledToolCall(content=content, status="error")
+
+        start_char = max(0, int(args.get("start_char") or 0))
+        max_chars = min(20_000, max(1, int(args.get("max_chars") or 12_000)))
+        char_end = min(len(text), start_char + max_chars)
+        selected_text = text[start_char:char_end]
+        char_truncated = char_end < len(text)
+        meta["start_char"] = start_char
+
+        content, token_truncated = self._bounded_fetch_response(
+            result_id=result_id,
+            text=selected_text,
+            meta=meta,
+            source_truncated=source_truncated or char_truncated,
+            source_start_char=start_char,
+            has_more_chars=char_truncated,
+        )
+        self._log_event(ctx, {
+            "action": "fetch",
+            "tool_name": name,
+            "result_id": result_id,
+            "fetch_tokens": self._count(content),
+            "source_truncated": source_truncated,
+            "token_truncated": token_truncated,
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            "token_count_source": self.token_count_source,
+        })
+        return HandledToolCall(content=content)
+
+    def measurement_baseline(
+        self, messages: list[dict], tools: list[dict], ctx: MiddlewareContext
+    ) -> tuple[list[dict], list[dict]]:
+        out: list[dict] = []
+        for message in messages:
+            content = str(message.get("content") or "")
+            result_id = artifact_id_from_reference(content)
+            if message.get("role") != "tool" or result_id is None:
+                out.append(message)
+                continue
+            artifact = self.store.get(ctx.session_id, result_id)
+            out.append(
+                {**message, "content": artifact.content}
+                if artifact is not None else message
+            )
+        return out, tools
+
+    def _bounded_fetch_response(
+        self,
+        *,
+        result_id: str,
+        text: str,
+        meta: dict[str, Any],
+        source_truncated: bool,
+        source_start_char: int,
+        has_more_chars: bool,
+    ) -> tuple[str, bool]:
+        base = {
+            "status": "ok",
+            "result_id": result_id,
+            **meta,
+            "source_truncated": source_truncated,
+            "token_truncated": False,
+            "content": "",
+        }
+        token_truncated = False
+        candidate = text
+        if self.tokenizer_model:
+            tokenizer = self._get_tokenizer()
+            ids = tokenizer.encode(text, add_special_tokens=False)
+            overhead = self._count(json.dumps(base, ensure_ascii=False, separators=(",", ":")))
+            take = min(len(ids), max(0, self.fetch_max_tokens - overhead - 16))
+            token_truncated = take < len(ids)
+            candidate = tokenizer.decode(ids[:take], skip_special_tokens=True)
+        else:
+            char_limit = max(0, (self.fetch_max_tokens - 64) * 4)
+            token_truncated = len(text) > char_limit
+            candidate = text[:char_limit]
+
+        for _ in range(8):
+            base["content"] = candidate
+            base["token_truncated"] = token_truncated
+            rendered = json.dumps(base, ensure_ascii=False, separators=(",", ":"))
+            count = self._count(rendered)
+            if count <= self.fetch_max_tokens:
+                base["next_start_char"] = (
+                    source_start_char + len(candidate)
+                    if token_truncated or has_more_chars else None
+                )
+                rendered = json.dumps(base, ensure_ascii=False, separators=(",", ":"))
+                if self._count(rendered) <= self.fetch_max_tokens:
+                    return rendered, token_truncated
+                base.pop("next_start_char", None)
+            token_truncated = True
+            if not candidate:
+                return rendered, token_truncated
+            keep = max(0, int(len(candidate) * (self.fetch_max_tokens / count) * 0.9))
+            candidate = candidate[:keep]
+        base["content"] = ""
+        base["token_truncated"] = True
+        return json.dumps(base, ensure_ascii=False, separators=(",", ":")), True
+
+    def _head_tail_fallback(self, content: str) -> str:
+        if self.tokenizer_model:
+            tokenizer = self._get_tokenizer()
+            ids = tokenizer.encode(content, add_special_tokens=False)
+            if len(ids) <= self.fallback_head_tokens + self.fallback_tail_tokens:
+                return content
+            head = tokenizer.decode(
+                ids[: self.fallback_head_tokens], skip_special_tokens=True
+            )
+            tail = tokenizer.decode(
+                ids[-self.fallback_tail_tokens :], skip_special_tokens=True
+            )
+        else:
+            head = content[: self.fallback_head_tokens * 4]
+            tail = content[-self.fallback_tail_tokens * 4 :]
+        return f"{head}\n[... tool result omitted: store unavailable ...]\n{tail}"
+
+    def _log_event(self, ctx: MiddlewareContext, payload: dict[str, Any]) -> None:
+        if not self._event_log_path:
+            return
+        event = {"session_id": ctx.session_id, "step": ctx.step, "ts": time.time(), **payload}
+        try:
+            Path(self._event_log_path).parent.mkdir(parents=True, exist_ok=True)
+            with _EVENT_LOCK:
+                with open(self._event_log_path, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+        except OSError:
+            return
+
+    def close(self) -> None:
+        self.store.close()

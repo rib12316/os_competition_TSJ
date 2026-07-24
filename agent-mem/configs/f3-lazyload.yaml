@@ -1,12 +1,10 @@
 # F3 · 工具调用数据 lazy-load（缝D：上下文中间件 intercept_tool_result）。
-# 拦截工具返回值（长 HTML/JSON/图）→ 存外部 store → context 只放 <doc id=.. summary=..>，
-# 加 fetch(id) 工具让模型按需取详情。纯 agent 层，与硬件无关。
-#
-# ⚠️ TODO(F3)：实现 LazyLoadMiddleware 并 register("lazyload", ...) + fetch 工具后生效。
+# 大结果存 session-scoped SQLite，context 只保留结构摘要和 result_id；模型通过
+# fetch_tool_result 分段取回。推理后端仍是本地 vllm-ascend。
 #
 # 独立性：只开关自己（middleware.active=[lazyload]）；可与 F2 链式组合，但价值不依赖它。
 engine:
-  backend: vllm
+  backend: vllm-ascend
   model: Qwen2.5-7B-Instruct
   extra_args: []
 
@@ -17,11 +15,21 @@ benchmark:
   seed: 42
 
 middleware:                       # 缝D
-  active: [lazyload]             # TODO(F3): register 后激活
+  active: [lazyload]
   options:
     lazyload:
-      store: sqlite              # 外部 store 类型（sqlite | memory）
-      max_inline_chars: 200      # 超此长度的工具结果换成引用
+      store: sqlite
+      store_path: ""             # 空=进程独立 /tmp DB；正式 run 可指定持久路径
+      ttl_seconds: 3600
+      externalize_trigger_tokens: 4000
+      max_reference_tokens: 512
+      fetch_max_tokens: 768       # 低于 F2 hot-tool 1k 门槛
+      fetch_default_lines: 20
+      fetch_max_lines: 100
+      max_parse_bytes: 5000000
+      on_store_error: passthrough # 成功率优先；可显式改 head_tail/raise
+      exempt_tools: [fetch_tool_result]
+      tool_overrides: {}
 
 metrics:
   - e2e_latency_p50
