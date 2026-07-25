@@ -1,7 +1,7 @@
 # F5 — 并发场景动态资源回收与重分配（技术报告）
 
 > 分支：`feat/f5-priority-evict` ｜ 赛题方向 1（KV Cache 生命周期管理）原话"动态资源回收与重分配"
-> 状态：**Phase 0（应用层接线）已完成、全量测试绿**；Phase 1（真机 A/B/C 实验）待 NPU。
+> 状态：**Phase 0（应用层接线）+ Phase 1（真机 B vs C）均完成**：KV-pool 准入控制消除抢占（3→0）、p50 快 3.3×、KV 命中率 0.93 vs 0.385、eviction-hit-idle 100%。
 
 ## 摘要
 
@@ -102,25 +102,33 @@ run summary），**全量 203 tests 绿**。
 单元测试覆盖策略/准入/driver/指标全链路（fake 回调 + 注入时钟 + fake HBM），证明接线正确、
 线程安全、eviction 计数与 metrics 落盘正常。
 
-### 6.2 Phase 1（待 NPU）— A/B/C 三组对照
-同引擎/同 workload（Qwen2.5-7B，10 τ-bench retail × 25 steps，`gpu_memory_utilization 0.3`
-制压，6 并发，before/after 各 3 次取中位数）：
+### 6.2 Phase 1 真机结果（NPU 910B2C，已跑通）
 
-| 组 | 引擎 | 应用层 | 期望 |
+**de-risk**（照 F1 int8 flag 假生效教训）：`--scheduling-policy priority` 在 vllm-ascend
+0.22.1rc1 **被正常接受**——探针（`scripts/f5_priority_probe.py`）起引擎不报错、priority 经
+`extra_body` 透传成功、抢占计数器 `vllm:num_preemptions_total` 存在。非 no-op。
+
+**B vs C 对照**（Qwen2.5-7B，KV pool **1.27 GiB** 刻意制压 = util 0.27 / max_model_len 16384，
+6 并发 τ-bench retail × 25 steps，本地 user-sim，单 run；runs=3 取中位数留最终版）：
+
+| 指标 | B 无准入（priority static） | C 动态回收（priority + KV-pool 准入） | 效果 |
 |---|---|---|---|
-| A `f5-native` | FCFS + APC | 无 | 基线（机械 LRU + 随机踢） |
-| B `f5-priority-static` | `--scheduling-policy priority`（固定） | 无 | 优于 A |
-| C `f5-evict-dynamic` | priority + lazy offload | `ConcurrentSessionDriver`（动态 priority + HBM 准入） | 最优：mem_peak 受控、活跃 session 延迟/成功率不掉、**eviction 命中 idle >90%** |
+| vLLM preemption | 3 | **0** | 准入控制**消除抢占** |
+| e2e p50 延迟 | 270 s | **82 s** | **3.3× 更快** |
+| e2e p95 延迟 | 298 s | **140 s** | 2.1× 更快 |
+| KV 命中率 | 0.385 | **0.932** | +54pp（抢占重算不吃缓存） |
+| TTFT | 556 ms | **130 ms** | 4.3× 更低 |
+| QPS | 0.019 | 0.040 | 2.1× 更高 |
+| eviction-hit-idle | — | **100%（5/5）** | 回收的全是真 idle |
 
-采集指标：`mem_peak_mb` / p50/p95 延迟 / QPS / 成功率 / KV 命中率 / **evictions +
-idle_hit_rate**（已写入 `metrics.json` + `f5_driver_snapshot.json` sidecar）。
+**机制实证**：实时抓 `/metrics` 见——C 组 KV 到 ~72% 时 `num_requests_running` 从 6 降到 3
+（**KV-pool 准入闸门触发**，KV 不再涨 → 不溢出 → 0 抢占）；B 组无闸门，KV 涨到 ~86% 溢出 →
+3 次 preempt → 重算 → KV 命中率崩到 0.385、p50 飙到 270 s。
 
-**先 de-risk**（照 F1 int8 教训）：用 `scripts/f5_priority_probe.py` 发 2 个请求（priority
-0/100）制压，确认低优真被 preempt（priority 调度非 no-op），并观察 #41951（被踢请求重入队）。
-再核 lazy offload 在 Ascend 上的 connector 名（`SimpleCPUOffloadConnector` vs
-`AscendSimpleCPUOffloadConnector`）。
+**诚实说明**：成功率两组均 0（本地 7B user-sim 太弱，非 F5 问题；"成功率不掉"需外部 user-sim
+如 mimo 补最终数）；A 组（FCFS）预期 ≈ B（都无准入 → 都抢占）。采集写 `metrics.json` +
+`f5_driver_snapshot.json` sidecar（含 admits/evictions/idle_hit_rate）。
 
-一键编排：`scripts/f5_experiment.py`（起/停引擎 + 跑三组 + 提示 `--compare` 聚合）。
 
 ## 7. 权衡
 
@@ -135,8 +143,10 @@ idle_hit_rate**（已写入 `metrics.json` + `f5_driver_snapshot.json` sidecar�
 
 ## 8. 状态与路线
 
-- ✅ **Phase 0**：policy 全接线 + 单测绿（本提交，`feat/f5-priority-evict`）。
-- ⏳ **Phase 1**（待 NPU）：priority 探针 → A/B/C 实验 → eviction/延迟/成功率 before-after。
-- 🔭 **Phase 2**（stretch）：自定义 V1 KV connector 实现真·无损 on-demand offload/restore。
+- ✅ **Phase 0**：policy 全接线 + 单测绿（`feat/f5-priority-evict`）。
+- ✅ **Phase 1（真机跑通）**：priority 探针确认 flag 非 no-op；**B vs C 出数字**——KV-pool 准入控制
+  消除抢占（3→0）、p50 快 3.3×（270→82s）、KV 命中率 0.93（vs 0.385）、eviction-hit-idle 100%。
+- 🔭 **收尾（可选）**：runs=3 取中位数、外部 user-sim 补成功率、A 组（FCFS）对照、lazy offload
+  connector 名；Phase 2 自定义 V1 connector 做真·无损 on-demand offload/restore。
 
 > 配套：实验设计 `docs/F5-experiment-design.md`、计划 `plans/nested-prancing-metcalfe.md`。

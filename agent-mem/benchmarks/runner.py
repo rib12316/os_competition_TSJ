@@ -97,6 +97,37 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _kv_pool_pct_fn(engine_url: str):
+    """返回"读 vLLM KV pool 利用率（%）"的函数，供 F5 AdmissionController 准入闸门用。
+
+    KV pool 利用率（非总 HBM）才是触发 preempt 的直接信号——总 HBM 含模型权重基线
+    （~14GB），永远到不了 70/85% 阈值。从 ``/metrics`` 抓 ``vllm:kv_cache_usage_perc``
+    （新版/Ascend）或 ``gpu_cache_usage_perc``（旧版 CUDA），0~1 → 0~100。
+    抓失败返回 -1（→ 准入退化为按 max_workers 放行，不阻断）。
+    """
+    import re
+
+    from agent_mem.bench import vllm_metrics
+
+    names = ("vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc")
+
+    def _read() -> float:
+        try:
+            text = vllm_metrics.scrape(engine_url)
+        except Exception:
+            return -1.0
+        for nm in names:
+            vals = re.findall(rf"^{re.escape(nm)}(?:\{{[^}}]*\}})?\s+([0-9.eE+-]+)", text, re.M)
+            if vals:
+                try:
+                    return max(0.0, float(vals[-1])) * 100.0
+                except ValueError:
+                    continue
+        return -1.0
+
+    return _read
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
@@ -154,9 +185,10 @@ def main(argv: list[str] | None = None) -> int:
             max_concurrency=args.max_concurrency,
             priority=args.priority,
             middlewares=mw_stack.middlewares,  # 缝D：cfg.middleware 激活的中间件
-            # F5：session.strategy=priority-evict → 动态调度（HBM 准入 + 后台 sweep 抬 idle priority）
+            # F5：session.strategy=priority-evict → 动态调度（KV pool 准入 + 后台 sweep 抬 idle priority）
             dynamic=(cfg.session.strategy == "priority-evict"),
             idle_timeout_s=cfg.session.idle_timeout_s,
+            hbm_pct_fn=_kv_pool_pct_fn(args.engine_url) if args.engine_url else None,
         )
     else:
         runner = get_runner(args.runner)
