@@ -100,6 +100,7 @@ def _stack(variant: str, *, store_path: Path, tokenizer_model: str) -> Middlewar
     if variant == "f2_f3":
         middlewares.append(CompressMiddleware(
             method="llmlingua2",
+            model_name="microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
             trigger_tokens=8000,
             recompress_delta_tokens=4000,
             keep_hot=6,
@@ -109,6 +110,10 @@ def _stack(variant: str, *, store_path: Path, tokenizer_model: str) -> Middlewar
             hot_tool_trigger_tokens=1000,
             optimize_static_prompt=False,
             tokenizer_model=tokenizer_model,
+            backend="subprocess",
+            worker_venv="/data/os_competition_TSJ/.venv-compress/bin/python",
+            worker_pool_size=1,
+            worker_threads=32,
         ))
     return MiddlewareStack(middlewares)
 
@@ -150,35 +155,64 @@ def _run_example(
         business_calls += 1
         return payload
 
-    result = run_react(
-        recorder,
-        model,
-        [
-            {
-                "role": "system",
-                "content": (
-                    "Answer this two-hop question using retrieve_documents. Use evidence from two "
-                    "relevant documents: first read the title that most directly matches the "
-                    "subject explicitly named in the question, then follow the discovered person, "
-                    "place, work, or relation to a second title. Do not return the intermediate "
-                    "entity as the answer. When documents are externalized, search the /documents "
-                    "array with fetch_tool_result and match_field=title. Copy titles from the "
-                    "reference summary; never invent one. Use match_mode=iexact or icontains for "
-                    "capitalization and parenthetical differences. Return only the short final "
-                    "answer; do not guess."
-                ),
-            },
-            {"role": "user", "content": str(example["input"])},
-        ],
-        [RETRIEVE_TOOL],
-        execute_tool,
-        max_steps=max_steps,
-        temperature=0.0,
-        max_tokens=256,
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-        middlewares=stack,
-        session_id=f"longbench-{variant}-{example_index}-{time.time_ns()}",
-    )
+    try:
+        result = run_react(
+            recorder,
+            model,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Answer this two-hop question using retrieve_documents. Use evidence from two "
+                        "relevant documents: first read the title that most directly matches the "
+                        "subject explicitly named in the question, then follow the discovered person, "
+                        "place, work, or relation to a second title. Do not return the intermediate "
+                        "entity as the answer. When documents are externalized, search the /documents "
+                        "array with fetch_tool_result and match_field=title. Copy titles from the "
+                        "reference summary; never invent one. Use match_mode=iexact or icontains for "
+                        "capitalization and parenthetical differences. Return only the short final "
+                        "answer; do not guess."
+                    ),
+                },
+                {"role": "user", "content": str(example["input"])},
+            ],
+            [RETRIEVE_TOOL],
+            execute_tool,
+            max_steps=max_steps,
+            temperature=0.0,
+            max_tokens=256,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            middlewares=stack,
+            session_id=f"longbench-{variant}-{example_index}-{time.time_ns()}",
+        )
+    except Exception as exc:  # noqa: BLE001 - retain partial evidence for one task
+        for middleware in stack.middlewares:
+            close = getattr(middleware, "close", None)
+            if close is not None:
+                close()
+        return {
+            "example_index": example_index,
+            "example_id": example.get("_id"),
+            "variant": variant,
+            "question": example["input"],
+            "gold_answers": example["answers"],
+            "answer": "",
+            "success": False,
+            "failure_reason": "model_request_error",
+            "error": repr(exc),
+            "document_count": document_count,
+            "payload_tokens": payload_tokens,
+            "model_steps": 0,
+            "business_calls": business_calls,
+            "fetch_calls": 0,
+            "tool_calls": recorder.chat.completions.tool_calls,
+            "prompt_tokens_by_step": recorder.chat.completions.prompt_tokens,
+            "cumulative_prompt_tokens": sum(recorder.chat.completions.prompt_tokens),
+            "model_wall_ms_by_step": [
+                round(value, 3) for value in recorder.chat.completions.wall_ms
+            ],
+            "total_wall_ms": round(sum(recorder.chat.completions.wall_ms), 3),
+        }
     calls = recorder.chat.completions.tool_calls
     fetch_calls = sum(call["name"] == FETCH_TOOL_NAME for call in calls)
     success = _answer_correct(result.final_text, list(example["answers"]))
@@ -243,10 +277,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     examples = _load_examples(args.data_zip, start=args.start, limit=args.limit)
     client = OpenAI(base_url=args.engine_url, api_key="stub", timeout=args.timeout)
     rows = []
+    skipped = []
     with tempfile.TemporaryDirectory(prefix="f3-longbench-") as tmpdir:
         for variant in args.variants:
             for offset, example in enumerate(examples):
                 example_index = args.start + offset
+                payload, document_count = _context_payload(str(example["context"]))
+                payload_tokens = count_text_tokens(tokenizer, payload)
+                if payload_tokens > args.max_payload_tokens:
+                    skipped.append({
+                        "example_index": example_index,
+                        "example_id": example.get("_id"),
+                        "variant": variant,
+                        "payload_tokens": payload_tokens,
+                        "document_count": document_count,
+                        "reason": "payload_token_budget",
+                    })
+                    continue
                 rows.append(_run_example(
                     client=client,
                     model=args.served_model,
@@ -267,10 +314,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "limit": args.limit,
             "variants": args.variants,
             "max_steps": args.max_steps,
+            "max_payload_tokens": args.max_payload_tokens,
             "temperature": 0.0,
         },
         "summary": _summary(rows),
         "cases": rows,
+        "skipped": skipped,
     }
 
 
@@ -283,6 +332,12 @@ def main() -> int:
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--limit", type=int, default=3)
     parser.add_argument("--max-steps", type=int, default=8)
+    parser.add_argument(
+        "--max-payload-tokens",
+        type=int,
+        default=12000,
+        help="Skip examples whose raw JSON payload leaves too little model context.",
+    )
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument(
         "--variants",

@@ -1,0 +1,2853 @@
+{
+  "benchmark": "f3-longbench-2wikimqa",
+  "source": "THUDM/LongBench data/2wikimqa.jsonl",
+  "model": "Qwen2.5-7B-Instruct",
+  "config": {
+    "start": 0,
+    "limit": 20,
+    "variants": [
+      "baseline",
+      "f3",
+      "f2_f3"
+    ],
+    "max_steps": 8,
+    "max_payload_tokens": 26000,
+    "temperature": 0.0
+  },
+  "summary": {
+    "baseline": {
+      "passed": 6,
+      "total": 20,
+      "accuracy": 0.3,
+      "fetch_calls": 0,
+      "cumulative_prompt_tokens": 267911,
+      "median_wall_ms": 1108.764
+    },
+    "f2_f3": {
+      "passed": 4,
+      "total": 20,
+      "accuracy": 0.2,
+      "fetch_calls": 23,
+      "cumulative_prompt_tokens": 83486,
+      "median_wall_ms": 1595.392
+    },
+    "f3": {
+      "passed": 4,
+      "total": 20,
+      "accuracy": 0.2,
+      "fetch_calls": 27,
+      "cumulative_prompt_tokens": 97753,
+      "median_wall_ms": 1554.981
+    }
+  },
+  "cases": [
+    {
+      "example_index": 0,
+      "example_id": "41ac2a4beb0af8f58d01863a62b90692f7c7d74b5e3a58d9",
+      "variant": "baseline",
+      "question": "Where was the wife of Francis I Rákóczi born?",
+      "gold_answers": [
+        "Ozalj"
+      ],
+      "answer": "Zboró",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 8256,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Francis I Rákóczi wife birthplace"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        296,
+        8598
+      ],
+      "cumulative_prompt_tokens": 8894,
+      "model_wall_ms_by_step": [
+        479.207,
+        654.236
+      ],
+      "total_wall_ms": 1133.443
+    },
+    {
+      "example_index": 1,
+      "example_id": "3924e4ac5039ce3fadda49604bfcb0f5238af81774616e53",
+      "variant": "baseline",
+      "question": "Who is Sobe (Sister Of Saint Anne)'s grandchild?",
+      "gold_answers": [
+        "John the Baptist"
+      ],
+      "answer": "Elizabeth",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7701,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Sobe (Sister Of Saint Anne)"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        298,
+        8044
+      ],
+      "cumulative_prompt_tokens": 8342,
+      "model_wall_ms_by_step": [
+        413.625,
+        558.997
+      ],
+      "total_wall_ms": 972.622
+    },
+    {
+      "example_index": 2,
+      "example_id": "2c952e3e1ca394df975103b3135b3c38e0ee16e25d860258",
+      "variant": "baseline",
+      "question": "Where does the director of film Man At Bath work at?",
+      "gold_answers": [
+        "Cahiers du cinéma"
+      ],
+      "answer": "Sam Spiegel Film and Television School",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7152,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "film Man At Bath director"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        295,
+        7488
+      ],
+      "cumulative_prompt_tokens": 7783,
+      "model_wall_ms_by_step": [
+        354.901,
+        611.093
+      ],
+      "total_wall_ms": 965.994
+    },
+    {
+      "example_index": 3,
+      "example_id": "aec83da1f2faf6ec8badfd53d632f525c9ef2090d99d1c6c",
+      "variant": "baseline",
+      "question": "Do both Beauty And The Bad Man and Wild Child (Film) films have the directors from the same country?",
+      "gold_answers": [
+        "no"
+      ],
+      "answer": "USA",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 11768,
+      "model_steps": 3,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Beauty And The Bad Man"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Wild Child (film)"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        305,
+        12114,
+        23923
+      ],
+      "cumulative_prompt_tokens": 36342,
+      "model_wall_ms_by_step": [
+        355.867,
+        1235.603,
+        1284.222
+      ],
+      "total_wall_ms": 2875.692
+    },
+    {
+      "example_index": 4,
+      "example_id": "4b28d517ce1c1e3cfec9282ca7b212c1cb87c254781d7c86",
+      "variant": "baseline",
+      "question": "What is the date of birth of William Paulet, 3Rd Marquess Of Winchester's father?",
+      "gold_answers": [
+        "1510"
+      ],
+      "answer": "1532",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7991,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "William Paulet, 3rd Marquess of Winchester"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        306,
+        8345
+      ],
+      "cumulative_prompt_tokens": 8651,
+      "model_wall_ms_by_step": [
+        457.172,
+        626.913
+      ],
+      "total_wall_ms": 1084.085
+    },
+    {
+      "example_index": 5,
+      "example_id": "81cd47ec621f2228d8bb4ec351ffd6b23d23107e5b287ffb",
+      "variant": "baseline",
+      "question": "Who is Edward Watson, Viscount Sondes's paternal grandfather?",
+      "gold_answers": [
+        "Edward Watson"
+      ],
+      "answer": "Lewis Watson, 1st Earl of Rockingham",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 8979,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Edward Watson, Viscount Sondes's paternal grandfather"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        297,
+        9323
+      ],
+      "cumulative_prompt_tokens": 9620,
+      "model_wall_ms_by_step": [
+        438.901,
+        803.685
+      ],
+      "total_wall_ms": 1242.586
+    },
+    {
+      "example_index": 6,
+      "example_id": "048e82b64b5651b74d452db7151c2110a718128dfd12a774",
+      "variant": "baseline",
+      "question": "What is the date of death of Humphrey De Bohun, 7Th Earl Of Hereford's father?",
+      "gold_answers": [
+        "16 September 1360"
+      ],
+      "answer": "24 September 1275",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7961,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Humphrey De Bohun, 7th Earl Of Hereford"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        306,
+        8317
+      ],
+      "cumulative_prompt_tokens": 8623,
+      "model_wall_ms_by_step": [
+        479.488,
+        681.106
+      ],
+      "total_wall_ms": 1160.595
+    },
+    {
+      "example_index": 7,
+      "example_id": "c8fd8db4d295aef41a9434299a8eeffb9af5e2bbcde4f13a",
+      "variant": "baseline",
+      "question": "Who is Helmichis's father-in-law?",
+      "gold_answers": [
+        "Cunimund"
+      ],
+      "answer": "Rosamund's father-in-law is Helmichis.",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 11716,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Helmichis's father-in-law"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        293,
+        12053
+      ],
+      "cumulative_prompt_tokens": 12346,
+      "model_wall_ms_by_step": [
+        399.059,
+        1066.79
+      ],
+      "total_wall_ms": 1465.85
+    },
+    {
+      "example_index": 8,
+      "example_id": "4db5bcd1d49fce674507d9128850eb71b808b7dc4246e882",
+      "variant": "baseline",
+      "question": "Where did Helena Carroll's father study?",
+      "gold_answers": [
+        "St Patrick's College"
+      ],
+      "answer": "Paul Vincent Carroll studied at St Patrick's College, Dublin.",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 6421,
+      "model_steps": 3,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Helena Carroll father studied"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Paul Vincent Carroll studied"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        291,
+        6753,
+        13214
+      ],
+      "cumulative_prompt_tokens": 20258,
+      "model_wall_ms_by_step": [
+        353.162,
+        780.493,
+        764.846
+      ],
+      "total_wall_ms": 1898.501
+    },
+    {
+      "example_index": 9,
+      "example_id": "be97290f663a83ba27007dd262ca2a6072c9156f775a24ad",
+      "variant": "baseline",
+      "question": "Where does the director of film Wine Of Morning work at?",
+      "gold_answers": [
+        "Bob Jones University"
+      ],
+      "answer": "Sam Spiegel Film and Television School",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7983,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Wine Of Morning (film)"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        295,
+        8321
+      ],
+      "cumulative_prompt_tokens": 8616,
+      "model_wall_ms_by_step": [
+        380.102,
+        674.472
+      ],
+      "total_wall_ms": 1054.574
+    },
+    {
+      "example_index": 10,
+      "example_id": "538d0eac8ec082e93d6f273237fafd1f23fb405e35bad84e",
+      "variant": "baseline",
+      "question": "Which film has the director who was born earlier, The Secret Invasion or The House Of The Seven Hawks?",
+      "gold_answers": [
+        "The House Of The Seven Hawks"
+      ],
+      "answer": "The House of the Seven Hawks",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 16000,
+      "model_steps": 3,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "The Secret Invasion"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "The Secret Invasion"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        304,
+        16343,
+        32382
+      ],
+      "cumulative_prompt_tokens": 49029,
+      "model_wall_ms_by_step": [
+        325.117,
+        1608.696,
+        2081.326
+      ],
+      "total_wall_ms": 4015.139
+    },
+    {
+      "example_index": 11,
+      "example_id": "37022dee1597491021c2aa7522276a600eb0dd316f12cbb6",
+      "variant": "baseline",
+      "question": "Who is the paternal grandmother of Marie Of Brabant, Queen Of France?",
+      "gold_answers": [
+        "Marie of Hohenstaufen"
+      ],
+      "answer": "Marie of Brabant, Countess of Savoy",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 6157,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Marie Of Brabant, Queen Of France"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        298,
+        6500
+      ],
+      "cumulative_prompt_tokens": 6798,
+      "model_wall_ms_by_step": [
+        409.566,
+        602.922
+      ],
+      "total_wall_ms": 1012.488
+    },
+    {
+      "example_index": 12,
+      "example_id": "90f7f51f0c27f041e730cf8893f79f3f40fcb0aab1820a4d",
+      "variant": "baseline",
+      "question": "Who is Renaud Ii, Count Of Soissons's uncle?",
+      "gold_answers": [
+        "Guy II, Count of Soissons"
+      ],
+      "answer": "Renaud I, Count of Soissons",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 2475,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Renaud Ii, Count Of Soissons uncle"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        298,
+        2821
+      ],
+      "cumulative_prompt_tokens": 3119,
+      "model_wall_ms_by_step": [
+        450.671,
+        333.164
+      ],
+      "total_wall_ms": 783.835
+    },
+    {
+      "example_index": 13,
+      "example_id": "ee29eb2556135405fa19a48b0abdff0aceddef7594169c33",
+      "variant": "baseline",
+      "question": "When did William Le Poer Trench's father die?",
+      "gold_answers": [
+        "26 April 1872"
+      ],
+      "answer": "1839",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 5613,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "William Le Poer Trench father death date"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        295,
+        5953
+      ],
+      "cumulative_prompt_tokens": 6248,
+      "model_wall_ms_by_step": [
+        406.92,
+        446.86
+      ],
+      "total_wall_ms": 853.779
+    },
+    {
+      "example_index": 14,
+      "example_id": "2a398d925d3607c94ffb2d0cf9fe2fe6da6e9970ce95578a",
+      "variant": "baseline",
+      "question": "Which country the director of film Renegade Force is from?",
+      "gold_answers": [
+        "America"
+      ],
+      "answer": "Israel",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7023,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "director of film Renegade Force"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        295,
+        7360
+      ],
+      "cumulative_prompt_tokens": 7655,
+      "model_wall_ms_by_step": [
+        366.065,
+        517.122
+      ],
+      "total_wall_ms": 883.187
+    },
+    {
+      "example_index": 15,
+      "example_id": "8d3cf7916a2f8a2762de13a9520b6350e46464fbf7f63dd5",
+      "variant": "baseline",
+      "question": "Who is the spouse of the director of film Emergency Wedding?",
+      "gold_answers": [
+        "Ona Munson"
+      ],
+      "answer": "",
+      "success": false,
+      "failure_reason": "model_request_error",
+      "error": "BadRequestError('Error code: 400 - {\\'error\\': {\\'message\\': \"This model\\'s maximum context length is 32768 tokens. However, you requested 256 output tokens and your prompt contains at least 32513 input tokens, for a total of at least 32769 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=32513)\", \\'type\\': \\'BadRequestError\\', \\'param\\': \\'input_tokens\\', \\'code\\': 400}}')",
+      "document_count": 10,
+      "payload_tokens": 16155,
+      "model_steps": 0,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Emergency Wedding"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Edward Buzzell"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        295,
+        16488
+      ],
+      "cumulative_prompt_tokens": 16783,
+      "model_wall_ms_by_step": [
+        311.912,
+        1620.105
+      ],
+      "total_wall_ms": 1932.017
+    },
+    {
+      "example_index": 16,
+      "example_id": "5844352bd3fe5898756970abec3099ec694be6ad15c498db",
+      "variant": "baseline",
+      "question": "Which film came out earlier, Indradhanura Chhai or The Death Of Black King?",
+      "gold_answers": [
+        "The Death Of Black King"
+      ],
+      "answer": "The Death of Black King",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 9,
+      "payload_tokens": 2689,
+      "model_steps": 3,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Indradhanura Chhai"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "The Death Of Black King"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        302,
+        3033,
+        5763
+      ],
+      "cumulative_prompt_tokens": 9098,
+      "model_wall_ms_by_step": [
+        367.704,
+        526.044,
+        297.231
+      ],
+      "total_wall_ms": 1190.98
+    },
+    {
+      "example_index": 17,
+      "example_id": "4413705182b57f12dc553e0919b50fd3c3b111cb4d82d12f",
+      "variant": "baseline",
+      "question": "Do both films The Reincarnation Of Golden Lotus and I'Ll Get By (Film) have the directors from the same country?",
+      "gold_answers": [
+        "no"
+      ],
+      "answer": "No",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 8846,
+      "model_steps": 3,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "The Reincarnation of Golden Lotus"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "I'Ll Get By (Film)"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        310,
+        9199,
+        18089
+      ],
+      "cumulative_prompt_tokens": 27598,
+      "model_wall_ms_by_step": [
+        380.957,
+        1032.461,
+        874.515
+      ],
+      "total_wall_ms": 2287.933
+    },
+    {
+      "example_index": 18,
+      "example_id": "cc32d31bbeb3e0d8787e963cf0843ae6b22f33817eb5a587",
+      "variant": "baseline",
+      "question": "Are both villages, Rhosgoch and Qaleh-Ye Sahar, located in the same country?",
+      "gold_answers": [
+        "no"
+      ],
+      "answer": "No",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 1493,
+      "model_steps": 3,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Rhosgoch"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Qaleh-Ye Sahar"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        306,
+        1839,
+        3375
+      ],
+      "cumulative_prompt_tokens": 5520,
+      "model_wall_ms_by_step": [
+        339.429,
+        468.002,
+        134.648
+      ],
+      "total_wall_ms": 942.079
+    },
+    {
+      "example_index": 19,
+      "example_id": "b3845fcad97309850a76e3720cd829a45d2bb12ee29a9cfb",
+      "variant": "baseline",
+      "question": "Where was the director of film Kanneshwara Rama born?",
+      "gold_answers": [
+        "Mysore"
+      ],
+      "answer": "Mysore",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 5948,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Kanneshwara Rama director birthplace"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        297,
+        6291
+      ],
+      "cumulative_prompt_tokens": 6588,
+      "model_wall_ms_by_step": [
+        421.756,
+        453.578
+      ],
+      "total_wall_ms": 875.334
+    },
+    {
+      "example_index": 0,
+      "example_id": "41ac2a4beb0af8f58d01863a62b90692f7c7d74b5e3a58d9",
+      "variant": "f3",
+      "question": "Where was the wife of Francis I Rákóczi born?",
+      "gold_answers": [
+        "Ozalj"
+      ],
+      "answer": "Trier",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 8256,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "wife of Francis I Rákóczi birthplace"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_VHbQcAlZuB4Lh1uk",
+            "match_field": "title",
+            "match_value": "Waldrada of Lotharingia",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        770,
+        1035,
+        1712
+      ],
+      "cumulative_prompt_tokens": 3517,
+      "model_wall_ms_by_step": [
+        454.539,
+        946.445,
+        94.013
+      ],
+      "total_wall_ms": 1494.997
+    },
+    {
+      "example_index": 1,
+      "example_id": "3924e4ac5039ce3fadda49604bfcb0f5238af81774616e53",
+      "variant": "f3",
+      "question": "Who is Sobe (Sister Of Saint Anne)'s grandchild?",
+      "gold_answers": [
+        "John the Baptist"
+      ],
+      "answer": "Elizabeth",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7701,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Sobe (Sister Of Saint Anne)"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_WqwBDD0jLmfwSKou",
+            "match_field": "title",
+            "match_value": "Sobe (sister of Saint Anne)",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        772,
+        1027,
+        1520
+      ],
+      "cumulative_prompt_tokens": 3319,
+      "model_wall_ms_by_step": [
+        421.992,
+        904.936,
+        70.56
+      ],
+      "total_wall_ms": 1397.489
+    },
+    {
+      "example_index": 2,
+      "example_id": "2c952e3e1ca394df975103b3135b3c38e0ee16e25d860258",
+      "variant": "f3",
+      "question": "Where does the director of film Man At Bath work at?",
+      "gold_answers": [
+        "Cahiers du cinéma"
+      ],
+      "answer": "Christophe Honoré",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7152,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "director of film Man At Bath works"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_U7HOB-5GoFCE_N-Q",
+            "match_field": "title",
+            "match_value": "Man at Bath",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1001,
+        1685
+      ],
+      "cumulative_prompt_tokens": 3455,
+      "model_wall_ms_by_step": [
+        393.709,
+        832.881,
+        121.791
+      ],
+      "total_wall_ms": 1348.381
+    },
+    {
+      "example_index": 3,
+      "example_id": "aec83da1f2faf6ec8badfd53d632f525c9ef2090d99d1c6c",
+      "variant": "f3",
+      "question": "Do both Beauty And The Bad Man and Wild Child (Film) films have the directors from the same country?",
+      "gold_answers": [
+        "no"
+      ],
+      "answer": "No",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 11768,
+      "model_steps": 3,
+      "business_calls": 2,
+      "fetch_calls": 2,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Beauty And The Bad Man"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Wild Child (Film)"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_rRrikWmzaBL1Wg3N",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "Beauty and the Bad Man",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_1QUBIw0ZztSer09G",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "Wild Child (film)",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        779,
+        1242,
+        2340
+      ],
+      "cumulative_prompt_tokens": 4361,
+      "model_wall_ms_by_step": [
+        706.414,
+        2122.246,
+        106.06
+      ],
+      "total_wall_ms": 2934.72
+    },
+    {
+      "example_index": 4,
+      "example_id": "4b28d517ce1c1e3cfec9282ca7b212c1cb87c254781d7c86",
+      "variant": "f3",
+      "question": "What is the date of birth of William Paulet, 3Rd Marquess Of Winchester's father?",
+      "gold_answers": [
+        "1510"
+      ],
+      "answer": "c. 1532",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7991,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "William Paulet, 3rd Marquess of Winchester"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_mSiraK8ZFZKMvLvr",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "William Paulet, 3rd Marquess of Winchester",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        780,
+        1086,
+        1880
+      ],
+      "cumulative_prompt_tokens": 3746,
+      "model_wall_ms_by_step": [
+        464.927,
+        1156.511,
+        180.366
+      ],
+      "total_wall_ms": 1801.805
+    },
+    {
+      "example_index": 5,
+      "example_id": "81cd47ec621f2228d8bb4ec351ffd6b23d23107e5b287ffb",
+      "variant": "f3",
+      "question": "Who is Edward Watson, Viscount Sondes's paternal grandfather?",
+      "gold_answers": [
+        "Edward Watson"
+      ],
+      "answer": "Edward Southwell Jr.",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 8979,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Edward Watson, Viscount Sondes's paternal grandfather"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_ZKwMPKgdaFd4vT5y",
+            "match_field": "title",
+            "match_value": "Edward Watson, Viscount Sondes",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        771,
+        1036,
+        1856
+      ],
+      "cumulative_prompt_tokens": 3663,
+      "model_wall_ms_by_step": [
+        449.577,
+        930.109,
+        146.899
+      ],
+      "total_wall_ms": 1526.586
+    },
+    {
+      "example_index": 6,
+      "example_id": "048e82b64b5651b74d452db7151c2110a718128dfd12a774",
+      "variant": "f3",
+      "question": "What is the date of death of Humphrey De Bohun, 7Th Earl Of Hereford's father?",
+      "gold_answers": [
+        "16 September 1360"
+      ],
+      "answer": "1 June 1220",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7961,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Humphrey De Bohun, 7th Earl Of Hereford father date of death"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_ZxW-AHKP4lziP3So",
+            "match_field": "title",
+            "match_value": "Henry de Bohun, 1st Earl of Hereford",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        780,
+        1091,
+        1885
+      ],
+      "cumulative_prompt_tokens": 3756,
+      "model_wall_ms_by_step": [
+        547.51,
+        971.625,
+        172.166
+      ],
+      "total_wall_ms": 1691.301
+    },
+    {
+      "example_index": 7,
+      "example_id": "c8fd8db4d295aef41a9434299a8eeffb9af5e2bbcde4f13a",
+      "variant": "f3",
+      "question": "Who is Helmichis's father-in-law?",
+      "gold_answers": [
+        "Cunimund"
+      ],
+      "answer": "Rosamund's husband.",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 11716,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Helmichis's father-in-law"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_O3RXlOImsQP4L0XY",
+            "/documents": "/documents",
+            "match_field": "title",
+            "match_value": "Helmichis",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        767,
+        1023,
+        1817
+      ],
+      "cumulative_prompt_tokens": 3607,
+      "model_wall_ms_by_step": [
+        402.605,
+        1022.203,
+        158.567
+      ],
+      "total_wall_ms": 1583.375
+    },
+    {
+      "example_index": 8,
+      "example_id": "4db5bcd1d49fce674507d9128850eb71b808b7dc4246e882",
+      "variant": "f3",
+      "question": "Where did Helena Carroll's father study?",
+      "gold_answers": [
+        "St Patrick's College"
+      ],
+      "answer": "Central School",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 6421,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Helena Carroll father studied"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_qtUz4C7ARACD9PTV",
+            "match_field": "title",
+            "match_value": "Helena Carroll",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        765,
+        1003,
+        1704
+      ],
+      "cumulative_prompt_tokens": 3472,
+      "model_wall_ms_by_step": [
+        362.403,
+        865.647,
+        93.121
+      ],
+      "total_wall_ms": 1321.171
+    },
+    {
+      "example_index": 9,
+      "example_id": "be97290f663a83ba27007dd262ca2a6072c9156f775a24ad",
+      "variant": "f3",
+      "question": "Where does the director of film Wine Of Morning work at?",
+      "gold_answers": [
+        "Bob Jones University"
+      ],
+      "answer": "Peabody Essex Museum",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7983,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Wine Of Morning (film)"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_H8U1YupE3S0EodBe",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "Brian Kennedy (gallery director)",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1007,
+        1801
+      ],
+      "cumulative_prompt_tokens": 3577,
+      "model_wall_ms_by_step": [
+        393.164,
+        985.294,
+        142.968
+      ],
+      "total_wall_ms": 1521.427
+    },
+    {
+      "example_index": 10,
+      "example_id": "538d0eac8ec082e93d6f273237fafd1f23fb405e35bad84e",
+      "variant": "f3",
+      "question": "Which film has the director who was born earlier, The Secret Invasion or The House Of The Seven Hawks?",
+      "gold_answers": [
+        "The House Of The Seven Hawks"
+      ],
+      "answer": "The Secret Invasion",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 16000,
+      "model_steps": 4,
+      "business_calls": 1,
+      "fetch_calls": 2,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "The Secret Invasion"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_eVBbZ_g36uocvXuL",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "The Secret Invasion",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_eVBbZ_g36uocvXuL",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "The House of the Seven Hawks",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        778,
+        1015,
+        1766,
+        2385
+      ],
+      "cumulative_prompt_tokens": 5944,
+      "model_wall_ms_by_step": [
+        336.681,
+        1055.482,
+        1136.224,
+        114.102
+      ],
+      "total_wall_ms": 2642.489
+    },
+    {
+      "example_index": 11,
+      "example_id": "37022dee1597491021c2aa7522276a600eb0dd316f12cbb6",
+      "variant": "f3",
+      "question": "Who is the paternal grandmother of Marie Of Brabant, Queen Of France?",
+      "gold_answers": [
+        "Marie of Hohenstaufen"
+      ],
+      "answer": "(max steps reached)",
+      "success": false,
+      "failure_reason": "max_steps",
+      "document_count": 10,
+      "payload_tokens": 6157,
+      "model_steps": 8,
+      "business_calls": 1,
+      "fetch_calls": 7,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Marie Of Brabant, Queen Of France"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_s1ypu9PW5v4bANf8",
+            "match_field": "title",
+            "match_value": "Marie of Brabant, Queen of France",
+            "match_mode": "iexact"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_s1ypu9PW5v4bANf8",
+            "json_pointer": "/documents/8",
+            "match_field": "title",
+            "match_value": "Marie of Brabant, Queen of France",
+            "match_mode": "iexact"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_s1ypu9PW5v4bANf8",
+            "json_pointer": "/documents/8",
+            "match_field": "title",
+            "match_value": "Marie of Brabant, Queen of France",
+            "match_mode": "iexact"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_s1ypu9PW5v4bANf8",
+            "json_pointer": "/documents/8",
+            "match_field": "title",
+            "match_value": "Marie of Brabant, Queen of France",
+            "match_mode": "iexact"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_s1ypu9PW5v4bANf8",
+            "json_pointer": "/documents/8",
+            "match_field": "title",
+            "match_value": "Marie of Brabant, Queen of France",
+            "match_mode": "iexact"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_s1ypu9PW5v4bANf8",
+            "json_pointer": "/documents/8",
+            "match_field": "title",
+            "match_value": "Marie of Brabant, Queen of France",
+            "match_mode": "iexact"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_s1ypu9PW5v4bANf8",
+            "json_pointer": "/documents/8",
+            "match_field": "title",
+            "match_value": "Marie of Brabant, Queen of France",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        772,
+        1045,
+        1749,
+        1864,
+        1979,
+        2094,
+        2209,
+        2324
+      ],
+      "cumulative_prompt_tokens": 14036,
+      "model_wall_ms_by_step": [
+        425.891,
+        945.882,
+        1104.49,
+        1079.447,
+        1083.615,
+        1085.933,
+        1101.464,
+        1104.548
+      ],
+      "total_wall_ms": 7931.271
+    },
+    {
+      "example_index": 12,
+      "example_id": "90f7f51f0c27f041e730cf8893f79f3f40fcb0aab1820a4d",
+      "variant": "f3",
+      "question": "Who is Renaud Ii, Count Of Soissons's uncle?",
+      "gold_answers": [
+        "Guy II, Count of Soissons"
+      ],
+      "answer": "Renaud I, Count of Soissons",
+      "success": false,
+      "failure_reason": "fetch_not_called",
+      "document_count": 10,
+      "payload_tokens": 2475,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Renaud Ii, Count Of Soissons uncle"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        772,
+        3295
+      ],
+      "cumulative_prompt_tokens": 4067,
+      "model_wall_ms_by_step": [
+        463.352,
+        324.426
+      ],
+      "total_wall_ms": 787.778
+    },
+    {
+      "example_index": 13,
+      "example_id": "ee29eb2556135405fa19a48b0abdff0aceddef7594169c33",
+      "variant": "f3",
+      "question": "When did William Le Poer Trench's father die?",
+      "gold_answers": [
+        "26 April 1872"
+      ],
+      "answer": "16 September 1920",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 5613,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "William Le Poer Trench father death date"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_OhOF6SB28Qhr8Qs4",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "William Le Poer Trench",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1066,
+        1655
+      ],
+      "cumulative_prompt_tokens": 3490,
+      "model_wall_ms_by_step": [
+        426.551,
+        1099.261,
+        177.498
+      ],
+      "total_wall_ms": 1703.31
+    },
+    {
+      "example_index": 14,
+      "example_id": "2a398d925d3607c94ffb2d0cf9fe2fe6da6e9970ce95578a",
+      "variant": "f3",
+      "question": "Which country the director of film Renegade Force is from?",
+      "gold_answers": [
+        "America"
+      ],
+      "answer": "Germany",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7023,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Renegade Force director country"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_mxA3kYDqBrwCmfi0",
+            "match_field": "title",
+            "match_value": "Renegade Force",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1002,
+        1443
+      ],
+      "cumulative_prompt_tokens": 3214,
+      "model_wall_ms_by_step": [
+        364.487,
+        956.462,
+        66.836
+      ],
+      "total_wall_ms": 1387.785
+    },
+    {
+      "example_index": 15,
+      "example_id": "8d3cf7916a2f8a2762de13a9520b6350e46464fbf7f63dd5",
+      "variant": "f3",
+      "question": "Who is the spouse of the director of film Emergency Wedding?",
+      "gold_answers": [
+        "Ona Munson"
+      ],
+      "answer": "Lorraine Miller",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 16155,
+      "model_steps": 5,
+      "business_calls": 2,
+      "fetch_calls": 2,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Emergency Wedding"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_rZaxRSDU86cQmot7",
+            "match_field": "title",
+            "match_value": "Emergency Wedding",
+            "match_mode": "iexact"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Edward Buzzell"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_xJAeEyg0w8tW9otu",
+            "match_field": "title",
+            "match_value": "Edward Buzzell",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1026,
+        1516,
+        1804,
+        2532
+      ],
+      "cumulative_prompt_tokens": 7647,
+      "model_wall_ms_by_step": [
+        321.733,
+        829.512,
+        748.636,
+        871.887,
+        114.671
+      ],
+      "total_wall_ms": 2886.439
+    },
+    {
+      "example_index": 16,
+      "example_id": "5844352bd3fe5898756970abec3099ec694be6ad15c498db",
+      "variant": "f3",
+      "question": "Which film came out earlier, Indradhanura Chhai or The Death Of Black King?",
+      "gold_answers": [
+        "The Death Of Black King"
+      ],
+      "answer": "The Death Of Black King",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 9,
+      "payload_tokens": 2689,
+      "model_steps": 2,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Indradhanura Chhai"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "The Death Of Black King"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        776,
+        6228
+      ],
+      "cumulative_prompt_tokens": 7004,
+      "model_wall_ms_by_step": [
+        720.92,
+        454.048
+      ],
+      "total_wall_ms": 1174.968
+    },
+    {
+      "example_index": 17,
+      "example_id": "4413705182b57f12dc553e0919b50fd3c3b111cb4d82d12f",
+      "variant": "f3",
+      "question": "Do both films The Reincarnation Of Golden Lotus and I'Ll Get By (Film) have the directors from the same country?",
+      "gold_answers": [
+        "no"
+      ],
+      "answer": "No",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 8846,
+      "model_steps": 5,
+      "business_calls": 2,
+      "fetch_calls": 2,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "The Reincarnation Of Golden Lotus"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "I'Ll Get By (Film)"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_FDKF2PeK0aEcOHx2",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "The Reincarnation of Golden Lotus",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_fIBm5r_R9YpZjXN6",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "I'Ll Get By (Film)",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        784,
+        1031,
+        1283,
+        1888,
+        2666
+      ],
+      "cumulative_prompt_tokens": 7652,
+      "model_wall_ms_by_step": [
+        392.65,
+        410.743,
+        1105.751,
+        1163.774,
+        86.296
+      ],
+      "total_wall_ms": 3159.214
+    },
+    {
+      "example_index": 18,
+      "example_id": "cc32d31bbeb3e0d8787e963cf0843ae6b22f33817eb5a587",
+      "variant": "f3",
+      "question": "Are both villages, Rhosgoch and Qaleh-Ye Sahar, located in the same country?",
+      "gold_answers": [
+        "no"
+      ],
+      "answer": "No",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 1493,
+      "model_steps": 2,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Rhosgoch"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Qaleh-Ye Sahar"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        780,
+        3840
+      ],
+      "cumulative_prompt_tokens": 4620,
+      "model_wall_ms_by_step": [
+        720.922,
+        227.412
+      ],
+      "total_wall_ms": 948.334
+    },
+    {
+      "example_index": 19,
+      "example_id": "b3845fcad97309850a76e3720cd829a45d2bb12ee29a9cfb",
+      "variant": "f3",
+      "question": "Where was the director of film Kanneshwara Rama born?",
+      "gold_answers": [
+        "Mysore"
+      ],
+      "answer": "Based on the information provided, Kanneshwara Rama, the director of the film Kanneshwara Rama, was not directly mentioned in the document regarding the film's details. Therefore, I cannot determine the birthplace of the director from the given information.",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 5948,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Kanneshwara Rama director birthplace"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_zbcUhnd5pRwqMrD3",
+            "match_field": "title",
+            "match_value": "Kanneshwara Rama",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        771,
+        1017,
+        1818
+      ],
+      "cumulative_prompt_tokens": 3606,
+      "model_wall_ms_by_step": [
+        435.515,
+        901.719,
+        842.803
+      ],
+      "total_wall_ms": 2180.037
+    },
+    {
+      "example_index": 0,
+      "example_id": "41ac2a4beb0af8f58d01863a62b90692f7c7d74b5e3a58d9",
+      "variant": "f2_f3",
+      "question": "Where was the wife of Francis I Rákóczi born?",
+      "gold_answers": [
+        "Ozalj"
+      ],
+      "answer": "Trier",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 8256,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "wife of Francis I Rákóczi birthplace"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_qbJGcYi2NrrGLnLr",
+            "match_field": "title",
+            "match_value": "Waldrada of Lotharingia",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        770,
+        1035,
+        1712
+      ],
+      "cumulative_prompt_tokens": 3517,
+      "model_wall_ms_by_step": [
+        444.627,
+        945.948,
+        95.154
+      ],
+      "total_wall_ms": 1485.729
+    },
+    {
+      "example_index": 1,
+      "example_id": "3924e4ac5039ce3fadda49604bfcb0f5238af81774616e53",
+      "variant": "f2_f3",
+      "question": "Who is Sobe (Sister Of Saint Anne)'s grandchild?",
+      "gold_answers": [
+        "John the Baptist"
+      ],
+      "answer": "Elizabeth",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7701,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Sobe (Sister Of Saint Anne)"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_-9FrKx32xzA0Z9DT",
+            "match_field": "title",
+            "match_value": "Sobe (sister of Saint Anne)",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        772,
+        1031,
+        1528
+      ],
+      "cumulative_prompt_tokens": 3331,
+      "model_wall_ms_by_step": [
+        410.963,
+        927.685,
+        72.476
+      ],
+      "total_wall_ms": 1411.123
+    },
+    {
+      "example_index": 2,
+      "example_id": "2c952e3e1ca394df975103b3135b3c38e0ee16e25d860258",
+      "variant": "f2_f3",
+      "question": "Where does the director of film Man At Bath work at?",
+      "gold_answers": [
+        "Cahiers du cinéma"
+      ],
+      "answer": "Paris",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7152,
+      "model_steps": 5,
+      "business_calls": 1,
+      "fetch_calls": 3,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "director of film Man At Bath works"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_rapqy0-9rqo8T9HK",
+            "match_field": "title",
+            "match_value": "Man at Bath",
+            "match_mode": "iexact",
+            "json_pointer": "/documents/0"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_rapqy0-9rqo8T9HK",
+            "match_field": "title",
+            "match_value": "Man At Bath",
+            "match_mode": "iexact",
+            "json_pointer": "/documents/0"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_rapqy0-9rqo8T9HK",
+            "match_field": "title",
+            "match_value": "Man At Bath",
+            "match_mode": "icontains",
+            "json_pointer": "/documents",
+            "max_matches": 5
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1005,
+        1114,
+        1223,
+        1923
+      ],
+      "cumulative_prompt_tokens": 6034,
+      "model_wall_ms_by_step": [
+        381.907,
+        985.353,
+        975.169,
+        1040.697,
+        79.912
+      ],
+      "total_wall_ms": 3463.037
+    },
+    {
+      "example_index": 3,
+      "example_id": "aec83da1f2faf6ec8badfd53d632f525c9ef2090d99d1c6c",
+      "variant": "f2_f3",
+      "question": "Do both Beauty And The Bad Man and Wild Child (Film) films have the directors from the same country?",
+      "gold_answers": [
+        "no"
+      ],
+      "answer": "No",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 11768,
+      "model_steps": 3,
+      "business_calls": 2,
+      "fetch_calls": 2,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Beauty And The Bad Man"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Wild Child (Film)"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_DolGn5tkH3oXg12u",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "Beauty and the Bad Man",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_vpvSLRB72j6N2FO2",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "Wild Child (film)",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        779,
+        1244,
+        2345
+      ],
+      "cumulative_prompt_tokens": 4368,
+      "model_wall_ms_by_step": [
+        697.407,
+        2128.526,
+        107.26
+      ],
+      "total_wall_ms": 2933.193
+    },
+    {
+      "example_index": 4,
+      "example_id": "4b28d517ce1c1e3cfec9282ca7b212c1cb87c254781d7c86",
+      "variant": "f2_f3",
+      "question": "What is the date of birth of William Paulet, 3Rd Marquess Of Winchester's father?",
+      "gold_answers": [
+        "1510"
+      ],
+      "answer": "1483/1485",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7991,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "William Paulet, 3rd Marquess of Winchester"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_qvAGribENyTg5zSc",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "William Paulet, 1st Marquess of Winchester",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        780,
+        1086,
+        1868
+      ],
+      "cumulative_prompt_tokens": 3734,
+      "model_wall_ms_by_step": [
+        452.958,
+        1052.88,
+        201.407
+      ],
+      "total_wall_ms": 1707.246
+    },
+    {
+      "example_index": 5,
+      "example_id": "81cd47ec621f2228d8bb4ec351ffd6b23d23107e5b287ffb",
+      "variant": "f2_f3",
+      "question": "Who is Edward Watson, Viscount Sondes's paternal grandfather?",
+      "gold_answers": [
+        "Edward Watson"
+      ],
+      "answer": "Lewis Watson, 1st Earl of Rockingham",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 8979,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Edward Watson, Viscount Sondes's paternal grandfather"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_nRDNEt6JFxrC5U00",
+            "match_field": "title",
+            "match_value": "Edward Watson, Viscount Sondes",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        771,
+        1036,
+        1856
+      ],
+      "cumulative_prompt_tokens": 3663,
+      "model_wall_ms_by_step": [
+        437.52,
+        927.55,
+        217.113
+      ],
+      "total_wall_ms": 1582.183
+    },
+    {
+      "example_index": 6,
+      "example_id": "048e82b64b5651b74d452db7151c2110a718128dfd12a774",
+      "variant": "f2_f3",
+      "question": "What is the date of death of Humphrey De Bohun, 7Th Earl Of Hereford's father?",
+      "gold_answers": [
+        "16 September 1360"
+      ],
+      "answer": "1 June 1220",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7961,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Humphrey De Bohun, 7th Earl Of Hereford father death date"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_H6sMnWXKcjFXLPGA",
+            "match_field": "title",
+            "match_value": "Henry de Bohun, 1st Earl of Hereford",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        780,
+        1088,
+        1880
+      ],
+      "cumulative_prompt_tokens": 3748,
+      "model_wall_ms_by_step": [
+        528.863,
+        958.066,
+        166.25
+      ],
+      "total_wall_ms": 1653.179
+    },
+    {
+      "example_index": 7,
+      "example_id": "c8fd8db4d295aef41a9434299a8eeffb9af5e2bbcde4f13a",
+      "variant": "f2_f3",
+      "question": "Who is Helmichis's father-in-law?",
+      "gold_answers": [
+        "Cunimund"
+      ],
+      "answer": "Rosamund's husband.",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 11716,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Helmichis's father-in-law"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_6tqPwsaXdkLO-lDe",
+            "/documents": "/documents",
+            "match_field": "title",
+            "match_value": "Helmichis",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        767,
+        1025,
+        1821
+      ],
+      "cumulative_prompt_tokens": 3613,
+      "model_wall_ms_by_step": [
+        403.727,
+        1040.135,
+        158.794
+      ],
+      "total_wall_ms": 1602.656
+    },
+    {
+      "example_index": 8,
+      "example_id": "4db5bcd1d49fce674507d9128850eb71b808b7dc4246e882",
+      "variant": "f2_f3",
+      "question": "Where did Helena Carroll's father study?",
+      "gold_answers": [
+        "St Patrick's College"
+      ],
+      "answer": "Webber Douglas Academy of Dramatic Art London",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 6421,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Helena Carroll father studied"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_m-G4kvx_bEQ8AiDI",
+            "match_field": "title",
+            "match_value": "Helena Carroll",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        765,
+        997,
+        1700
+      ],
+      "cumulative_prompt_tokens": 3462,
+      "model_wall_ms_by_step": [
+        359.027,
+        922.518,
+        195.288
+      ],
+      "total_wall_ms": 1476.833
+    },
+    {
+      "example_index": 9,
+      "example_id": "be97290f663a83ba27007dd262ca2a6072c9156f775a24ad",
+      "variant": "f2_f3",
+      "question": "Where does the director of film Wine Of Morning work at?",
+      "gold_answers": [
+        "Bob Jones University"
+      ],
+      "answer": "Peabody Essex Museum",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7983,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Wine Of Morning (film)"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_1njz45twtg8MG4fF",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "Brian Kennedy (gallery director)",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1009,
+        1805
+      ],
+      "cumulative_prompt_tokens": 3583,
+      "model_wall_ms_by_step": [
+        380.136,
+        999.832,
+        143.227
+      ],
+      "total_wall_ms": 1523.196
+    },
+    {
+      "example_index": 10,
+      "example_id": "538d0eac8ec082e93d6f273237fafd1f23fb405e35bad84e",
+      "variant": "f2_f3",
+      "question": "Which film has the director who was born earlier, The Secret Invasion or The House Of The Seven Hawks?",
+      "gold_answers": [
+        "The House Of The Seven Hawks"
+      ],
+      "answer": "The Secret Invasion",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 16000,
+      "model_steps": 4,
+      "business_calls": 1,
+      "fetch_calls": 2,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "The Secret Invasion"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_0mZMMWBXsOyRmL0y",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "The Secret Invasion",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_0mZMMWBXsOyRmL0y",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "The House of the Seven Hawks",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        778,
+        1019,
+        1772,
+        2395
+      ],
+      "cumulative_prompt_tokens": 5964,
+      "model_wall_ms_by_step": [
+        326.841,
+        1079.297,
+        1155.957,
+        114.304
+      ],
+      "total_wall_ms": 2676.399
+    },
+    {
+      "example_index": 11,
+      "example_id": "37022dee1597491021c2aa7522276a600eb0dd316f12cbb6",
+      "variant": "f2_f3",
+      "question": "Who is the paternal grandmother of Marie Of Brabant, Queen Of France?",
+      "gold_answers": [
+        "Marie of Hohenstaufen"
+      ],
+      "answer": "Marie of Brabant, Countess of Artois",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 6157,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Marie Of Brabant, Queen Of France"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_pu3PW2iDfl29ef5t",
+            "match_field": "title",
+            "match_value": "Marie of Brabant, Queen of France",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        772,
+        1045,
+        1749
+      ],
+      "cumulative_prompt_tokens": 3566,
+      "model_wall_ms_by_step": [
+        413.563,
+        939.635,
+        234.931
+      ],
+      "total_wall_ms": 1588.129
+    },
+    {
+      "example_index": 12,
+      "example_id": "90f7f51f0c27f041e730cf8893f79f3f40fcb0aab1820a4d",
+      "variant": "f2_f3",
+      "question": "Who is Renaud Ii, Count Of Soissons's uncle?",
+      "gold_answers": [
+        "Guy II, Count of Soissons"
+      ],
+      "answer": "John I, Count of Soissons",
+      "success": false,
+      "failure_reason": "fetch_not_called",
+      "document_count": 10,
+      "payload_tokens": 2475,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Renaud Ii, Count Of Soissons uncle"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        772,
+        2377
+      ],
+      "cumulative_prompt_tokens": 3149,
+      "model_wall_ms_by_step": [
+        451.02,
+        239.677
+      ],
+      "total_wall_ms": 690.697
+    },
+    {
+      "example_index": 13,
+      "example_id": "ee29eb2556135405fa19a48b0abdff0aceddef7594169c33",
+      "variant": "f2_f3",
+      "question": "When did William Le Poer Trench's father die?",
+      "gold_answers": [
+        "26 April 1872"
+      ],
+      "answer": "16 September 1920",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 5613,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "William Le Poer Trench father death date"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_pcBwzNj0nDgothZ2",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "William Le Poer Trench",
+            "match_mode": "icontains",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1066,
+        1653
+      ],
+      "cumulative_prompt_tokens": 3488,
+      "model_wall_ms_by_step": [
+        407.831,
+        1082.681,
+        177.891
+      ],
+      "total_wall_ms": 1668.402
+    },
+    {
+      "example_index": 14,
+      "example_id": "2a398d925d3607c94ffb2d0cf9fe2fe6da6e9970ce95578a",
+      "variant": "f2_f3",
+      "question": "Which country the director of film Renegade Force is from?",
+      "gold_answers": [
+        "America"
+      ],
+      "answer": "Germany",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7023,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Renegade Force director country"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_areI2DkhjNQD3qIJ",
+            "match_field": "title",
+            "match_value": "Renegade Force",
+            "match_mode": "iexact",
+            "max_matches": 1
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1000,
+        1439
+      ],
+      "cumulative_prompt_tokens": 3208,
+      "model_wall_ms_by_step": [
+        356.262,
+        942.023,
+        67.691
+      ],
+      "total_wall_ms": 1365.976
+    },
+    {
+      "example_index": 15,
+      "example_id": "8d3cf7916a2f8a2762de13a9520b6350e46464fbf7f63dd5",
+      "variant": "f2_f3",
+      "question": "Who is the spouse of the director of film Emergency Wedding?",
+      "gold_answers": [
+        "Ona Munson"
+      ],
+      "answer": "Lorraine Miller",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 16155,
+      "model_steps": 5,
+      "business_calls": 2,
+      "fetch_calls": 2,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Emergency Wedding"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_fqcNREssWcCF3Ub9",
+            "match_field": "title",
+            "match_value": "Emergency Wedding",
+            "match_mode": "iexact"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Edward Buzzell"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_ZrOmHOqTF2Lb5S9u",
+            "match_field": "title",
+            "match_value": "Edward Buzzell",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1024,
+        1512,
+        1800,
+        2528
+      ],
+      "cumulative_prompt_tokens": 7633,
+      "model_wall_ms_by_step": [
+        308.898,
+        816.279,
+        748.078,
+        871.322,
+        116.094
+      ],
+      "total_wall_ms": 2860.672
+    },
+    {
+      "example_index": 16,
+      "example_id": "5844352bd3fe5898756970abec3099ec694be6ad15c498db",
+      "variant": "f2_f3",
+      "question": "Which film came out earlier, Indradhanura Chhai or The Death Of Black King?",
+      "gold_answers": [
+        "The Death Of Black King"
+      ],
+      "answer": "The Death Of Black King",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 9,
+      "payload_tokens": 2689,
+      "model_steps": 2,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Indradhanura Chhai"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "The Death Of Black King"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        776,
+        4100
+      ],
+      "cumulative_prompt_tokens": 4876,
+      "model_wall_ms_by_step": [
+        708.092,
+        309.379
+      ],
+      "total_wall_ms": 1017.471
+    },
+    {
+      "example_index": 17,
+      "example_id": "4413705182b57f12dc553e0919b50fd3c3b111cb4d82d12f",
+      "variant": "f2_f3",
+      "question": "Do both films The Reincarnation Of Golden Lotus and I'Ll Get By (Film) have the directors from the same country?",
+      "gold_answers": [
+        "no"
+      ],
+      "answer": "No",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 8846,
+      "model_steps": 4,
+      "business_calls": 1,
+      "fetch_calls": 2,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "The Reincarnation Of Golden Lotus"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_CmqSnFAPPtWwAIDt",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "The Reincarnation of Golden Lotus",
+            "match_mode": "iexact"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_CmqSnFAPPtWwAIDt",
+            "json_pointer": "/documents",
+            "match_field": "title",
+            "match_value": "I'Ll Get By (Film)",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        784,
+        1029,
+        1625,
+        2390
+      ],
+      "cumulative_prompt_tokens": 5828,
+      "model_wall_ms_by_step": [
+        382.859,
+        982.789,
+        1017.262,
+        83.536
+      ],
+      "total_wall_ms": 2466.446
+    },
+    {
+      "example_index": 18,
+      "example_id": "cc32d31bbeb3e0d8787e963cf0843ae6b22f33817eb5a587",
+      "variant": "f2_f3",
+      "question": "Are both villages, Rhosgoch and Qaleh-Ye Sahar, located in the same country?",
+      "gold_answers": [
+        "no"
+      ],
+      "answer": "No",
+      "success": true,
+      "failure_reason": null,
+      "document_count": 10,
+      "payload_tokens": 1493,
+      "model_steps": 2,
+      "business_calls": 2,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Rhosgoch"
+          }
+        },
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Qaleh-Ye Sahar"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        780,
+        2336
+      ],
+      "cumulative_prompt_tokens": 3116,
+      "model_wall_ms_by_step": [
+        709.278,
+        132.161
+      ],
+      "total_wall_ms": 841.439
+    },
+    {
+      "example_index": 19,
+      "example_id": "b3845fcad97309850a76e3720cd829a45d2bb12ee29a9cfb",
+      "variant": "f2_f3",
+      "question": "Where was the director of film Kanneshwara Rama born?",
+      "gold_answers": [
+        "Mysore"
+      ],
+      "answer": "Based on the information provided, Kanneshwara Rama was directed by M. S. Sathyu. Since the birthplace of M. S. Sathyu is not mentioned in the given documents, we cannot determine where the director of the film Kanneshwara Rama was born.",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 5948,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Kanneshwara Rama director birthplace"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_w5qEDLnJ3arStQn_",
+            "match_field": "title",
+            "match_value": "Kanneshwara Rama",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        771,
+        1017,
+        1817
+      ],
+      "cumulative_prompt_tokens": 3605,
+      "model_wall_ms_by_step": [
+        513.953,
+        1012.909,
+        1161.779
+      ],
+      "total_wall_ms": 2688.641
+    }
+  ],
+  "skipped": []
+}
