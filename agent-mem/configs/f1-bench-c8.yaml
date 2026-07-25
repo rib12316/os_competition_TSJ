@@ -1,0 +1,23 @@
+# F1 benchmark · C8 int8 KV（Qwen2.5-7B）。
+# c8.enabled 注入 --quantization ascend + FULL_DECODE_ONLY；patch_qwen2 经 sitecustomize 补 Qwen2 scale 加载。
+# ⚠️ 前置：annotate + scripts/calibrate_c8_qwen2.py（post-RoPE 校准），否则输出垃圾。见 f1-int8.yaml。
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  extra_args:
+    - "--max-num-seqs 64"
+    - "--max-model-len 4096"
+  c8:
+    enabled: true
+    patch_qwen2: true
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 1
+  seed: 42
+
+metrics:
+  - qps
+  - mem_peak_mb
+  - ttft

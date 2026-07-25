@@ -54,6 +54,14 @@ def build_serve_args(
         args.extend(shlex.split(a))
     # 缝C（F4）：lmcache.enabled → 结构化附加 --enable-lmcache（config_file 走环境变量）
     args += lmcache_serve_flag(cfg.engine.lmcache)
+    # 缝A（F1）：C8 int8 KV。enabled 注入 --quantization ascend + FULL_DECODE_ONLY
+    # （FULL decode 在 910B 确定性死锁，见 docs/F1-c8-injection.md）。
+    # 模型须先 annotate + post-RoPE 校准，否则 C8 激活但输出垃圾。
+    if cfg.engine.c8.enabled:
+        args += [
+            "--quantization", "ascend",
+            "--compilation-config", '{"cudagraph_mode":"FULL_DECODE_ONLY"}',
+        ]
     # NPU 由 vllm-ascend 插件自动识别——**不要**传 --device（vllm api_server 不认 npu/auto）。
     # 仅当显式指定 cpu/cuda/tpu/xpu（如 CPU 冒烟）时才传 --device。
     if device and device in {"cpu", "cuda", "tpu", "xpu"}:
@@ -72,6 +80,14 @@ def engine_env(cfg: AppConfig) -> dict[str, str]:
     返回**仅额外项**；:func:`start_engine` 会与 ``os.environ`` 合并后传给子进程。
     """
     env = dict(lmcache_env(cfg))
+    # 缝A（F1）：Qwen2（Qwen2.5）不在 vllm-ascend patch_gqa_c8 覆盖里，需经 sitecustomize
+    # 在 EngineCore 子进程给 load_weights 打补丁。sitecustomize 靠 PYTHONPATH + QWEN2_C8_PATCH
+    # 激活。PYTHONPATH 必须**前置** c8patch 目录、保留既有项（acl 依赖，见 npu-pythonpath-acl-gotcha）。
+    if cfg.engine.c8.enabled and cfg.engine.c8.patch_qwen2:
+        env["QWEN2_C8_PATCH"] = "1"
+        patch_dir = str(Path(__file__).resolve().parent.parent / "kv" / "c8patch")
+        existing = os.environ.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{patch_dir}:{existing}" if existing else patch_dir
     return env
 
 

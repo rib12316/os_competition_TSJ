@@ -1,0 +1,19 @@
+# F1 benchmark · bf16 baseline（无 C8）。
+# max-num-seqs 64 让"并发"成为测试变量（而非被 max-num-seqs 卡住）。FULL graph（bf16 不死锁）。
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  extra_args:
+    - "--max-num-seqs 64"
+    - "--max-model-len 4096"
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 1
+  seed: 42
+
+metrics:
+  - qps
+  - mem_peak_mb
+  - ttft
