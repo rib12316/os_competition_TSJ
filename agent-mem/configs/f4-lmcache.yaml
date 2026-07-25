@@ -1,15 +1,15 @@
-# F4 · LMCache 分层（缝C：NPU↔CPU↔Disk 三级 KV cache）。
-# vllm-ascend 经 LMCache-Ascend 插件消费（--enable-lmcache + LMCACHE_CONFIG_FILE）。
-# config_file 省略 → 用打包模板 src/agent_mem/kv/lmcache_local.yaml。
+# F4 · LMCache Ascend 分层（缝C：NPU↔CPU↔Disk 三级 KV cache）
+# vllm-ascend 0.22.1rc1 已内置 LMCacheAscendConnector（KVConnectorFactory 注册）。
+# NPU 关时可写 config + 单测；NPU 开时需先编译 lmcache_ascend（见 docs/F4-lmcache-ascend.md）。
 #
-# 独立性：只开关自己（engine.lmcache.enabled）。
+# 独立性：只开关自己（engine.kv_transfer.connector）。
 engine:
   backend: vllm-ascend
   model: Qwen2.5-7B-Instruct
   extra_args: []
-  lmcache:
-    enabled: true                # F4：开 LMCache 分层
-    config_file: local           # 打包模板（或自定义 yaml 路径）
+  kv_transfer:
+    connector: LMCacheAscendConnector       # 缝C：激活 Ascend LMCache
+    role: kv_both                           # 同时 produce + consume KV blocks
 
 benchmark:
   suite: tau-bench

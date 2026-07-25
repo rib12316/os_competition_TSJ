@@ -2,7 +2,7 @@
 
 分段结构（对齐 ``configs/*.yaml``）::
 
-    engine:     推理引擎（backend / model / extra_args / lmcache）   缝A/B/C
+    engine:     推理引擎（backend / model / extra_args / kv_transfer） 缝A/B/C
     benchmark:  任务集（suite / domain / runs / seed / split）
     metrics:    待采集指标名列表
     middleware: 缝D 中间件激活列表 + 选项（F2/F3）
@@ -48,12 +48,23 @@ class ConfigError(ValueError):
     """配置解析/校验失败。"""
 
 
-@dataclass
-class LmCacheConfig:
-    """LMCache 分层存储配置（F4 · 缝C，optimized / f4-lmcache 档用）。"""
+# 缝C KV connector 白名单（vllm-ascend KVConnectorFactory 注册表中 Ascend 适配的）
+_KV_CONNECTORS = ("", "LMCacheAscendConnector", "SimpleCPUOffloadConnector")
+_KV_ROLES = ("kv_both", "kv_producer", "kv_consumer")
 
-    enabled: bool = False
-    config_file: str | None = None
+
+@dataclass
+class KVTransferConfig:
+    """缝C · KV transfer connector 配置（F4 LMCache Ascend / native CPU offload）。
+
+    vllm-ascend 0.22.1rc1 已内置 LMCacheAscendConnector（factory 注册），
+    只需通过 ``--kv-transfer-config`` JSON 激活；``lmcache_ascend`` 包需在
+    NPU 上另行安装（见 ``docs/F4-lmcache-ascend.md``）。
+    """
+
+    connector: str = ""
+    role: str = "kv_both"
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -109,7 +120,11 @@ class EngineConfig:
     backend: str = "vllm"
     model: str = ""
     extra_args: list[str] = field(default_factory=list)
-    lmcache: LmCacheConfig = field(default_factory=LmCacheConfig)
+    # 缝C（统一槽）：KV transfer connector —— yaml 二选一后端
+    #   LMCacheAscendConnector (F4，需编译 lmcache_ascend，三级 NPU/CPU/Disk)
+    #   SimpleCPUOffloadConnector (F5-Phase2，零依赖，单级 lazy offload)
+    kv_transfer: KVTransferConfig = field(default_factory=KVTransferConfig)
+    # 缝A（F1）：C8 int8 KV 量化（Ascend 专属）
     c8: C8Config = field(default_factory=C8Config)
 
 
@@ -157,15 +172,16 @@ class AppConfig:
 
 
 def _build_engine(data: dict[str, Any]) -> EngineConfig:
-    lm_data = data.get("lmcache") or {}
+    kvt = data.get("kv_transfer") or {}
     c8_data = data.get("c8") or {}
     return EngineConfig(
         backend=data.get("backend", "vllm"),
         model=data.get("model", ""),
         extra_args=list(data.get("extra_args") or []),
-        lmcache=LmCacheConfig(
-            enabled=bool(lm_data.get("enabled", False)),
-            config_file=lm_data.get("config_file"),
+        kv_transfer=KVTransferConfig(
+            connector=str(kvt.get("connector", "")),
+            role=str(kvt.get("role", "kv_both")),
+            extra=dict(kvt.get("extra") or {}),
         ),
         c8=C8Config(
             enabled=bool(c8_data.get("enabled", False)),
@@ -257,8 +273,15 @@ def validate(cfg: AppConfig) -> None:
         raise ConfigError("engine.model 不能为空")
     if e.extra_args and not all(isinstance(a, str) for a in e.extra_args):
         raise ConfigError("engine.extra_args 必须是字符串列表")
+    # 缝A（F1）：C8 仅 Ascend 可用
     if e.c8.enabled and e.backend != "vllm-ascend":
         raise ConfigError("engine.c8.enabled 需要 backend=vllm-ascend（C8 是 Ascend 专属）")
+    # 缝C（统一）：kv_transfer connector/role 白名单
+    kvt = e.kv_transfer
+    if kvt.connector and kvt.connector not in _KV_CONNECTORS:
+        raise ConfigError(f"engine.kv_transfer.connector={kvt.connector!r} 不在白名单 {_KV_CONNECTORS}")
+    if kvt.role not in _KV_ROLES:
+        raise ConfigError(f"engine.kv_transfer.role={kvt.role!r} 不在白名单 {_KV_ROLES}")
 
     b = cfg.benchmark
     if b.suite not in _SUITES:

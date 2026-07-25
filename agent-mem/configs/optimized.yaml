@@ -1,18 +1,22 @@
-# optimized: prefix cache + C8 int8 KV + LMCache（三档递进最高档，Ascend 专用）
+# optimized: prefix cache + C8 int8 KV (F1) + LMCache 分层 (F4)（三档递进最高档，Ascend 专用）
 #
 # C8 int8 KV 走 `--quantization ascend` + 模型 quant_model_description.json
 # （非 no-op 的 `--kv-cache-dtype int8`，见 docs/F1-c8-injection.md）。
+# LMCache 分层走 `--kv-transfer-config` 激活 LMCacheAscendConnector（见 docs/F4-lmcache-ascend.md）。
 # 本档特性（C8 KV + LMCache）均 Ascend-only → backend 必为 vllm-ascend。
 # 前置：python -m agent_mem.kv.c8 annotate models/Qwen2.5-7B-Instruct
 #       python -m agent_mem.kv.c8 inject-scales models/Qwen2.5-7B-Instruct
+#       NPU 上安装 lmcache_ascend 包（见 docs/F4-lmcache-ascend.md）
 engine:
-  backend: vllm-ascend          # C8 KV + LMCache 均 Ascend-only
+  backend: vllm-ascend            # C8 KV + LMCache 均 Ascend-only
   model: Qwen2.5-7B-Instruct
-  extra_args:
-    - "--quantization ascend"   # F1: C8 int8 KV（显存砍半，scale 见 quant_description）
-  lmcache:
-    enabled: true               # F4: GPU↔CPU↔SSD 三级
-    config_file: local          # 打包模板 src/agent_mem/kv/lmcache_local.yaml
+  extra_args: []
+  kv_transfer:                    # 缝C（F4）：NPU↔CPU↔Disk 三级分层
+    connector: LMCacheAscendConnector
+    role: kv_both
+  c8:                             # 缝A（F1）：C8 int8 KV（显存砍半）
+    enabled: true
+    patch_qwen2: true             # Qwen2.5（Qwen2 架构）需 sitecustomize 补丁
 
 benchmark:
   suite: tau-bench

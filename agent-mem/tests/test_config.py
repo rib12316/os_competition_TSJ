@@ -11,7 +11,7 @@ from agent_mem.config import (
     BenchmarkConfig,
     ConfigError,
     EngineConfig,
-    LmCacheConfig,
+    KVTransferConfig,
     MetricsConfig,
     MiddlewareConfig,
     SessionConfig,
@@ -31,7 +31,6 @@ def test_load_baseline():
     assert cfg.engine.backend == "vllm"
     assert cfg.engine.model == "Qwen2.5-7B-Instruct"
     assert "--no-enable-prefix-caching" in cfg.engine.extra_args
-    assert cfg.engine.lmcache.enabled is False
     assert cfg.benchmark.domain == "retail"
     assert cfg.benchmark.runs == 3
     assert cfg.benchmark.seed == 42
@@ -41,16 +40,15 @@ def test_load_baseline():
 def test_load_prefix_cache_has_no_disable_flag():
     cfg = load_config(CONFIGS_DIR / "prefix_cache.yaml")
     assert cfg.engine.extra_args == []
-    assert cfg.engine.lmcache.enabled is False
 
 
-def test_load_optimized_enables_lmcache_and_int8():
+def test_load_optimized_has_int8():
     cfg = load_config(CONFIGS_DIR / "optimized.yaml")
-    assert cfg.engine.lmcache.enabled is True
-    assert cfg.engine.lmcache.config_file is not None
-    # C8 int8 KV（Ascend-only）：--quantization ascend（非 no-op 的 --kv-cache-dtype int8）
+    # 统一 schema：C8 (c8.enabled→build_serve_args 注入 --quantization ascend) + LMCache (kv_transfer)
     assert cfg.engine.backend == "vllm-ascend"
-    assert any("quantization ascend" in a for a in cfg.engine.extra_args)
+    assert cfg.engine.c8.enabled is True
+    assert cfg.engine.kv_transfer.connector == "LMCacheAscendConnector"
+    assert not any("quantization" in a for a in cfg.engine.extra_args)
     assert not any("kv-cache-dtype" in a for a in cfg.engine.extra_args)
     assert not any("fp8" in a for a in cfg.engine.extra_args)
 
@@ -96,9 +94,11 @@ def test_load_f2_f3_combined_orders_lazyload_before_compress():
     assert cfg.middleware.active == ["lazyload", "compress"]
 
 
-def test_load_f4_lmcache_toggles_seam_c():
+def test_load_f4_lmcache_toggles_kv_transfer():
     cfg = load_config(CONFIGS_DIR / "f4-lmcache.yaml")
-    assert cfg.engine.lmcache.enabled is True
+    assert cfg.engine.backend == "vllm-ascend"
+    assert cfg.engine.kv_transfer.connector == "LMCacheAscendConnector"
+    assert cfg.engine.kv_transfer.role == "kv_both"
 
 
 def test_load_f5_evict_toggles_session():
@@ -191,12 +191,6 @@ def test_validate_rejects_non_mapping_root(tmp_path):
         load_config(p)
 
 
-def test_lmcache_defaults():
-    lm = LmCacheConfig()
-    assert lm.enabled is False
-    assert lm.config_file is None
-
-
 # ---- 缝D/缝E 新增段：middleware / session ----
 
 
@@ -258,3 +252,53 @@ def test_session_defaults():
     s = SessionConfig()
     assert s.strategy == "noop"
     assert s.idle_timeout_s == 60.0
+
+
+# ---- 缝C 新增段：kv_transfer ----
+
+
+def test_kv_transfer_defaults():
+    kvt = KVTransferConfig()
+    assert kvt.connector == ""
+    assert kvt.role == "kv_both"
+    assert kvt.extra == {}
+
+
+def test_engine_config_kv_transfer_default():
+    e = EngineConfig(backend="vllm", model="Qwen3-0.6B")
+    assert e.kv_transfer.connector == ""
+
+
+def test_load_baseline_kv_transfer_empty():
+    cfg = load_config(CONFIGS_DIR / "baseline.yaml")
+    assert cfg.engine.kv_transfer.connector == ""
+
+
+def test_validate_rejects_bad_kv_connector():
+    cfg = _valid_cfg()
+    cfg.engine.kv_transfer.connector = "NonexistentConnector"
+    with pytest.raises(ConfigError, match="kv_transfer"):
+        validate(cfg)
+
+
+def test_validate_rejects_bad_kv_role():
+    cfg = _valid_cfg()
+    cfg.engine.kv_transfer.connector = "LMCacheAscendConnector"
+    cfg.engine.kv_transfer.role = "bogus_role"
+    with pytest.raises(ConfigError, match="kv_transfer"):
+        validate(cfg)
+
+
+def test_validate_accepts_known_kv_connectors():
+    for conn in ("", "LMCacheAscendConnector", "SimpleCPUOffloadConnector"):
+        cfg = _valid_cfg()
+        cfg.engine.kv_transfer.connector = conn
+        validate(cfg)
+
+
+def test_validate_accepts_all_kv_roles():
+    for role in ("kv_both", "kv_producer", "kv_consumer"):
+        cfg = _valid_cfg()
+        cfg.engine.kv_transfer.connector = "LMCacheAscendConnector"
+        cfg.engine.kv_transfer.role = role
+        validate(cfg)

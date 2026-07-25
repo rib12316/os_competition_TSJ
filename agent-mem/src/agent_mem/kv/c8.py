@@ -21,7 +21,7 @@ C8 需要 **per-channel scale**（``num_kv_heads*head_size`` 维），默认 ``o
 ⚠️ 910B 真机坑：C8 decode 在 **FULL ACL-graph capture** 确定性死锁（详见
 ``docs/F1-c8-injection.md`` 的 caveat）。本模块只负责"注入"，可跑性是另一层。
 
-风格对齐 :mod:`agent_mem.kv.lmcache`：纯函数 + 重依赖 lazy import + 可单测。
+风格对齐 :mod:`agent_mem.kv.lmcache_check`：纯函数 + 重依赖 lazy import + 可单测。
 """
 
 from __future__ import annotations
