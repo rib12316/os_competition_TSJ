@@ -64,8 +64,8 @@ def build_serve_args(
         ko = cfg.engine.kv_offload
         kcc = KVConnectorConfig(
             connector=ko["connector"],
-            transfer_format=ko.get("transfer_format", "by_layer"),
-            connector_opts=dict(ko.get("connector_opts") or {}),
+            kv_role=ko.get("kv_role", "kv_both"),
+            extra_config=dict(ko.get("extra_config") or {}),
             extra=list(ko.get("extra") or []),
         )
         args += render_kv_connector_args(kcc)

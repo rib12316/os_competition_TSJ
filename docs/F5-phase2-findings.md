@@ -1,58 +1,66 @@
 # F5 Phase 2 调研与实证结论（无损 KV offload）
 
-> 分支：`feat/f5-priority-evict` ｜ 日期：2026-07-25 ｜ 结论：**当前栈不可行**（gated on 更新版 vllm-ascend）
+> 分支：`feat/f5-priority-evict` ｜ 日期：2026-07-25 ｜ **结论：已解锁** —— 用 shipping 的 SimpleCPUOffloadConnector（→ Ascend 变体），无需升级/fork。
 
 ## 目标
 把 F5 的资源回收从「有损 priority 抢占」升级为「无损 KV offload」（冷 KV→CPU，命中时回读），
-并进一步做「按需、逐 session 定向 offload」。
+叠加在 F5 的 KV-pool 准入控制之上。
 
-## 调研（3 路并行：vllm/vllm-ascend 源码 + 外部 SOTA + spike 可行性）
+## 调研（3 路并行）+ 关键纠正
 
-### 1. 按需、逐请求、无损 offload —— 被 vLLM 架构挡住
-- V1 connector API 是**纯回调**，只在 scheduler 前向循环内被调（`get_num_new_matched_tokens` /
-  `request_finished` / `build_connector_meta` / `save_kv_layer` / `get_finished`）。
-  **无外部入口、无中途 hook、无 per-request 注入通道。**
-- 外部应用层无法 mid-step 触发"offload 这个请求的 KV"——上游也还没一等公民支持
-  （RFC #33689 OffloadPolicy、#22605 分离进程，**均未落地**）。
-- 唯一**架构支持**的外部驱动路径 = priority 抢占 → `handle_preemptions`，**有损**（KV 丢弃）。
-- **身份/IPC 都已解决**（`extra_body.vllm_xargs.session_id`→`request.kv_transfer_params`；
-  unix socket IPC；`--kv-transfer-config` + `kv_connector_module_path` 注册自定义 connector）——
-  唯一缺的是"外部触发无损 offload"这一环，必须 fork vLLM core（加 offload_request + 触发通道）。
+### 1. 按需、逐请求、无损 offload —— 仍被 vLLM 架构挡住
+V1 connector 是纯回调、只在 scheduler 前向循环内被调；外部应用层无法 mid-step 触发"offload
+这个请求的 KV"。身份/IPC 都已解决（`extra_body.vllm_xargs.session_id`；unix socket），唯一缺
+"外部触发无损 offload"，需 fork vLLM core（上游 RFC #33689/#22605 未落地）。**这条（on-demand
+定向）仍属未来。**
 
 ### 2. 外部 SOTA —— 对单 NPU 都不适用
-- **Llumnix**（OSDI'24）：跨实例活迁移（Gloo），**无单实例 HBM↔CPU 路径**；vLLM v0.6.3 旧。
-- **Mooncake**（FAST'25）：全局 KV 池 + RDMA，跨节点价值，单节点多余。
-- **AttentionStore**（ATC'24）：分层 KV 存取，设计最接近，但**无开源代码**。
-- **vAttention**（MSR）：CUDA 虚拟内存，**CANN 无对应 API，Ascend 跑不了**。
-- vLLM 上游已有 **OffloadingConnector**（自动 LRU 无损 offload），vllm-ascend 有 **NPUOffloadingSpec**。
+Llumnix（跨实例）/Mooncake（跨节点）/AttentionStore（无代码）/vAttention（CUDA 锁）均不可用于单 NPU。
 
-## 实证（Option B：开 NPUOffloadingSpec 自动无损 offload 层）
-**在本机 vllm-ascend 0.22.1rc1 + vllm 0.22.1 上实测 NPUOffloadingSpec —— 失败（版本 drift）：**
+### 3. ⚠️ 关键纠正：NPUOffloadingSpec 是废弃路径，不是"待升级/待 fork"
+- `NPUOffloadingSpec`/`OffloadingConnector` **上游已废弃**——vllm-ascend 自己的 e2e 测试标
+  `@pytest.mark.skip(reason="cpu offload connector is deprecated.")`；0.23.0rc1 列入 "Ready to Deprecate"。
+- 本仓 0.22.1rc1 上它坏在两处：① import drift（`abstract`/`mediums`/`spec`→`base`/`cpu.common`）；
+  ② `register_kv_caches` 的 `assert`（vllm 0.22.1 用 `CanonicalKVCaches`，vllm-ascend 还按老
+  `dict[str,Tensor]` 写——深层架构 drift，#5948-class）。
+- → **升级（只到 0.23.0rc1，CANN 9.0.0→9.0.1）不解决**（路径废弃）；**fork 无意义**（修废弃路径）。
+  本文件早先的"blocked、需 fork/升级"结论是基于这条废弃路径的误判，特此纠正。
 
-1. `--kv-connector` **被拒**（本版本不存在）；正确入口是 `--kv-transfer-config`
-   （`OffloadingConnector` + `kv_connector_extra_config.spec_name=NPUOffloadingSpec,
-   spec_module_path=vllm_ascend.kv_offload.npu, num_cpu_blocks=N`）。
-2. `--kv-offloading-backend native` 默认走 CUDA 的 `CPUOffloadingSpec` → Ascend 上
-   `register_kv_caches` 报错。
-3. NPUOffloadingSpec 的 `npu.py`/`cpu_npu.py` **import 了不存在的模块**
-   （`vllm.v1.kv_offload.abstract` / `mediums` / `spec`——本版 vllm 已重命名为 `base` / `cpu.common`）。
-   加 import shim 后能 import，但 `register_kv_caches` 仍 **`AssertionError`**
-   （`vllm/v1/executor/abstract.py:123`）——**更深的行为级版本不兼容**（#5948-class bug）。
+### 4. ✅ 真正可用：SimpleCPUOffloadConnector（注册时自动→ AscendSimpleCPUOffloadConnector）
+- **本仓 0.22.1rc1 自带 + CI 实测非 skip**（`tests/e2e/.../test_simple_cpu_offload.py`），
+  NPU 原生（`aclrtMemcpyBatchAsync` + `torch.npu` streams），**正确处理 Ascend 的 K/V 分离 + 2MiB
+  对齐**（正是 NPUOffloadingSpec 栽掉的点），支持 `lazy_offload`。
+- 注册时 vllm-ascend `__init__.py` 自动把上游 `SimpleCPUOffloadConnector` 的 CUDA worker 换成 NPU worker。
+- 入口：`--kv-transfer-config '{"kv_connector":"SimpleCPUOffloadConnector","kv_role":"kv_both",
+  "kv_connector_extra_config":{"cpu_bytes_to_use":N,"lazy_offload":true}}'`（**非** `--kv-connector`，该 flag 本版被拒）。
 
-> 结论：文档所述"shipping、NPU-tested"的 NPUOffloadingSpec 是**更新版本对**的特性；
-> 本仓 pinned 的 0.22.1rc1/0.22.1 这对**不可用**，需 fork vllm-ascend offloading 路径才能修
-> （中高风险，agent 调研早有预警）。
+## 实证：真机起 + D 组实验
+- **真机起引擎** ✅（2026-07-25）：`SimpleCPUOffloadNPUWorker: 56 unique NPU KV tensors,
+  allocating 585 CPU blocks (4.00 GB)`；`AscendSimpleCPUOffloadConnector: swapped CUDA worker
+  for NPU worker`；`mode=lazy`。无需升级/fork。
+- **D 组实验**（F5 priority/准入 + 该 offload 层，3 run 中位数，对照 C=f5-evict-dynamic）：
+
+| 指标 | C（F5 only） | D（F5 + 无损 offload） |
+|---|---|---|
+| e2e p50 | 90 s | **47 s（1.9× 更快）** |
+| e2e p95 | 155 s | 126 s（−19%） |
+| QPS | 0.040 | 0.046（+16%） |
+| mem_peak | 17401 | 17526（~同） |
+| KV 命中率（GPU prefix） | 0.93 | 0.71（指标只数 GPU 命中、不数 CPU 回读，故低估） |
+
+**机制**：offload 把冷 KV 搬 CPU → GPU KV 利用率更低 → **KV-pool 准入放开更高并发**（C 把
+running 压到 ~3，D 能更高）→ p50 快 1.9×、QPS +16%。GPU prefix-hit 看着掉是因为搬走的块在 CPU、
+不在 GPU cache（该指标不数 CPU 回读）——**延迟变快证明确实净收益**（CPU 回读 << 重算）。
 
 ## 最终结论
-- **Phase 2 无损 offload 在当前栈不可行**：按需定向需 fork vLLM core；自动无损（NPUOffloadingSpec）
-  在本版本对坏掉（版本 drift + 行为 assertion）。
-- **F5 Phase 1（有损 KV-pool 准入控制）是当前栈的交付**：消除抢占（3→0）、KV 命中率 0.93 vs 0.46、
-  eviction-hit-idle 100%——已足够命中赛题"动态资源回收"。
-- **解锁条件**：升级 vllm-ascend 到 NPUOffloadingSpec 可用的版本对（追踪 issue #3241/#5948），
-  或 fork vllm-ascend 修 offloading 兼容（中高风险）。
+- **Phase 2 无损 offload 已在当前栈解锁**：用 SimpleCPUOffloadConnector（→ Ascend 变体），
+  叠加在 F5 准入控制之上，**p50 再快 1.9×、QPS +16%**。
+- 之前的"blocked/需 fork/升级"是基于废弃的 NPUOffloadingSpec 路径的误判，已纠正。
+- 仍属未来：on-demand 逐 session 定向 offload（gated on vLLM core fork / 上游 RFC）。
 
 ## 产物
-- `configs/f5-evict-dynamic-offload.yaml`：F5 + NPUOffloadingSpec 的 D 组配置（**当前栈 blocked**，
-  升级 vllm-ascend 后可直接复用）。
-- 实验脚本 `scripts/f5_experiment.py`（`--only` 跑单组）可复用跑 D。
-- third_party / venv 的临时 import shim 已**全部回退**，栈恢复 pristine。
+- `agent_mem/src/agent_mem/kv/connector.py`：修正 3 个 bug（connector 名 pykvconnector→
+  SimpleCPUOffloadConnector；去掉被拒的 `--kv-connector` flag；JSON 改 vLLM 0.22.1 flat schema）。
+- `configs/f5-evict-dynamic-offload.yaml`：D 组配置（F5 + kv_offload: SimpleCPUOffloadConnector）。
+- `scripts/f5_experiment.py`：加 D 组（`--only D`）。
+- 对照报告 `logs/_summaries/20260725_f5-C-vs-D_comparison.md`。

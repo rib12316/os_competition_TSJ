@@ -1,7 +1,7 @@
 # F5 — 并发场景动态资源回收与重分配（技术报告）
 
 > 分支：`feat/f5-priority-evict` ｜ 赛题方向 1（KV Cache 生命周期管理）原话"动态资源回收与重分配"
-> 状态：**Phase 0 + Phase 1（真机 A/B/C × runs=3）均完成**：KV-pool 准入控制消除抢占、KV 命中率 0.93 vs 0.46–0.48（+47pp）、p50 −21%、eviction-hit-idle 100%（3/3 run 全命中 idle）。
+> 状态：**Phase 0 + Phase 1 + Phase 2 均完成**：KV-pool 准入控制消除抢占、KV 命中率 0.93 vs 0.46–0.48；**+ 无损 KV offload 层（Phase 2，D 组）p50 再快 1.9×（90→47s）、QPS +16%**；eviction-hit-idle 100%。
 
 ## 摘要
 
@@ -152,7 +152,10 @@ user-sim 如 mimo 补最终数）。采集写 `metrics.json` + `f5_driver_snapsh
 - ✅ **Phase 1（真机跑通，A/B/C × runs=3）**：priority 探针确认 flag 非 no-op；**三组中位数**——
   KV-pool 准入控制消除抢占（C:0 vs A/B:有）、KV 命中率 **0.93 vs 0.46–0.48**、p50 −21%、TTFT −27%、
   eviction-hit-idle 100%（3/3 run）。诚实：A≈B（priority 单独不增益），增益来自准入控制。
-- 🔭 **收尾（可选）**：runs=3 取中位数、外部 user-sim 补成功率、A 组（FCFS）对照、lazy offload
-  connector 名；Phase 2 自定义 V1 connector 做真·无损 on-demand offload/restore。
+- ✅ **Phase 2（无损 KV offload，已解锁）**：用 shipping 的 `SimpleCPUOffloadConnector`（注册时→
+  `AscendSimpleCPUOffloadConnector`，NPU 原生，**无需升级/fork**）叠加在准入控制之上——**D 组 p50 再快
+  1.9×（90→47s）、QPS +16%**。机制：offload 把冷 KV 搬 CPU → GPU KV 利用率更低 → 准入放开更高并发。
+  （纠正早先"需 fork/升级"的误判——那是基于废弃的 NPUOffloadingSpec 路径。详见 `docs/F5-phase2-findings.md`。）
+- 🔭 **未来/可选**：外部 mimo user-sim 补成功率；on-demand 逐 session 定向 offload（gated on vLLM core fork / 上游 RFC #33689）。
 
 > 配套：实验设计 `docs/F5-experiment-design.md`、计划 `plans/nested-prancing-metcalfe.md`。
