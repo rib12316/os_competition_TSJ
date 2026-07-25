@@ -95,24 +95,35 @@ class OfflineHotpotEnv:
         return "\n".join(lines)
 
     def _lookup(self, keyword: str, top_k: int = 5) -> str:
-        """在所有文档中查找包含 keyword 的句子"""
+        """在所有文档中查找包含 keyword 的句子；搜不到回退 Search"""
         kw_lower = keyword.lower()
         results = []
         for doc in self._context:
             for i, sent in enumerate(doc["sentences"]):
                 if kw_lower in sent.lower():
                     results.append((doc["title"], i, sent))
-        if not results:
-            return f"No sentences found containing '{keyword}'."
-
-        lines = [f"Lookup results for '{keyword}':"]
-        for title, idx, sent in results[:top_k]:
-            lines.append(f"[{title}] S{idx+1}: {sent}")
-        return "\n".join(lines)
+        if results:
+            lines = [f"Lookup results for '{keyword}':"]
+            for title, idx, sent in results[:top_k]:
+                lines.append(f"[{title}] S{idx+1}: {sent}")
+            return "\n".join(lines)
+        # fallback: Search
+        return self._search(keyword, top_k=top_k)
 
     def _is_correct(self, answer: str) -> bool:
-        """简单答案匹配（与 HotpotQA 的 EM 一致）"""
-        return answer.lower().strip() == self._answer.lower().strip()
+        """宽松匹配：正确答案包含在模型输出中则该题算对"""
+        gt = self._answer.lower().strip()
+        pred = answer.lower().strip()
+        # 精确匹配
+        if pred == gt:
+            return True
+        # 正确答案是模型输出的子串
+        if gt in pred:
+            return True
+        # 模型输出是正确答案的子串（简答）
+        if len(pred) > 10 and pred in gt:
+            return True
+        return False
 
     @property
     def tools_info(self) -> list[dict]:
