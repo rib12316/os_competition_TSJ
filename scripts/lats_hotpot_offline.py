@@ -154,15 +154,44 @@ def mcts_search(env, n_branches=2, max_iters=5):
 
 # ---- 指标采集 ----
 def collect_metrics():
+    """完整指标采集"""
     t = urllib.request.urlopen("http://localhost:8000/metrics", timeout=5).read().decode()
-    hits = queries = 0.0
+    hits = queries = reqs = gen_tok = prom_tok = 0.0
+    ttft_sum = ttft_cnt = tpot_sum = tpot_cnt = e2e_sum = e2e_cnt = 0.0
+
     for line in t.split("\n"):
-        if line.startswith("vllm:prefix_cache_hits_total"): hits = float(line.split()[-1])
-        if line.startswith("vllm:prefix_cache_queries_total"): queries = float(line.split()[-1])
-    reqs = 0.0
-    for line in t.split("\n"):
-        if line.startswith("vllm:request_success_total"): reqs += float(line.split()[-1])
-    return {"kv_hit": hits / max(queries, 1), "reqs": reqs}
+        if line.startswith("vllm:prefix_cache_hits_total"):
+            hits = float(line.split()[-1])
+        if line.startswith("vllm:prefix_cache_queries_total"):
+            queries = float(line.split()[-1])
+        if line.startswith("vllm:request_success_total"):
+            reqs += float(line.split()[-1])
+        if line.startswith("vllm:generation_tokens_total"):
+            gen_tok = float(line.split()[-1])
+        if line.startswith("vllm:prompt_tokens_total"):
+            prom_tok = float(line.split()[-1])
+        if line.startswith("vllm:time_to_first_token_seconds_sum"):
+            ttft_sum = float(line.split()[-1])
+        if line.startswith("vllm:time_to_first_token_seconds_count"):
+            ttft_cnt = float(line.split()[-1])
+        if line.startswith("vllm:request_time_per_output_token_seconds_sum"):
+            tpot_sum = float(line.split()[-1])
+        if line.startswith("vllm:request_time_per_output_token_seconds_count"):
+            tpot_cnt = float(line.split()[-1])
+        if line.startswith("vllm:e2e_request_latency_seconds_sum"):
+            e2e_sum = float(line.split()[-1])
+        if line.startswith("vllm:e2e_request_latency_seconds_count"):
+            e2e_cnt = float(line.split()[-1])
+
+    return {
+        "kv_hit": hits / max(queries, 1),
+        "reqs": reqs,
+        "gen_tokens": gen_tok,
+        "prompt_tokens": prom_tok,
+        "ttft_ms": (ttft_sum / max(ttft_cnt, 1)) * 1000,
+        "tpot_ms": (tpot_sum / max(tpot_cnt, 1)) * 1000,
+        "e2e_ms": (e2e_sum / max(e2e_cnt, 1)) * 1000,
+    }
 
 
 class MemSampler:
@@ -210,20 +239,28 @@ def main():
         after = collect_metrics()
         mem = sampler.stop()
 
+        after_m = after
         r = {
             "group": name, "desc": cfg["desc"],
             "pc": cfg["prefix_cache"], "n": cfg["n"],
             "wall": wall, "success": solved / N_TASKS,
-            "kv_before": before["kv_hit"], "kv_after": after["kv_hit"],
-            "mem_peak": mem, "reqs": after["reqs"] - before["reqs"],
+            "kv_before": before["kv_hit"], "kv_after": after_m["kv_hit"],
+            "mem_peak": mem, "reqs": after_m["reqs"] - before["reqs"],
+            "ttft_ms": after_m["ttft_ms"], "tpot_ms": after_m["tpot_ms"],
+            "e2e_ms": after_m["e2e_ms"],
+            "gen_tokens": after_m["gen_tokens"], "prompt_tokens": after_m["prompt_tokens"],
         }
         results.append(r)
-        print(f"\n  wall={wall:.0f}s success={r['success']:.0%} kv={after['kv_hit']:.3f} mem={mem:.0f}MB")
+        print(f"\n  wall={wall:.0f}s success={r['success']:.0%} kv={after_m['kv_hit']:.3f} "
+              f"mem={mem:.0f}MB ttft={after_m['ttft_ms']:.0f}ms tpot={after_m['tpot_ms']:.1f}ms "
+              f"e2e={after_m['e2e_ms']:.0f}ms reqs={r['reqs']:.0f}")
 
-    print(f"\n{'='*90}")
-    print(f"{'Grp':<5} {'pc':>3} {'n':>3} {'wall':>7} {'succ':>6} {'kv_bef':>8} {'kv_aft':>8} {'mem':>8} {'reqs':>6}")
+    print(f"\n{'='*130}")
+    print(f"{'Grp':<5} {'pc':>3} {'n':>3} {'wall':>7} {'succ':>6} {'kv_bef':>8} {'kv_aft':>8} {'mem':>8} {'ttft':>7} {'tpot':>7} {'e2e':>7} {'reqs':>6}")
     for r in results:
-        print(f"{r['group']:<5} {str(r['pc']):>3} {r['n']:>3} {r['wall']:>7.0f}s {r['success']:>5.0%} {r['kv_before']:>8.3f} {r['kv_after']:>8.3f} {r['mem_peak']:>8.0f} {r['reqs']:>6.0f}")
+        print(f"{r['group']:<5} {str(r['pc']):>3} {r['n']:>3} {r['wall']:>7.0f}s {r['success']:>5.0%} "
+              f"{r['kv_before']:>8.3f} {r['kv_after']:>8.3f} {r['mem_peak']:>8.0f} "
+              f"{r['ttft_ms']:>7.0f} {r['tpot_ms']:>7.1f} {r['e2e_ms']:>7.0f} {r['reqs']:>6.0f}")
 
     with open("/tmp/multi-path/logs-lats/hotpot_offline.json", "w") as f:
         json.dump(results, f, indent=2)
