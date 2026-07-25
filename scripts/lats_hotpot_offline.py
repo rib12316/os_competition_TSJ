@@ -42,91 +42,128 @@ class MCTSNode:
         return self.value / self.visits + c * math.sqrt(math.log(self.parent.visits) / self.visits)
 
 
+import re
+
+
 def gpt(prompt, n=1, temperature=0.7, max_tokens=256):
-    """调用 vllm 引擎"""
     try:
         r = openai.ChatCompletion.create(
             model=MODEL, messages=[{"role": "user", "content": prompt}],
             temperature=temperature, max_tokens=max_tokens, n=n,
         )
-        if n == 1:
-            return [r.choices[0].message.content]
         return [c.message.content for c in r.choices]
     except Exception as e:
         return [f"ERROR: {e}"]
 
 
-def propose_actions(trajectory, n_branches):
-    """生成 N 个候选 action"""
-    prompt = (
-        f"Based on the following search history, propose {n_branches} different "
-        f"next actions to find the answer. Each action should be one of:\n"
-        f"  Search[query] - search documents\n"
-        f"  Lookup[keyword] - find specific sentences\n"
-        f"  Finish[answer] - submit final answer\n\n"
-        f"History:\n{trajectory}\n\n"
-        f"Propose exactly {n_branches} different actions, one per line:"
-    )
-    responses = gpt(prompt, n=1, temperature=0.7, max_tokens=200)
-    actions = [a.strip() for a in responses[0].split("\n") if a.strip() and "[" in a]
+def _parse_actions(text, n_branches):
+    """从 LLM 返回文本中解析 action，支持多种格式"""
+    actions = []
+    # 格式 1: Search[xxx] / Lookup[xxx] / Finish[xxx]
+    for pattern in [r'Search\[([^\]]+)\]', r'Lookup\[([^\]]+)\]', r'Finish\[([^\]]+)\]']:
+        for m in re.finditer(pattern, text):
+            if pattern.startswith('S'):
+                actions.append(f"Search[{m.group(1)}]")
+            elif pattern.startswith('L'):
+                actions.append(f"Lookup[{m.group(1)}]")
+            else:
+                actions.append(f"Finish[{m.group(1)}]")
+
+    # 格式 2: 每行一个 action 名 + 参数
+    if not actions:
+        for line in text.split("\n"):
+            line = line.strip().rstrip(".,;")
+            if line and len(line) < 200:
+                if any(kw in line.lower() for kw in ["search", "查找", "搜索"]):
+                    q = line.split(":", 1)[-1].strip() if ":" in line else line
+                    actions.append(f"Search[{q}]")
+                elif any(kw in line.lower() for kw in ["lookup", "查找句子", "定位"]):
+                    q = line.split(":", 1)[-1].strip() if ":" in line else line
+                    actions.append(f"Lookup[{q}]")
+                elif any(kw in line.lower() for kw in ["finish", "answer", "答案", "最终"]):
+                    q = line.split(":", 1)[-1].strip() if ":" in line else line
+                    actions.append(f"Finish[{q}]")
     return actions[:n_branches]
 
 
-def evaluate_action(question, trajectory, action):
-    """评估 action 的质量（1-10）"""
+def propose_actions(trajectory, question, n_branches):
     prompt = (
+        f"You are answering a multi-hop question using search.\n"
         f"Question: {question}\n\n"
-        f"Search history:\n{trajectory}\n\n"
-        f"Next proposed action: {action}\n\n"
-        f"Rate this action's usefulness for answering the question on a scale of 1-10. "
-        f"Respond with just the number."
+        f"Previous steps:\n{trajectory}\n"
+        f"Propose {n_branches} different next actions. Use EXACTLY this format for each:\n"
+        f"Search: <query>  (to search all documents)\n"
+        f"Lookup: <keyword> (to find specific sentences)\n"
+        f"Finish: <answer>  (to submit final answer)\n"
+        f"Respond with one action per line."
     )
-    responses = gpt(prompt, n=1, temperature=0.3, max_tokens=5)
-    try:
-        nums = [int(s) for s in responses[0].split() if s.isdigit()]
-        return nums[0] / 10.0 if nums else 0.5
-    except Exception:
-        return 0.5
+    text = gpt(prompt, temperature=0.7, max_tokens=300)[0]
+    actions = _parse_actions(text, n_branches)
+
+    # Fallback: 从问题提取关键词搜索
+    if not actions:
+        words = [w for w in question.split() if len(w) > 3][:3]
+        if words:
+            actions = [f"Search[{w}]" for w in words[:n_branches]]
+        else:
+            actions = [f"Search[{question[:50]}]"]
+    return actions
+
+
+def evaluate_action(question, trajectory, action):
+    prompt = (
+        f"Question: {question}\nHistory:\n{trajectory}\n"
+        f"Proposed action: {action}\n"
+        f"Rate usefulness (1-10, number only):"
+    )
+    text = gpt(prompt, temperature=0.3, max_tokens=10)[0]
+    nums = [int(s) for s in re.findall(r'\d+', text)]
+    return nums[0] / 10.0 if nums else 0.5
 
 
 def mcts_search(env, n_branches=2, max_iters=5):
-    """MCTS 搜索：选择→扩展→评估→回传"""
     root_traj = f"Question: {env._question}\n"
     root = MCTSNode(state=root_traj)
+    best_overall = root
 
     for iteration in range(max_iters):
-        # Selection: 选 UCT 最大的叶子
+        # Selection: 选 UCT 最大的叶子节点
         node = root
-        while node.children:
-            node = max(node.children, key=lambda c: c.uct())
+        while node.children and not node.is_terminal:
+            unvisited = [c for c in node.children if c.visits == 0]
+            if unvisited:
+                node = unvisited[0]
+            else:
+                node = max(node.children, key=lambda c: c.uct())
 
         if node.is_terminal:
-            break
+            if node.reward == 1:
+                return node
+            continue
 
-        # Expansion: 生成候选 action
-        actions = propose_actions(node.state, n_branches)
+        # Expansion
+        actions = propose_actions(node.state, env._question, n_branches)
 
         for action in actions:
-            if "Finish" in action:
-                child = MCTSNode(state=node.state + f"Action: {action}\n", parent=node, depth=node.depth + 1)
-                # 执行获得 reward
-                obs, reward, done, info = env.step(action)
-                child.state += f"Observation: {obs}\n"
-                child.reward = reward
-                child.is_terminal = done
-                child.value = reward
-                child.visits = 1
-                node.children.append(child)
-                if reward == 1:
-                    return child  # 找到了
-            else:
-                child = MCTSNode(state=node.state + f"Action: {action}\n", parent=node, depth=node.depth + 1)
+            child = MCTSNode(state=node.state + f"Action: {action}\n", parent=node, depth=node.depth + 1)
+            obs, reward, done, info = env.step(action)
+            child.state += f"Observation: {obs}\n"
+            child.reward = reward
+            child.is_terminal = done
+
+            if not done and "Finish" not in action:
                 value = evaluate_action(env._question, node.state, action)
-                obs, _, _, _ = env.step(action)
-                child.state += f"Observation: {obs}\n"
-                child.value = value
-                child.visits = 1
-                node.children.append(child)
+            else:
+                value = reward
+
+            child.value = value
+            child.visits = 1
+            node.children.append(child)
+
+            if child.reward == 1:
+                return child
+            if child.reward > best_overall.reward:
+                best_overall = child
 
         # Backpropagation
         for child in node.children:
@@ -136,12 +173,7 @@ def mcts_search(env, n_branches=2, max_iters=5):
                 cur.value += child.value
                 cur = cur.parent
 
-        # 检查是否有 terminal 且 reward=1
-        for child in node.children:
-            if child.is_terminal and child.reward == 1:
-                return child
-
-    # 没找到完全正确的，返回最佳
+    # 收集所有节点，返回最好的
     all_nodes = [root]
     def collect(n):
         for c in n.children:
@@ -149,7 +181,7 @@ def mcts_search(env, n_branches=2, max_iters=5):
             collect(c)
     collect(root)
     best = max(all_nodes, key=lambda n: n.reward * 10 + n.value)
-    return best
+    return best if best.reward > best_overall.reward else best_overall
 
 
 # ---- 指标采集 ----
