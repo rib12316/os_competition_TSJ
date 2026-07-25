@@ -96,23 +96,24 @@ lookups, not evidence that arbitrary long-tool reasoning is quality-neutral.
 
 ## Exploratory LongBench probe
 
-Twenty consecutive unmodified `2wikimqa` examples were parsed into JSON document
+One hundred consecutive unmodified `2wikimqa` examples were parsed into JSON document
 arrays. The reference exposed document titles but not bodies, answers, or supporting
 facts. Qwen was instructed to complete two evidence hops. All variants used the same
 local Qwen/vLLM-Ascend service with a 32,768-token context limit.
 
 | Variant | Correct | Cumulative Prompt token | Saving vs baseline | Fetch calls |
 |---|---:|---:|---:|---:|
-| baseline | 6/20 | 267,911 | - | 0 |
-| F3 | 4/20 | 97,753 | 63.51% | 27 |
-| F2 + F3 | 4/20 | 83,486 | 68.84% | 23 |
+| baseline | 31/100 | 1,632,665 | - | 0 |
+| F3 | 31/100 | 554,657 | 66.03% | 175 |
+| F2 + F3 | 27/100 | 504,313 | 69.11% | 161 |
 
-One baseline task overflowed the 32,768-token context after two inline retrievals.
-Across the remaining 19 directly comparable tasks, baseline was 6/19 and F3/F2+F3
-were 4/19. F3 often found a first-hop document but returned the intermediate entity
-instead of fetching the second document. This is a quality-risk signal for local
-Qwen-7B multi-hop retrieval, not a quality-neutrality claim. See the extended report
-for paired task differences and the MIMO tau-bench compatibility probe.
+Five baseline tasks failed after repeated inline retrievals exceeded the 32,768-token
+context; F3/F2+F3 had no request errors. Across the 95 directly comparable baseline/F3
+tasks, baseline was 31/95 and F3 was 30/95, with 14 baseline-only and 13 F3-only
+successes (exact McNemar p=1.0). The first-20 quality decline did not persist: this
+larger run found no severe or significant F3 success-rate decrease. F3 did increase
+median wall time by 36.05% because it required more model/fetch turns. F2+F3 scored
+27/100; its point decrease was not significant but remains a risk to investigate.
 
 ## F2 interaction
 
@@ -185,8 +186,8 @@ PYTHONPATH=src /data/os_competition_TSJ/.venv/bin/python -m pytest -q tests
 
 - Controlled ID lookup now preserves correctness while reducing cumulative Prompt
   tokens, but arbitrary semantic retrieval and multi-hop quality are not proven.
-- The 20-example LongBench probe shows a Qwen-7B multi-hop quality risk; it is still
-  too small and model-specific for a general F3 success-rate claim.
+- The 100-example LongBench probe found no significant F3 success decrease, but it
+  is still model-specific and showed a 36.05% median latency increase.
 - The MIMO tau-bench retail probe validates F2+F3 compatibility, but F3 did not
   trigger because its largest observed tool result was 1,416 tokens.
 - Retail full115 has no hot tool result above 1k tokens and remains a no-trigger
@@ -203,5 +204,7 @@ Raw results:
 - `docs/f3-results/f3_retrieval_quality_result.json`
 - `docs/f3-results/f3_longbench_2wikimqa_probe.json`
 - `docs/f3-results/f3_longbench_2wikimqa_first20_probe.json`
+- `docs/f3-results/f3_longbench_2wikimqa_first100_probe.json`
+- `docs/f3-results/f3_longbench_2wikimqa_first100_summary.json`
 - `docs/f3-results/f2_f3_taubench_mimo_first5.json`
 - `docs/F2-F3-extended-evaluation-20260725.md`

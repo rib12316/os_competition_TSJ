@@ -3,7 +3,7 @@
 - Date: 2026-07-25
 - Agent inference: local Qwen2.5-7B-Instruct served by the same vLLM-Ascend instance
 - Server settings: `max_model_len=32768`, `gpu_memory_utilization=0.92`, Hermes tool parser
-- Scope: LongBench 2Wiki first 20 examples and tau-bench retail first 5 tasks
+- Scope: LongBench 2Wiki first 100 examples and tau-bench retail first 5 tasks
 
 ## Purpose
 
@@ -14,26 +14,31 @@ This evaluation separates two questions:
 
 It is not a statistical benchmark. Each variant has one run, and MIMO user trajectories are non-deterministic.
 
-## LongBench 2Wiki First 20
+## LongBench 2Wiki First 100
 
-The first 20 consecutive examples from `data/2wikimqa.jsonl` were run with the same local Qwen Agent. Each task exposes its documents as a JSON tool result. Baseline receives inline documents; F3 and F2+F3 receive the F3 reference and may use bounded title/field fetches. The Agent has at most 8 tool-calling steps and 256 output tokens per request.
+The first 100 consecutive examples from `data/2wikimqa.jsonl` were run with the same local Qwen Agent. Each task exposes its documents as a JSON tool result. Baseline receives inline documents; F3 and F2+F3 receive the F3 reference and may use bounded title/field fetches. The Agent has at most 8 tool-calling steps and 256 output tokens per request.
 
 | Variant | Correct | Cumulative Prompt tokens | Saving vs baseline | Median wall time |
 |---|---:|---:|---:|---:|
-| baseline | 6/20 | 267,911 | - | 1,108.76 ms |
-| F3 | 4/20 | 97,753 | 63.51% | 1,554.98 ms |
-| F2 + F3 | 4/20 | 83,486 | 68.84% | 1,595.39 ms |
+| baseline | 31/100 | 1,632,665 | - | 1,269.00 ms |
+| F3 | 31/100 | 554,657 | 66.03% | 1,726.44 ms |
+| F2 + F3 | 27/100 | 504,313 | 69.11% | 1,660.37 ms |
 
-One baseline task (example 15) made two large inline retrieval calls and exceeded the 32,768-token server limit on its second request. F3 and F2+F3 completed that request sequence but gave the wrong final answer. Excluding that context-overflow baseline failure leaves 19 directly comparable tasks: baseline 6/19 versus F3 4/19 and F2+F3 4/19, a -10.53 percentage-point result for both optimized variants.
+Five baseline tasks made repeated inline retrieval calls and failed at the 32,768-token server limit. F3 and F2+F3 had no model-request errors because large results were externalized.
 
-The paired changes are transparent in the raw artifact:
+Pairwise comparison excludes request-error tasks for each pair:
 
-- Example 3: baseline wrong; F3 and F2+F3 correct.
-- Examples 8, 10, and 19: baseline correct; F3 and F2+F3 wrong.
+| Pair | Common tasks | Correct A/B | A-only / B-only correct | Exact McNemar p |
+|---|---:|---:|---:|---:|
+| baseline vs F3 | 95 | 31 / 30 | 14 / 13 | 1.000 |
+| baseline vs F2+F3 | 95 | 31 / 27 | 16 / 12 | 0.572 |
+| F3 vs F2+F3 | 100 | 31 / 27 | 7 / 3 | 0.344 |
 
-Therefore this sample shows a real quality-risk signal. The current F3 title/field retrieval interface reduces Prompt tokens substantially, but local Qwen-7B still frequently stops after the first evidence hop or selects the wrong document. F2 did not add another observed success drop beyond F3 in this sample.
+The first-20 subset's apparent F3 decline did not persist in the 100-example run. F3's overall success equaled baseline, and on the 95 directly comparable tasks it differed by one answer with balanced discordant pairs. There is no evidence here of a severe or statistically significant F3 success-rate decrease.
 
-The higher wall time is expected for F3 because each lookup may add model tool turns. The token saving is not a claim of lower end-to-end latency for multi-hop retrieval workloads.
+F2+F3 was four answers below F3 and baseline in the point estimate, but neither paired comparison was significant at this sample size. This benchmark disables F2's business-specific static Prompt compaction to isolate dynamic history behavior.
+
+F3 added model turns: baseline used 240 steps, F3 368, and F2+F3 355. Median wall time increased by 36.05% for F3 and 30.84% for F2+F3. Thus F3 trades Prompt/KV tokens and context-overflow avoidance for extra Agent iterations on multi-hop retrieval workloads.
 
 ## tau-bench Retail with MIMO USER
 
@@ -69,10 +74,13 @@ F3 did not trigger because all observed retail tool results were below its 4,000
 
 - F2+F3 is operationally compatible with real tau-bench retail/MIMO interactions.
 - Standard retail tau-bench is primarily an F2/static-prefix and small-result workload; it is not representative of F3's target regime.
-- On 20 real 2Wiki examples, F3/F2+F3 reduced cumulative Prompt tokens by 63.51%/68.84% but showed a quality decrease relative to inline baseline. Do not claim quality neutrality for multi-hop document QA with Qwen2.5-7B.
-- The next quality experiment should use a larger multi-hop sample with an Agent/model that has a stronger inline baseline, then compare success under matched retrieval traces or multiple MIMO/user seeds.
+- On 100 real 2Wiki examples, F3 reduced cumulative Prompt tokens by 66.03% and matched baseline's overall 31% success. The paired common-task result was 30/95 versus 31/95 (`p=1.0`).
+- F3 did not show a severe quality decrease at this scale, but it increased median latency by 36.05% and changed which individual tasks succeeded.
+- F2+F3 reduced tokens by 69.11% and scored 27%; its 4pp point decrease was not significant but remains a follow-up risk.
+- The next experiment should repeat the 100-example matrix or use the full 200 examples before making a production quality-neutrality claim.
 
 ## Raw Results
 
-- `docs/f3-results/f3_longbench_2wikimqa_first20_probe.json`
+- `docs/f3-results/f3_longbench_2wikimqa_first100_probe.json`
+- `docs/f3-results/f3_longbench_2wikimqa_first100_summary.json`
 - `docs/f3-results/f2_f3_taubench_mimo_first5.json`

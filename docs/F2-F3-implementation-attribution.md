@@ -92,7 +92,7 @@ DeerFlow supplied the architectural reference only. The F3 source has no DeerFlo
 
 The original F3 interface scored 0/3 on the controlled locator test because it could only paginate a minified JSON result. Project-owned bounded field search fixed that specific interface limitation.
 
-The extended 20-example LongBench 2Wiki probe is a quality-risk signal rather than a quality-neutrality claim: baseline scored 6/20, while F3 and F2+F3 scored 4/20. The optimized variants saved 63.51% and 68.84% cumulative Prompt tokens, but local Qwen-7B often stopped after the first evidence hop or chose a wrong document.
+The extended 100-example LongBench 2Wiki probe found baseline/F3/F2+F3 success of 31/100, 31/100, and 27/100. F3 and F2+F3 saved 66.03% and 69.11% cumulative Prompt tokens. On 95 request-error-free baseline/F3 pairs, success was 31/95 versus 30/95 with balanced discordant outcomes (exact McNemar p=1.0), so this run found no severe F3 quality decrease. F3 increased median latency by 36.05% because it added retrieval turns.
 
 The five-task tau-bench retail run used MIMO as the USER simulator and local Qwen/vLLM-Ascend as the Agent. F2+F3 completed it successfully, but F3 externalized zero of 27 observed results because the largest was only 1,416 tokens. This validates safe F3 no-op behavior, not F3 benefit on retail data.
 
@@ -116,5 +116,7 @@ F3 stores raw data before F2 changes the request representation. F2 remains acti
 - `docs/f3-results/f3_retrieval_quality_result.json`
 - `docs/f3-results/f3_longbench_2wikimqa_probe.json`
 - `docs/f3-results/f3_longbench_2wikimqa_first20_probe.json`
+- `docs/f3-results/f3_longbench_2wikimqa_first100_probe.json`
+- `docs/f3-results/f3_longbench_2wikimqa_first100_summary.json`
 - `docs/f3-results/f2_f3_taubench_mimo_first5.json`
 - `docs/F2-F3-extended-evaluation-20260725.md`
