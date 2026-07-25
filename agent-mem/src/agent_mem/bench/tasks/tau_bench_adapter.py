@@ -181,7 +181,7 @@ def run_task(
     priority: int = 0,
     middlewares: list | None = None,
     priority_fn: Callable[[], int] | None = None,
-    on_turn_start: Callable[[], None] | None = None,
+    on_turn_start: Callable[[int], None] | None = None,
 ) -> TaskRunResult:
     """真路径：用本地引擎跑 agent，返回带真 reward/latency/ttft 的结果。
 

@@ -30,7 +30,7 @@ _DOMAINS = ("retail", "airline")
 _SUITES = ("tau-bench", "agentbench")
 _SPLITS = ("train", "test", "dev")
 # 缝E 策略名（对齐 scheduler.strategies 的类 name）
-_SESSION_STRATEGIES = ("noop", "idle-evict", "checkpoint", "priority-evict")
+_SESSION_STRATEGIES = ("noop", "idle-evict", "checkpoint", "priority-evict", "progress-evict")
 
 # 6 大必采指标（赛题硬指标）
 DEFAULT_METRICS: tuple[str, ...] = (
@@ -83,6 +83,8 @@ class SessionConfig:
 
     strategy: str = "noop"
     idle_timeout_s: float = 60.0
+    target_lo: int = 70
+    target_hi: int = 85
     options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -191,6 +193,8 @@ def _build_session(data: Any) -> SessionConfig:
     return SessionConfig(
         strategy=str(data.get("strategy", "noop")),
         idle_timeout_s=float(data.get("idle_timeout_s", 60.0)),
+        target_lo=int(data.get("target_lo", 70)),
+        target_hi=int(data.get("target_hi", 85)),
         options=dict(data.get("options") or {}),
     )
 
@@ -236,6 +240,10 @@ def validate(cfg: AppConfig) -> None:
         )
     if s.idle_timeout_s < 0:
         raise ConfigError(f"session.idle_timeout_s={s.idle_timeout_s} 必须 >= 0")
+    if s.target_lo < 0 or s.target_lo > 100:
+        raise ConfigError(f"session.target_lo={s.target_lo} 必须在 0..100")
+    if s.target_hi < s.target_lo:
+        raise ConfigError(f"session.target_hi={s.target_hi} 必须 >= target_lo={s.target_lo}")
 
 
 def load_config(path: str | Path) -> AppConfig:

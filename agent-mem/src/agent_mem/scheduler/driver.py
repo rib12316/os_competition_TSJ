@@ -43,6 +43,8 @@ class ConcurrentSessionDriver:
         hbm_pct_fn: Callable[[], float] | None = None,
         idle_priority: int = 100,
         active_priority: int = 0,
+        priority_mode: str = "idle",
+        max_steps: int = 25,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.tracker = EvictionTracker()
@@ -56,6 +58,8 @@ class ConcurrentSessionDriver:
             max_workers=max_workers, idle_timeout_s=idle_timeout_s,
             interval=sweep_interval, hbm_pct_fn=hbm_pct_fn, tracker=self.tracker,
         )
+        self.priority_mode = priority_mode  # "idle"（idle→抬 priority）或 "progress"（步数→priority）
+        self.max_steps = max_steps
         self._stop = threading.Event()
         self._sweep_thread: threading.Thread | None = None
 
@@ -76,17 +80,26 @@ class ConcurrentSessionDriver:
         self._sweep_thread = threading.Thread(target=_loop, daemon=True, name="f5-sweep")
         self._sweep_thread.start()
 
-    def _make_callbacks(self, task_id: int) -> tuple[Callable[[], None], Callable[[], int]]:
+    def _make_callbacks(self, task_id: int) -> tuple[Callable[..., None], Callable[[], int]]:
         sid = self._sid(task_id)
         active = self.strategy.active_priority
+        max_steps = max(self.max_steps, 1)
 
-        def on_turn_start() -> None:
-            s = self.mgr.touch(sid)        # 标记活跃（reset idle）
-            self.strategy.mark_active(s)   # 立即回落 priority（避免读到旧 idle 值）
+        def on_turn_start(step: int = 0) -> None:
+            s = self.mgr.touch(sid)
+            s.metadata["step"] = step
+            if self.priority_mode == "idle":
+                self.strategy.mark_active(s)
 
         def priority_fn() -> int:
             s = self.mgr.get(sid)
-            return s.metadata.get("priority", active) if s else active
+            if s is None:
+                return active
+            if self.priority_mode == "progress":
+                # 进度优先级：早步→高（可踢、重算便宜），晚步→低（保护、重算贵）
+                step = s.metadata.get("step", 0)
+                return max(0, round((1 - step / max_steps) * 100))
+            return s.metadata.get("priority", active)
 
         return on_turn_start, priority_fn
 

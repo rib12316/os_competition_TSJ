@@ -136,6 +136,8 @@ class QwenAgentRunner(Runner):
         driver = ConcurrentSessionDriver(
             max_workers=self.max_concurrency, idle_timeout_s=self.idle_timeout_s,
             target_lo=self.target_lo, target_hi=self.target_hi, hbm_pct_fn=self.hbm_pct_fn,
+            priority_mode=("progress" if cfg.session.strategy == "progress-evict" else "idle"),
+            max_steps=self.max_steps,
         )
         self.last_driver = driver  # 暴露给 metrics / 实时监控取 snapshot
         return driver.run(task_ids, _runner)

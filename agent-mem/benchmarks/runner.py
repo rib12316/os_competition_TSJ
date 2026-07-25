@@ -186,8 +186,10 @@ def main(argv: list[str] | None = None) -> int:
             priority=args.priority,
             middlewares=mw_stack.middlewares,  # 缝D：cfg.middleware 激活的中间件
             # F5：session.strategy=priority-evict → 动态调度（KV pool 准入 + 后台 sweep 抬 idle priority）
-            dynamic=(cfg.session.strategy == "priority-evict"),
+            dynamic=(cfg.session.strategy in ("priority-evict", "progress-evict")),
             idle_timeout_s=cfg.session.idle_timeout_s,
+            target_lo=cfg.session.target_lo,
+            target_hi=cfg.session.target_hi,
             hbm_pct_fn=_kv_pool_pct_fn(args.engine_url) if args.engine_url else None,
         )
     else:

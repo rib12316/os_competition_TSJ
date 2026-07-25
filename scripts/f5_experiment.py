@@ -41,6 +41,7 @@ _GROUPS: list[tuple[str, str, str]] = [
     ("B", "f5-priority-static", "--scheduling-policy priority（固定）"),
     ("C", "f5-evict-dynamic",   "动态 priority + HBM 准入（ConcurrentSessionDriver）"),
     ("D", "f5-evict-dynamic-offload", "C + 无损 KV offload（SimpleCPUOffloadConnector→Ascend 变体）"),
+    ("E", "f5-progress-only", "progress 优先级（早步→可踢、重算便宜）+ admission off（强制抢占）"),
 ]
 
 

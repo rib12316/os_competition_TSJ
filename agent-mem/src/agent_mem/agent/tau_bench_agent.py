@@ -60,7 +60,7 @@ class TauBenchAgent:
         enable_thinking: bool = False,
         priority: int = 0,
         priority_fn: Callable[[], int] | None = None,
-        on_turn_start: Callable[[], None] | None = None,
+        on_turn_start: Callable[[int], None] | None = None,
         middlewares: MiddlewareStack | Sequence[Middleware] | None = None,
     ):
         self.client = client
@@ -113,7 +113,7 @@ class TauBenchAgent:
             ctx.bump_step()
             # F5：每轮开始回调（标记 session 活跃）+ 刷新动态 priority 透传给 vLLM
             if self._on_turn_start is not None:
-                self._on_turn_start()
+                self._on_turn_start(steps)
             self.extra_body["priority"] = self._current_priority()
             # 缝D：发引擎前变换 messages（副本），正典 messages 不动
             to_send = self.stack.transform_messages(messages, ctx)
