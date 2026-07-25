@@ -1,0 +1,43 @@
+# F5 实验组 D：动态回收（priority + KV-pool 准入）+ 无损 KV offload 层（NPUOffloadingSpec）。
+#
+# ⚠️ 当前栈 BLOCKED：本仓 vllm-ascend 0.22.1rc1 + vllm 0.22.1 这对里 NPUOffloadingSpec 不可用
+#   （import drift + register_kv_caches AssertionError，#5948-class 版本不兼容）。详见
+#   docs/F5-phase2-findings.md。升级 vllm-ascend 到 NPUOffloadingSpec 可用的版本对后可直接复用本档。
+#
+# 在 C 组（f5-evict-dynamic）基础上叠加 vllm-ascend 原生 NPU↔CPU KV offload（冷 KV→CPU，
+# 命中时回读），看无损层在准入控制之上是否再加分。
+#
+# 关键（#5 调研结论）：--kv-offloading-backend native 默认走 CUDA 的 CPUOffloadingSpec
+# （Ascend 上 register_kv_caches 报错）；必须经 --kv-transfer-config 指定 NPUOffloadingSpec
+# （vllm_ascend/kv_offload/npu.py，用 NPU 感知的 CpuNpuOffloadingHandler）。需给 num_cpu_blocks。
+#
+# 引擎启动：
+#   python -m agent_mem.server.vllm_server --config configs/f5-evict-dynamic-offload.yaml \
+#     --model-path models/Qwen2.5-7B-Instruct --tool-call-parser hermes
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  priority_scheduling: true
+  extra_args:
+    - "--gpu-memory-utilization 0.27"   # 制压：小 KV pool（~1.27GiB）让并发 agent 溢出 → 触发 preempt
+    - "--max-model-len 16384"
+    - "--kv-transfer-config '{\"kv_connector\":\"OffloadingConnector\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"spec_name\":\"NPUOffloadingSpec\",\"spec_module_path\":\"vllm_ascend.kv_offload.npu\",\"num_cpu_blocks\":512}}'"
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+session:                          # 缝E：动态优先级回收（同 C 组）
+  strategy: priority-evict
+  idle_timeout_s: 30
+  options: {}
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft
