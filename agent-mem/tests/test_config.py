@@ -261,7 +261,7 @@ def test_kv_transfer_defaults():
     kvt = KVTransferConfig()
     assert kvt.connector == ""
     assert kvt.role == "kv_both"
-    assert kvt.extra == {}
+    assert kvt.extra_config == {}
 
 
 def test_engine_config_kv_transfer_default():
