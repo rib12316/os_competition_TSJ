@@ -1,0 +1,31 @@
+# baseline-logged：严格 baseline，不启用任何 middleware。
+# 每步真实 prompt token 由 agent 公共层写入 PROMPT_TOKEN_LOG，与 F2 无关。
+engine:
+  backend: vllm
+  model: Qwen2.5-7B-Instruct
+  extra_args: []                 # V1 默认开 prefix cache
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 1
+  seed: 42
+
+middleware:
+  active: []
+  options: {}
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft
+
+user_sim:
+  model: mimo-v2.5-pro
+  provider: openai
+  api_base: https://token-plan-cn.xiaomimimo.com/v1
+  api_key_env: MIMO_KEY

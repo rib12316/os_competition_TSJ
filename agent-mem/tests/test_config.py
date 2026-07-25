@@ -73,6 +73,11 @@ def test_load_f3_lazyload_toggles_middleware():
     assert cfg.middleware.active == ["lazyload"]
 
 
+def test_load_f2_f3_combined_orders_lazyload_before_compress():
+    cfg = load_config(CONFIGS_DIR / "f2-f3-combined.yaml")
+    assert cfg.middleware.active == ["lazyload", "compress"]
+
+
 def test_load_f4_lmcache_toggles_seam_c():
     cfg = load_config(CONFIGS_DIR / "f4-lmcache.yaml")
     assert cfg.engine.lmcache.enabled is True

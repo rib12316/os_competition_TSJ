@@ -8,6 +8,7 @@ import pytest
 
 from agent_mem.agent import tools
 from agent_mem.agent.react import run_react
+from agent_mem.middleware import BaseMiddleware, HandledToolCall
 from agent_mem.server import stub_openai
 
 
@@ -22,8 +23,14 @@ def _tc(name, args, cid="c1"):
     )
 
 
-def _resp(msg):
-    return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+def _resp(msg, prompt_tokens=None):
+    usage = (
+        types.SimpleNamespace(prompt_tokens=prompt_tokens)
+        if prompt_tokens is not None else None
+    )
+    return types.SimpleNamespace(
+        choices=[types.SimpleNamespace(message=msg)], usage=usage
+    )
 
 
 class _FakeClient:
@@ -39,6 +46,35 @@ class _FakeClient:
     def _create(self, **kw):
         self.calls.append(kw)
         return self._responses.pop(0)
+
+
+def test_run_react_internal_tool_bypasses_business_executor():
+    called = []
+
+    class _Internal(BaseMiddleware):
+        def handle_internal_tool_call(self, name, args, ctx):
+            if name == "fetch_tool_result":
+                return HandledToolCall('{"status":"ok","content":"slice"}')
+            return None
+
+    client = _FakeClient([
+        _resp(_msg(None, [_tc("fetch_tool_result", '{"result_id":"tr_x"}')])),
+        _resp(_msg("done")),
+    ])
+
+    result = run_react(
+        client,
+        "m",
+        [{"role": "user", "content": "inspect result"}],
+        [],
+        lambda name, args: called.append(name) or "business",
+        middlewares=[_Internal()],
+    )
+
+    assert called == []
+    assert result.final_text == "done"
+    tool_message = next(message for message in result.messages if message["role"] == "tool")
+    assert "slice" in tool_message["content"]
 
 
 def test_run_react_one_tool_then_finish():
@@ -84,6 +120,59 @@ def test_run_react_bad_tool_args_recovers():
     )
     assert res.final_text == "ok"
     assert res.tool_calls_made == 1
+
+
+def test_run_react_logs_prompt_tokens_without_middleware(tmp_path, monkeypatch):
+    import json
+
+    from agent_mem.agent import usage_log
+
+    class _FakeTokenizer:
+        def apply_chat_template(self, messages, tools=None, **kw):
+            size = sum(len(str(m.get("content") or "")) for m in messages)
+            size += 10 * len(tools or [])
+            return list(range(size + 5))
+
+    log = tmp_path / "usage.jsonl"
+    monkeypatch.setenv("PROMPT_TOKEN_LOG", str(log))
+    monkeypatch.setattr(usage_log, "_get_tokenizer", lambda model: _FakeTokenizer())
+    client = _FakeClient([_resp(_msg("done"), prompt_tokens=4321)])
+    run_react(
+        client, "m", [{"role": "user", "content": "hi"}],
+        None, lambda name, args: "", max_steps=1, session_id="baseline-0",
+    )
+
+    event = json.loads(log.read_text().strip())
+    assert event["session_id"] == "baseline-0"
+    assert event["step"] == 1
+    assert event["prompt_tokens"] == 4321
+    assert event["source"] == "response.usage.prompt_tokens"
+    assert event["original_prompt_tokens"] == 7
+    assert event["transformed_prompt_tokens"] == 7
+    assert event["saved_tokens"] == 0
+    assert event["tokenizer_drift"] == 4314
+
+
+def test_measure_prompt_pair_includes_same_tools_in_both_sides(monkeypatch):
+    from agent_mem.agent import usage_log
+
+    class _FakeTokenizer:
+        def apply_chat_template(self, messages, tools=None, **kw):
+            message_size = sum(len(str(m.get("content") or "")) for m in messages)
+            return list(range(message_size + 100 * len(tools or [])))
+
+    monkeypatch.setenv("PROMPT_TOKEN_LOG", "/tmp/not-written-by-measurement")
+    monkeypatch.setattr(usage_log, "_get_tokenizer", lambda model: _FakeTokenizer())
+    measurement = usage_log.measure_prompt_pair(
+        model="m",
+        original_messages=[{"role": "user", "content": "abcdefghij"}],
+        transformed_messages=[{"role": "user", "content": "abc"}],
+        original_tools=[{"type": "function"}],
+        transformed_tools=[{"type": "function"}],
+    )
+    assert measurement["original_prompt_tokens"] == 110
+    assert measurement["transformed_prompt_tokens"] == 103
+    assert measurement["saved_tokens"] == 7
 
 
 def test_run_react_against_stub_server():
@@ -134,11 +223,18 @@ def test_execute_tool_dispatch():
 # ---- stream_chat_with_ttft ----
 
 
-def _chunk(content=None, tool_calls=None, finish=None):
+def _chunk(content=None, tool_calls=None, finish=None, usage=None):
     import types
 
     return types.SimpleNamespace(choices=[types.SimpleNamespace(
-        delta=types.SimpleNamespace(content=content, tool_calls=tool_calls), finish_reason=finish)])
+        delta=types.SimpleNamespace(content=content, tool_calls=tool_calls),
+        finish_reason=finish)], usage=usage)
+
+
+def _usage_chunk(prompt_tokens):
+    return types.SimpleNamespace(
+        choices=[], usage=types.SimpleNamespace(prompt_tokens=prompt_tokens)
+    )
 
 
 def _tc_delta(index, name=None, args=None, cid=None):
@@ -163,9 +259,10 @@ def test_stream_chat_with_ttft_reconstructs_content_and_tool_calls():
         _chunk(content="lo"),
         _chunk(tool_calls=[_tc_delta(0, name="search", args='{"q":"')]),
         _chunk(tool_calls=[_tc_delta(0, args='x"}')], finish="tool_calls"),
+        _usage_chunk(321),
     ]
     clock_vals = iter([10.0, 10.02])  # t0, first-chunk
-    msg, ttft = stream_chat_with_ttft(
+    msg, ttft, prompt_tokens = stream_chat_with_ttft(
         _C(chunks), model="m", messages=[], tools=[],
         clock=lambda: next(clock_vals),
     )
@@ -174,6 +271,7 @@ def test_stream_chat_with_ttft_reconstructs_content_and_tool_calls():
     # arguments 跨两片拼接
     assert msg["tool_calls"][0]["function"]["arguments"] == '{"q":"x"}'
     assert ttft == pytest.approx(0.02)
+    assert prompt_tokens == 321
 
 
 def test_stream_chat_with_ttft_empty_stream():
@@ -186,8 +284,9 @@ def test_stream_chat_with_ttft_empty_stream():
             )
 
     clock_vals = iter([5.0, 5.5])
-    msg, ttft = stream_chat_with_ttft(
+    msg, ttft, prompt_tokens = stream_chat_with_ttft(
         _C(), model="m", messages=[], clock=lambda: next(clock_vals)
     )
     assert msg["content"] is None
     assert ttft == pytest.approx(0.5)
+    assert prompt_tokens is None

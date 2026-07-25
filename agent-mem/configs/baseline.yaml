@@ -20,3 +20,9 @@ metrics:                          # 必采 6 指标
   - kv_cache_hit_rate
   - task_success_rate
   - ttft
+
+user_sim:                         # tau-bench user-simulator（agent 侧仍走本地引擎）
+  model: mimo-v2.5-pro
+  provider: openai
+  api_base: https://token-plan-cn.xiaomimimo.com/v1
+  api_key_env: MIMO_KEY

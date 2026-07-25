@@ -14,6 +14,12 @@
 | `agent_mem/scheduler/` | M3 / M10 | session-aware 调度 / KV checkpoint 恢复 |
 | `agent_mem/kv/` | M1 / M4 / M9 | KV 量化 / LMCache 分层 / 分布式 KV 池 |
 
+F3 tool-result lazy-load is implemented in `middleware/lazyload.py`: large tool
+results are stored outside model history and retrieved through the bounded local
+`fetch_tool_result` tool. JSON arrays support bounded exact/case-insensitive/contains
+field selection, stable match pointers, and token-capped previews. The inference
+backend remains vLLM/vLLM-Ascend.
+
 ## 开发
 
 ```bash
@@ -24,3 +30,13 @@ ruff check src tests
 ```
 
 Benchmark：`python -m agent_mem.benchmarks.runner --config configs/optimized.yaml`（三档对照见 `configs/`）。
+
+F3 deterministic comparison:
+
+```bash
+PYTHONPATH=src python benchmarks/f3_long_tool_benchmark.py \
+  --model Qwen2.5-7B-Instruct --results 3 --result-tokens 5000
+
+PYTHONPATH=src python benchmarks/f3_retrieval_quality_benchmark.py \
+  --records 360 --variants baseline f3 f2_f3
+```

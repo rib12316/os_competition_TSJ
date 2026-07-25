@@ -1,0 +1,102 @@
+{
+  "benchmark": "f3-long-tool-result",
+  "model": "Qwen2.5-7B-Instruct",
+  "config": {
+    "results": 3,
+    "target_tokens_per_result": 5000,
+    "externalize_trigger_tokens": 4000,
+    "perf_runs": 20
+  },
+  "prompt_tokens": {
+    "baseline": 21350,
+    "f2_only": 17075,
+    "f3_only": 1499,
+    "f2_f3": 1499
+  },
+  "f3_saved_tokens": 19851,
+  "f3_saved_percent": 92.9789,
+  "f2_transform_ms": 6640.438,
+  "f2_f3_transform_ms": 3.244,
+  "reference_tokens": {
+    "max": 222,
+    "values": [
+      222,
+      218,
+      220
+    ]
+  },
+  "local_overhead_ms": {
+    "externalize_p50": 8.358,
+    "externalize_p95": 8.526,
+    "fetch_p50": 5.029,
+    "fetch_p95": 5.075,
+    "search_p50": 0.133,
+    "search_p95": 0.145,
+    "small_p50": 0.068,
+    "small_p95": 0.076
+  },
+  "fetch_tokens_max": 768,
+  "search_tokens_max": 25,
+  "gates": {
+    "f3_full_prompt_saved_at_least_70pct": true,
+    "f2_f3_not_larger_than_f3": true,
+    "reference_at_most_512_tokens": true,
+    "externalize_p95_at_most_50ms": true,
+    "fetch_p95_at_most_20ms": true,
+    "small_p95_at_most_5ms": true,
+    "fetch_at_most_768_tokens": true,
+    "search_p95_at_most_20ms": true,
+    "search_at_most_768_tokens": true,
+    "all_results_externalized": true,
+    "vllm_prompt_tokens_decreased": true
+  },
+  "vllm": {
+    "rounds": [
+      {
+        "order": [
+          "baseline",
+          "f3"
+        ],
+        "baseline": {
+          "prompt_tokens": 21371,
+          "wall_ms": 2060.807
+        },
+        "f3": {
+          "prompt_tokens": 1520,
+          "wall_ms": 81.231
+        }
+      },
+      {
+        "order": [
+          "f3",
+          "baseline"
+        ],
+        "f3": {
+          "prompt_tokens": 1520,
+          "wall_ms": 77.84
+        },
+        "baseline": {
+          "prompt_tokens": 21371,
+          "wall_ms": 1816.628
+        }
+      },
+      {
+        "order": [
+          "baseline",
+          "f3"
+        ],
+        "baseline": {
+          "prompt_tokens": 21371,
+          "wall_ms": 1822.293
+        },
+        "f3": {
+          "prompt_tokens": 1520,
+          "wall_ms": 88.31
+        }
+      }
+    ],
+    "baseline_wall_ms_p50": 1822.293,
+    "f3_wall_ms_p50": 81.231
+  },
+  "passed": true
+}

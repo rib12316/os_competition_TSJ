@@ -1,10 +1,11 @@
 # F2 · Prompt / 上下文压缩（缝D：上下文中间件 transform_messages）。
-# 对 system prompt / 冷历史用压缩器（LLMLingua）压 2–4×，发引擎前变换 messages。
+# 对冷历史用压缩器（LLMLingua）压短，并确定性精简 system prompt / 工具 schema。
 # 纯 agent 层，与硬件无关。
 #
 # ⚠️ 红线：压过头伤成功率，必须配 ablation，成功率下降 ≤ 2pp。
-# ⚠️ TODO(F2)：实现 CompressMiddleware 并 register("compress", ...) 后此档才生效。
-#    未注册时 load_config 仍通过（名字解析在 middleware 包，运行时才校验）。
+# ✅ 已实现：CompressMiddleware 已 register("compress")，此档开箱可用。
+#    llmlingua 为可选依赖：pip install llmlingua（或 agent-mem[compress]）。
+#    未安装时仅 import 包/跑单测不受影响（惰性 import）。
 #
 # 独立性：只开关自己（middleware.active=[compress]）。
 engine:
@@ -19,10 +20,31 @@ benchmark:
   seed: 42
 
 middleware:                       # 缝D
-  active: [compress]             # TODO(F2): register 后激活
+  active: [compress]             # 已注册，开箱激活
   options:
     compress:
-      ratio: 0.5                 # 目标压缩比（token 收益 vs 成功率 trade-off）
+      # —— 方案 A：单一方法 + 触发门 ——
+      method: llmlingua2         # BERT token classifier，比 GPT-2 LLMLingua 快 3-6×
+      rate: 0.65                 # 非 tool-aware 回退路径的默认保留比例
+      trigger_tokens: 8000       # 累计长 body 才压；大单次结果由 hot 1k 路径处理
+      # 触发计量自动使用 engine.model 的 tokenizer；PROMPT_TOKENIZER_PATH 可覆盖本地路径
+      recompress_delta_tokens: 4000  # 压过之后新增冷 >= 此值才重压（4000≈每任务压1次复用；8000 太高永不重压）
+      keep_hot: 6                # 热尾保留条数（自动 snap 到完整 tool_call→tool 组）
+      tool_aware: true           # 保留 user/tool name/arguments/关键 JSON，仅压正文
+      assistant_rate: 0.75       # 冷 assistant 自然语言保留比例
+      tool_result_rate: 0.60     # 冷 tool result 正文保留比例
+      hot_tool_trigger_tokens: 1000  # 大 tool result 在热区即压 content，结构/硬字段保持
+      optimize_static_prompt: true   # system + tools 固定前缀确定性精简
+      system_prompt_mode: retail_compact  # 逐条保留 retail 规则的紧凑 policy
+      deduplicate_tool_descriptions: true # 重复参数说明提取为共享 convention
+      device: cpu                # 压缩器小模型放 CPU，NPU 让给主 LLM
+      model_name: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank
+      # —— 后端：隔离 venv 子进程（绕开主 venv transformers 5.x ↔ llmlingua 4.x 冲突）——
+      backend: subprocess        # subprocess(默认, 推荐) | inprocess(仅隔离 venv 自身跑时)
+      worker_venv: /data/os_competition_TSJ/.venv-compress/bin/python  # 隔离压缩 venv 的 python
+      worker_script: ""          # 空=用随包的 agent_mem/middleware/_compress_worker.py
+      worker_pool_size: 4        # 并发压缩池大小（应 >= --concurrency 才全并行；默认1=单worker）
+      worker_threads: 0          # 0=自动(核数//pool_size：pool1→128核不限, pool4→32核不超订)；>0 手动指定
 
 metrics:
   - e2e_latency_p50
@@ -32,3 +54,9 @@ metrics:
   - kv_cache_hit_rate
   - task_success_rate
   - ttft
+
+user_sim:                         # tau-bench user-simulator（agent 侧仍走本地引擎）
+  model: mimo-v2.5-pro            # 默认用 mimo 演用户（更强、更真实），可改 gpt-4o 等
+  provider: openai
+  api_base: https://token-plan-cn.xiaomimimo.com/v1
+  api_key_env: MIMO_KEY           # key 从 $MIMO_KEY 读，不写进仓库；CLI --user-* 可覆盖

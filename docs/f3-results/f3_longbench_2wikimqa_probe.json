@@ -1,0 +1,424 @@
+{
+  "benchmark": "f3-longbench-2wikimqa",
+  "source": "THUDM/LongBench data/2wikimqa.jsonl",
+  "model": "Qwen2.5-7B-Instruct",
+  "config": {
+    "start": 0,
+    "limit": 3,
+    "variants": [
+      "baseline",
+      "f3",
+      "f2_f3"
+    ],
+    "max_steps": 8,
+    "temperature": 0.0
+  },
+  "summary": {
+    "baseline": {
+      "passed": 0,
+      "total": 3,
+      "accuracy": 0.0,
+      "fetch_calls": 0,
+      "cumulative_prompt_tokens": 25019,
+      "median_wall_ms": 1056.813
+    },
+    "f2_f3": {
+      "passed": 0,
+      "total": 3,
+      "accuracy": 0.0,
+      "fetch_calls": 3,
+      "cumulative_prompt_tokens": 10281,
+      "median_wall_ms": 1398.01
+    },
+    "f3": {
+      "passed": 0,
+      "total": 3,
+      "accuracy": 0.0,
+      "fetch_calls": 3,
+      "cumulative_prompt_tokens": 10272,
+      "median_wall_ms": 1359.447
+    }
+  },
+  "cases": [
+    {
+      "example_index": 0,
+      "example_id": "41ac2a4beb0af8f58d01863a62b90692f7c7d74b5e3a58d9",
+      "variant": "baseline",
+      "question": "Where was the wife of Francis I Rákóczi born?",
+      "gold_answers": [
+        "Ozalj"
+      ],
+      "answer": "Zboró",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 8256,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "wife of Francis I Rákóczi birthplace"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        296,
+        8598
+      ],
+      "cumulative_prompt_tokens": 8894,
+      "model_wall_ms_by_step": [
+        452.214,
+        656.241
+      ],
+      "total_wall_ms": 1108.456
+    },
+    {
+      "example_index": 1,
+      "example_id": "3924e4ac5039ce3fadda49604bfcb0f5238af81774616e53",
+      "variant": "baseline",
+      "question": "Who is Sobe (Sister Of Saint Anne)'s grandchild?",
+      "gold_answers": [
+        "John the Baptist"
+      ],
+      "answer": "Jim Ramel Kjellgren",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7701,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Sobe (Sister Of Saint Anne)"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        298,
+        8044
+      ],
+      "cumulative_prompt_tokens": 8342,
+      "model_wall_ms_by_step": [
+        410.098,
+        646.715
+      ],
+      "total_wall_ms": 1056.813
+    },
+    {
+      "example_index": 2,
+      "example_id": "2c952e3e1ca394df975103b3135b3c38e0ee16e25d860258",
+      "variant": "baseline",
+      "question": "Where does the director of film Man At Bath work at?",
+      "gold_answers": [
+        "Cahiers du cinéma"
+      ],
+      "answer": "Sam Spiegel Film and Television School",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7152,
+      "model_steps": 2,
+      "business_calls": 1,
+      "fetch_calls": 0,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "film Man At Bath director"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        295,
+        7488
+      ],
+      "cumulative_prompt_tokens": 7783,
+      "model_wall_ms_by_step": [
+        353.289,
+        612.601
+      ],
+      "total_wall_ms": 965.89
+    },
+    {
+      "example_index": 0,
+      "example_id": "41ac2a4beb0af8f58d01863a62b90692f7c7d74b5e3a58d9",
+      "variant": "f3",
+      "question": "Where was the wife of Francis I Rákóczi born?",
+      "gold_answers": [
+        "Ozalj"
+      ],
+      "answer": "Lotharingia",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 8256,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "wife of Francis I Rákóczi birthplace"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_NgacsNgc6FCY2ziL",
+            "match_field": "title",
+            "match_value": "Waldrada of Lotharingia"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        770,
+        1029,
+        1693
+      ],
+      "cumulative_prompt_tokens": 3492,
+      "model_wall_ms_by_step": [
+        447.431,
+        787.256,
+        121.591
+      ],
+      "total_wall_ms": 1356.278
+    },
+    {
+      "example_index": 1,
+      "example_id": "3924e4ac5039ce3fadda49604bfcb0f5238af81774616e53",
+      "variant": "f3",
+      "question": "Who is Sobe (Sister Of Saint Anne)'s grandchild?",
+      "gold_answers": [
+        "John the Baptist"
+      ],
+      "answer": "Elizabeth",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7701,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Sobe (Sister Of Saint Anne)"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_bbGGzGXsqhIFV1Kg",
+            "match_field": "title",
+            "match_value": "Sobe (sister of Saint Anne)",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        772,
+        1027,
+        1520
+      ],
+      "cumulative_prompt_tokens": 3319,
+      "model_wall_ms_by_step": [
+        421.816,
+        897.811,
+        70.327
+      ],
+      "total_wall_ms": 1389.954
+    },
+    {
+      "example_index": 2,
+      "example_id": "2c952e3e1ca394df975103b3135b3c38e0ee16e25d860258",
+      "variant": "f3",
+      "question": "Where does the director of film Man At Bath work at?",
+      "gold_answers": [
+        "Cahiers du cinéma"
+      ],
+      "answer": "Christophe Honoré",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7152,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "director of film Man At Bath works"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_4KYuec1Yff2KRodg",
+            "match_field": "title",
+            "match_value": "Man at Bath",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1003,
+        1689
+      ],
+      "cumulative_prompt_tokens": 3461,
+      "model_wall_ms_by_step": [
+        393.174,
+        844.155,
+        122.119
+      ],
+      "total_wall_ms": 1359.447
+    },
+    {
+      "example_index": 0,
+      "example_id": "41ac2a4beb0af8f58d01863a62b90692f7c7d74b5e3a58d9",
+      "variant": "f2_f3",
+      "question": "Where was the wife of Francis I Rákóczi born?",
+      "gold_answers": [
+        "Ozalj"
+      ],
+      "answer": "Trier",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 8256,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "wife of Francis I Rákóczi birthplace"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_rg7tylBG-vbGUUGD",
+            "match_field": "title",
+            "match_value": "Waldrada of Lotharingia",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        770,
+        1027,
+        1698
+      ],
+      "cumulative_prompt_tokens": 3495,
+      "model_wall_ms_by_step": [
+        423.437,
+        882.346,
+        92.226
+      ],
+      "total_wall_ms": 1398.01
+    },
+    {
+      "example_index": 1,
+      "example_id": "3924e4ac5039ce3fadda49604bfcb0f5238af81774616e53",
+      "variant": "f2_f3",
+      "question": "Who is Sobe (Sister Of Saint Anne)'s grandchild?",
+      "gold_answers": [
+        "John the Baptist"
+      ],
+      "answer": "Elizabeth",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7701,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "Sobe (Sister Of Saint Anne)"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_6EpbE5fChCK1_OnR",
+            "match_field": "title",
+            "match_value": "Sobe (sister of Saint Anne)",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        772,
+        1029,
+        1524
+      ],
+      "cumulative_prompt_tokens": 3325,
+      "model_wall_ms_by_step": [
+        411.578,
+        917.341,
+        71.972
+      ],
+      "total_wall_ms": 1400.891
+    },
+    {
+      "example_index": 2,
+      "example_id": "2c952e3e1ca394df975103b3135b3c38e0ee16e25d860258",
+      "variant": "f2_f3",
+      "question": "Where does the director of film Man At Bath work at?",
+      "gold_answers": [
+        "Cahiers du cinéma"
+      ],
+      "answer": "Christophe Honoré",
+      "success": false,
+      "failure_reason": "wrong_answer",
+      "document_count": 10,
+      "payload_tokens": 7152,
+      "model_steps": 3,
+      "business_calls": 1,
+      "fetch_calls": 1,
+      "tool_calls": [
+        {
+          "name": "retrieve_documents",
+          "arguments": {
+            "query": "director of film Man At Bath works"
+          }
+        },
+        {
+          "name": "fetch_tool_result",
+          "arguments": {
+            "result_id": "tr_bkxe3Yrm5wSe3XSn",
+            "match_field": "title",
+            "match_value": "Man at Bath",
+            "match_mode": "iexact"
+          }
+        }
+      ],
+      "prompt_tokens_by_step": [
+        769,
+        1003,
+        1689
+      ],
+      "cumulative_prompt_tokens": 3461,
+      "model_wall_ms_by_step": [
+        388.532,
+        856.203,
+        122.345
+      ],
+      "total_wall_ms": 1367.08
+    }
+  ]
+}

@@ -9,11 +9,19 @@ import pytest
 pytest.importorskip("tau_bench")
 
 from agent_mem.agent.tau_bench_agent import TauBenchAgent  # noqa: E402
+from agent_mem.middleware import BaseMiddleware, HandledToolCall  # noqa: E402
+
+
+def _usage_chunk(prompt_tokens=123):
+    return types.SimpleNamespace(
+        choices=[], usage=types.SimpleNamespace(prompt_tokens=prompt_tokens)
+    )
 
 
 def _content_chunks(text):
     return [types.SimpleNamespace(choices=[types.SimpleNamespace(
-        delta=types.SimpleNamespace(content=text, tool_calls=None), finish_reason="stop")])]
+        delta=types.SimpleNamespace(content=text, tool_calls=None), finish_reason="stop")]),
+        _usage_chunk()]
 
 
 def _tool_chunks(name, args, cid="c1"):
@@ -22,7 +30,7 @@ def _tool_chunks(name, args, cid="c1"):
             content=None,
             tool_calls=[types.SimpleNamespace(
                 index=0, id=cid, function=types.SimpleNamespace(name=name, arguments=args))]),
-        finish_reason="tool_calls")])]
+        finish_reason="tool_calls")]), _usage_chunk()]
 
 
 class _FakeStreamClient:
@@ -36,6 +44,7 @@ class _FakeStreamClient:
 
     def _create(self, **kw):
         assert kw.get("stream") is True
+        assert kw.get("stream_options") == {"include_usage": True}
         return iter(self._lists.pop(0))
 
 
@@ -106,3 +115,40 @@ def test_solve_truncates_at_max_steps_without_done():
     assert out.n_steps == 3
     assert out.reward == 0.0
     assert len(out.ttft_ms_list) == 3
+
+
+def test_internal_fetch_does_not_reach_tau_environment():
+    class _TrackingEnv(_FakeEnv):
+        def __init__(self):
+            self.actions = []
+
+        def step(self, action):
+            self.actions.append(action.name)
+            return super().step(action)
+
+    class _Internal(BaseMiddleware):
+        def transform_tools(self, tools, ctx):
+            return [*tools, {"type": "function", "function": {
+                "name": "fetch_tool_result", "parameters": {"type": "object"}
+            }}]
+
+        def handle_internal_tool_call(self, name, args, ctx):
+            if name == "fetch_tool_result":
+                return HandledToolCall('{"status":"ok","content":"slice"}')
+            return None
+
+    env = _TrackingEnv()
+    client = _FakeStreamClient([
+        _tool_chunks("fetch_tool_result", '{"result_id":"tr_x"}'),
+        _content_chunks("done"),
+    ])
+    agent = TauBenchAgent(client, "Qwen3-0.6B", middlewares=[_Internal()])
+
+    out = agent.solve(env, task_index=0, max_num_steps=3)
+
+    assert env.actions == ["respond"]
+    assert out.reward == 1.0
+    assert any(
+        message.get("role") == "tool" and "slice" in message.get("content", "")
+        for message in out.messages
+    )

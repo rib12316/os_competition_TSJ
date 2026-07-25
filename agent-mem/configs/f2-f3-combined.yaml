@@ -1,0 +1,63 @@
+# F2 + F3：大工具结果先外置，固定前缀/中等结果/冷历史再由 F2 压缩。
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  extra_args: []
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+middleware:
+  active: [lazyload, compress]
+  options:
+    lazyload:
+      store: sqlite
+      store_path: ""
+      ttl_seconds: 3600
+      externalize_trigger_tokens: 4000
+      max_reference_tokens: 512
+      fetch_max_tokens: 768
+      fetch_default_lines: 20
+      fetch_max_lines: 100
+      max_parse_bytes: 5000000
+      on_store_error: passthrough
+      exempt_tools: [fetch_tool_result]
+      tool_overrides: {}
+    compress:
+      method: llmlingua2
+      rate: 0.65
+      trigger_tokens: 8000
+      recompress_delta_tokens: 4000
+      keep_hot: 6
+      tool_aware: true
+      assistant_rate: 0.75
+      tool_result_rate: 0.60
+      hot_tool_trigger_tokens: 1000
+      optimize_static_prompt: true
+      system_prompt_mode: retail_compact
+      deduplicate_tool_descriptions: true
+      device: cpu
+      model_name: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank
+      backend: subprocess
+      worker_venv: /data/os_competition_TSJ/.venv-compress/bin/python
+      worker_script: ""
+      worker_pool_size: 4
+      worker_threads: 0
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft
+
+user_sim:
+  model: mimo-v2.5-pro
+  provider: openai
+  api_base: https://token-plan-cn.xiaomimimo.com/v1
+  api_key_env: MIMO_KEY

@@ -3,6 +3,8 @@
 核心契约在 :mod:`agent_mem.middleware.base`：::
 
     Middleware.transform_messages()    # 发引擎前变换 messages（F2 压缩）
+    Middleware.transform_request()     # 联合变换 messages/tools（固定前缀去重）
+    Middleware.after_model_call()      # 响应后观察真实 prompt_tokens
     Middleware.intercept_tool_result() # 拦工具返回值（F3 lazy-load）
 
 本包提供：
@@ -24,17 +26,23 @@ from typing import Any
 
 from agent_mem.middleware.base import (
     BaseMiddleware,
+    HandledToolCall,
     Middleware,
     MiddlewareContext,
     MiddlewareStack,
 )
+from agent_mem.middleware.compress import CompressMiddleware
+from agent_mem.middleware.lazyload import LazyLoadMiddleware
 
 __all__ = [
     "BaseMiddleware",
+    "HandledToolCall",
     "Middleware",
     "MiddlewareContext",
     "MiddlewareStack",
     "NoOpMiddleware",
+    "CompressMiddleware",
+    "LazyLoadMiddleware",
     "registry",
     "register",
     "unregister",
@@ -44,15 +52,17 @@ __all__ = [
 
 
 class NoOpMiddleware(BaseMiddleware):
-    """identity 中间件：两个钩子都原样返回。空 ``MiddlewareStack`` 的等价物。"""
+    """identity 中间件：三个钩子均 no-op。空 ``MiddlewareStack`` 的等价物。"""
 
     name = "noop"
 
 
 # ---- 注册表：名字 → 中间件类（F2/F3 实现后在此注册）----
-# 默认只放 noop；feature 分支 merge 时补 "compress" / "lazyload"。
+# F2 Prompt 压缩已注册；F3 lazy-load 待补 "lazyload"。
 _REGISTRY: dict[str, type[BaseMiddleware]] = {
     "noop": NoOpMiddleware,
+    "compress": CompressMiddleware,
+    "lazyload": LazyLoadMiddleware,
 }
 
 
@@ -107,4 +117,9 @@ def middlewares_from_config(cfg: Any) -> MiddlewareStack:
     CLI 在启动 agent 前一次性构造。
     """
     mw = cfg.middleware
-    return build_middlewares(mw.active, mw.options)
+    options = {name: dict(value) for name, value in mw.options.items()}
+    if "compress" in mw.active:
+        options.setdefault("compress", {}).setdefault("tokenizer_model", cfg.engine.model)
+    if "lazyload" in mw.active:
+        options.setdefault("lazyload", {}).setdefault("tokenizer_model", cfg.engine.model)
+    return build_middlewares(mw.active, options)

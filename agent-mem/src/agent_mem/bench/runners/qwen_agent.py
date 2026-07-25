@@ -29,6 +29,7 @@ class QwenAgentRunner(Runner):
         max_steps: int = 30,
         max_tasks: int | None = None,
         middlewares: list | None = None,
+        concurrency: int = 1,
     ):
         self.engine_url = engine_url
         self.model = model
@@ -41,6 +42,9 @@ class QwenAgentRunner(Runner):
         self.max_tasks = max_tasks
         # 缝D：中间件链（由 CLI 从 cfg.middleware 构造后注入；None=identity）
         self.middlewares = middlewares
+        # 任务级并发（tau-bench 任务相互独立；>1 时用线程池并行跑各任务）。
+        # 注意：压缩 worker 与事件日志在 compress.py 内已加锁，故共享中间件实例线程安全。
+        self.concurrency = max(1, int(concurrency))
 
     def name(self) -> str:
         return "qwen-agent"
@@ -51,20 +55,23 @@ class QwenAgentRunner(Runner):
         tasks = list_tasks(cfg.benchmark.domain, cfg.benchmark.split)
         if self.max_tasks is not None:
             tasks = tasks[: self.max_tasks]
-        return [
-            run_task(
-                t.task_id,
-                domain=cfg.benchmark.domain,
-                split=cfg.benchmark.split,
-                engine_url=self.engine_url,
-                model=self.model,
-                user_model=self.user_model,
-                user_provider=self.user_provider,
-                user_api_base=self.user_api_base,
-                user_api_key=self.user_api_key,
-                api_key=self.api_key,
-                max_steps=self.max_steps,
-                middlewares=self.middlewares,
-            )
-            for t in tasks
-        ]
+        kw = dict(
+            domain=cfg.benchmark.domain,
+            split=cfg.benchmark.split,
+            engine_url=self.engine_url,
+            model=self.model,
+            user_model=self.user_model,
+            user_provider=self.user_provider,
+            user_api_base=self.user_api_base,
+            user_api_key=self.user_api_key,
+            api_key=self.api_key,
+            max_steps=self.max_steps,
+            middlewares=self.middlewares,
+        )
+        if self.concurrency <= 1:
+            return [run_task(t.task_id, **kw) for t in tasks]
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=self.concurrency) as ex:
+            futs = [ex.submit(run_task, t.task_id, **kw) for t in tasks]
+            return [f.result() for f in futs]  # 保序；异常会在此抛出
