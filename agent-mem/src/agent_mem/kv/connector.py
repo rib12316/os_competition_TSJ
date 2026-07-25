@@ -1,15 +1,18 @@
-"""缝C · 通用 V1 KV connector 抽象（``--kv-connector`` + ``--kv-transfer-config``）。
+"""缝C · 通用 V1 KV connector 抽象（``--kv-transfer-config``）。
 
-F4 LMCache Ascend 走 ``--kv-transfer-config`` 激活 ``LMCacheAscendConnector``
-（见 ``docs/F4-lmcache-ascend.md``）。本模块覆盖其它 V1 KV connector：
+经 vLLM 0.22.1 的 ``--kv-transfer-config``（**flat schema**）启用 V1 KV connector：
 
-- ``pykvconnector``（``SimpleCPUOffloadConnector``）—— **F5/F6 借用的机制**
-  （idle eviction / checkpoint 的 NPU↔CPU KV 搬运，策略见
-  :mod:`agent_mem.scheduler.strategies`）；
-- ``MultiConnector`` / ``P2pNccl`` 等。
+- ``LMCacheAscendConnector``（F4）—— NPU↔CPU↔Disk 三级分层（见 ``docs/F4-lmcache-ascend.md``）；
+- ``SimpleCPUOffloadConnector``（F5/F6 借用的无损 offload 机制；Ascend 上注册时被
+  vllm-ascend 自动替换成 ``AscendSimpleCPUOffloadConnector``，NPU 原生 ``aclrtMemcpyBatchAsync``，
+  支持 ``lazy_offload``；idle eviction / checkpoint 的 NPU↔CPU KV 搬运，策略见
+  :mod:`agent_mem.scheduler.strategies`）。真机验证可用（2026-07-25，0.22.1rc1）。
 
-把一个 :class:`KVConnectorConfig` 渲染成 vLLM CLI 参数（纯函数，可单测）。真机时
-``extra_args`` 自动带上这些 flag。
+把一个 :class:`KVConnectorConfig` 渲染成 vLLM CLI 参数（纯函数，可单测）。
+
+.. note::
+   旧版用 ``--kv-connector <name>`` + 嵌套 ``{"format":..,"connector":{..}}`` —— vLLM 0.22.1
+   **不再认 ``--kv-connector``**（被拒），且 schema 改 flat。本模块已修正。
 """
 
 from __future__ import annotations
@@ -17,54 +20,45 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-# V1 connector 的 transfer 格式（vLLM 约定）
-_TRANSFER_FORMATS = ("by_layer", "split_pytorch_serialize")
-
 
 @dataclass
 class KVConnectorConfig:
-    """一个 V1 KV connector 的声明。
+    """一个 V1 KV connector 的声明（vLLM 0.22.1 flat schema）。
 
-    - ``connector``：vLLM connector 名（``pykvconnector`` / ``lmcache_connector`` …）。
-    - ``transfer_format``：KV 搬运格式（默认 ``by_layer``，按层搬，适配 offload）。
-    - ``connector_opts``：进 ``kv_transfer_config.connector`` 的额外字段（自由 dict）。
+    - ``connector``：vLLM connector 名（``SimpleCPUOffloadConnector`` / ``lmcache_connector`` …）。
+    - ``kv_role``：``kv_both``（单机 offload）/ kv_producer / kv_consumer。
+    - ``extra_config``：进 ``kv_connector_extra_config`` 的字段（如
+      ``{"cpu_bytes_to_use": 4294967296, "lazy_offload": True}``）。
     - ``extra``：直接透传的原始 CLI flag（escape hatch，不经结构化）。
     """
 
     connector: str
-    transfer_format: str = "by_layer"
-    connector_opts: dict = field(default_factory=dict)
+    kv_role: str = "kv_both"
+    extra_config: dict = field(default_factory=dict)
     extra: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.connector:
             raise ValueError("KVConnectorConfig.connector 不能为空")
-        if self.transfer_format not in _TRANSFER_FORMATS:
-            raise ValueError(
-                f"transfer_format={self.transfer_format!r} 不在 {_TRANSFER_FORMATS}"
-            )
 
 
 def render_kv_connector_args(kcc: KVConnectorConfig | None) -> list[str]:
     """把 :class:`KVConnectorConfig` 渲染成 vLLM CLI 参数列表。
 
-    产出形如::
+    产出形如（vLLM 0.22.1 flat schema，**不**含被拒的 ``--kv-connector``）::
 
-        --kv-connector pykvconnector
-        --kv-transfer-config '{"format":"by_layer","connector":{...}}'
+        --kv-transfer-config '{"kv_connector":"SimpleCPUOffloadConnector","kv_role":"kv_both","kv_connector_extra_config":{...}}'
 
     ``None`` → 空列表（不启用任何 connector）。``extra`` 原样追加在后。
     """
     if kcc is None:
         return []
-    transfer = {
-        "format": kcc.transfer_format,
-        "connector": {"name": kcc.connector, **kcc.connector_opts},
+    cfg = {
+        "kv_connector": kcc.connector,
+        "kv_role": kcc.kv_role,
+        "kv_connector_extra_config": dict(kcc.extra_config),
     }
-    args = [
-        "--kv-connector", kcc.connector,
-        "--kv-transfer-config", json.dumps(transfer),
-    ]
+    args = ["--kv-transfer-config", json.dumps(cfg)]
     if kcc.extra:
         args.extend(kcc.extra)
     return args

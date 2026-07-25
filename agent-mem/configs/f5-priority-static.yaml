@@ -1,0 +1,33 @@
+# F5 实验组 B：vllm priority 调度（--scheduling-policy priority），应用层无动态调度。
+# 跑时用 --priority 给不同 session 分配固定优先级，验 vLLM 原生 priority 抢占
+# （HBM 满时按 priority 数值大者优先 preempt）。与 A 比 = "开了 priority 但不动态"。
+# 引擎须用本档启动（priority_scheduling → 渲染 --scheduling-policy priority）：
+#   python -m agent_mem.server.vllm_server --config configs/f5-priority-static.yaml \
+#     --model-path models/Qwen2.5-7B-Instruct --tool-call-parser hermes
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  priority_scheduling: true       # F5：渲染 --scheduling-policy priority
+  extra_args:
+    - "--gpu-memory-utilization 0.27"   # 制压：小 KV pool（~1.27GiB）让并发 agent 溢出 → 触发 preempt
+    - "--max-model-len 16384"
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+session:                          # 缝E：noop = priority 由 CLI --priority 静态给
+  strategy: noop
+  idle_timeout_s: 60
+  options: {}
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

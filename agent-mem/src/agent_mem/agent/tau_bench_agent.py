@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -64,21 +64,39 @@ class TauBenchAgent:
         temperature: float = 0.0,
         max_tokens: int = 512,
         enable_thinking: bool = False,
+        priority: int = 0,
+        priority_fn: Callable[[], int] | None = None,
+        on_turn_start: Callable[[int], None] | None = None,
         middlewares: MiddlewareStack | Sequence[Middleware] | None = None,
     ):
         self.client = client
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
-        # Qwen3 默认开 thinking（<think>…</think>），benchmark 关掉以加速 + 省 token；
-        # 经 chat_template_kwargs 透传给 vLLM 的 chat template。
-        self.extra_body = (
-            None if enable_thinking else {"chat_template_kwargs": {"enable_thinking": False}}
-        )
+        self.priority = priority
+        # F5：动态优先级（priority_fn 每轮读 session 当前 priority；None → 静态 priority）
+        self._priority_fn = priority_fn
+        # F5：每轮开始回调（driver 接 mgr.touch + 策略 mark_active，标记活跃、回落 priority）
+        self._on_turn_start = on_turn_start
+        # extra_body：关闭 thinking + 透传 priority 给 vLLM 调度器（priority 每轮刷新）
+        body: dict[str, Any] = {}
+        if not enable_thinking:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        body["priority"] = self._current_priority()
+        self.extra_body = body
         # 缝D：上下文中间件（F2 压缩 / F3 lazy-load）。None → 空 stack = identity。
         self.stack: MiddlewareStack = _as_stack(middlewares)
         self.stack.prepare()
         prepare_prompt_meter(model)
+
+    def _current_priority(self) -> int:
+        """当前调度优先级：有 ``priority_fn`` 则调它（异常回退静态 priority），否则静态。"""
+        if self._priority_fn is not None:
+            try:
+                return int(self._priority_fn())
+            except Exception:
+                return self.priority
+        return self.priority
 
     def solve(self, env: Any, task_index: int | None = None, max_num_steps: int = 30) -> SolveOutcome:
         # 惰性 import（触发 litellm 仅在此处）
@@ -101,6 +119,10 @@ class TauBenchAgent:
         for _ in range(max_num_steps):
             steps += 1
             ctx.bump_step()
+            # F5：每轮开始回调（标记 session 活跃）+ 刷新动态 priority 透传给 vLLM
+            if self._on_turn_start is not None:
+                self._on_turn_start(steps)
+            self.extra_body["priority"] = self._current_priority()
             if prompt_meter_enabled():
                 baseline_messages, baseline_tools = self.stack.measurement_baseline(
                     messages, env.tools_info, ctx

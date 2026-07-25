@@ -30,7 +30,7 @@ _DOMAINS = ("retail", "airline")
 _SUITES = ("tau-bench", "agentbench")
 _SPLITS = ("train", "test", "dev")
 # 缝E 策略名（对齐 scheduler.strategies 的类 name）
-_SESSION_STRATEGIES = ("noop", "idle-evict", "checkpoint")
+_SESSION_STRATEGIES = ("noop", "idle-evict", "checkpoint", "priority-evict", "progress-evict")
 
 # 6 大必采指标（赛题硬指标）
 DEFAULT_METRICS: tuple[str, ...] = (
@@ -64,7 +64,7 @@ class KVTransferConfig:
 
     connector: str = ""
     role: str = "kv_both"
-    extra: dict[str, Any] = field(default_factory=dict)
+    extra_config: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -104,7 +104,8 @@ class MiddlewareConfig:
 class SessionConfig:
     """缝E session 生命周期配置（F5 idle eviction / F6 checkpoint）。
 
-    - ``strategy``：策略名（``noop`` / ``idle-evict`` / ``checkpoint``）。
+    - ``strategy``：策略名（``noop`` / ``idle-evict`` / ``checkpoint`` / ``priority-evict``）。
+      ``priority-evict`` = F5 动态优先级回收（Phase 1 lossy：idle→抬 priority，让 vLLM 先抢）。
     - ``idle_timeout_s``：F5 的 idle 阈值（秒）；策略由 scheduler 消费。
     - ``options``：策略构造的额外 kwargs（如 checkpoint 路径）。
     机制（offload/save 回调）由运行时注入，不在配置里。
@@ -112,6 +113,8 @@ class SessionConfig:
 
     strategy: str = "noop"
     idle_timeout_s: float = 60.0
+    target_lo: int = 70
+    target_hi: int = 85
     options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -126,6 +129,8 @@ class EngineConfig:
     kv_transfer: KVTransferConfig = field(default_factory=KVTransferConfig)
     # 缝A（F1）：C8 int8 KV 量化（Ascend 专属）
     c8: C8Config = field(default_factory=C8Config)
+    # F5（缝A）：priority 调度 —— HBM 满时 vLLM 先踢低优先级请求
+    priority_scheduling: bool = False
 
 
 @dataclass
@@ -181,12 +186,13 @@ def _build_engine(data: dict[str, Any]) -> EngineConfig:
         kv_transfer=KVTransferConfig(
             connector=str(kvt.get("connector", "")),
             role=str(kvt.get("role", "kv_both")),
-            extra=dict(kvt.get("extra") or {}),
+            extra_config=dict(kvt.get("extra_config") or {}),
         ),
         c8=C8Config(
             enabled=bool(c8_data.get("enabled", False)),
             patch_qwen2=bool(c8_data.get("patch_qwen2", False)),
         ),
+        priority_scheduling=bool(data.get("priority_scheduling", False)),
     )
 
 
@@ -244,6 +250,8 @@ def _build_session(data: Any) -> SessionConfig:
     return SessionConfig(
         strategy=str(data.get("strategy", "noop")),
         idle_timeout_s=float(data.get("idle_timeout_s", 60.0)),
+        target_lo=int(data.get("target_lo", 70)),
+        target_hi=int(data.get("target_hi", 85)),
         options=dict(data.get("options") or {}),
     )
 
@@ -276,7 +284,7 @@ def validate(cfg: AppConfig) -> None:
     # 缝A（F1）：C8 仅 Ascend 可用
     if e.c8.enabled and e.backend != "vllm-ascend":
         raise ConfigError("engine.c8.enabled 需要 backend=vllm-ascend（C8 是 Ascend 专属）")
-    # 缝C（统一）：kv_transfer connector/role 白名单
+    # 缝C（统一）：kv_transfer connector/role 白名单（LMCache / SimpleCPUOffload 二选一）
     kvt = e.kv_transfer
     if kvt.connector and kvt.connector not in _KV_CONNECTORS:
         raise ConfigError(f"engine.kv_transfer.connector={kvt.connector!r} 不在白名单 {_KV_CONNECTORS}")
@@ -311,6 +319,10 @@ def validate(cfg: AppConfig) -> None:
         )
     if s.idle_timeout_s < 0:
         raise ConfigError(f"session.idle_timeout_s={s.idle_timeout_s} 必须 >= 0")
+    if s.target_lo < 0 or s.target_lo > 100:
+        raise ConfigError(f"session.target_lo={s.target_lo} 必须在 0..100")
+    if s.target_hi < s.target_lo:
+        raise ConfigError(f"session.target_hi={s.target_hi} 必须 >= target_lo={s.target_lo}")
 
 
 def load_config(path: str | Path) -> AppConfig:

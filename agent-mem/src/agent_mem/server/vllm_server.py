@@ -40,8 +40,8 @@ def render_kv_transfer_arg(kvt: KVTransferConfig) -> list[str]:
         "kv_connector": kvt.connector,
         "kv_role": kvt.role,
     }
-    if kvt.extra:
-        cfg["connector"] = kvt.extra
+    if kvt.extra_config:
+        cfg["kv_connector_extra_config"] = dict(kvt.extra_config)
     return ["--kv-transfer-config", json.dumps(cfg, separators=(",", ":"))]
 
 
@@ -82,6 +82,9 @@ def build_serve_args(
             "--quantization", "ascend",
             "--compilation-config", '{"cudagraph_mode":"FULL_DECODE_ONLY"}',
         ]
+    # F5（缝A）：priority 调度 —— HBM 满时 vLLM 先踢低优先级（priority 数值大）请求
+    if cfg.engine.priority_scheduling:
+        args += ["--scheduling-policy", "priority"]
     # NPU 由 vllm-ascend 插件自动识别——**不要**传 --device（vllm api_server 不认 npu/auto）。
     # 仅当显式指定 cpu/cuda/tpu/xpu（如 CPU 冒烟）时才传 --device。
     if device and device in {"cpu", "cuda", "tpu", "xpu"}:
@@ -137,8 +140,11 @@ def start_engine(
     )
     cmd = [python_exe or sys.executable, "-m", "vllm.entrypoints.openai.api_server", *args]
     out_fh = open(log_file, "wb") if log_file else subprocess.DEVNULL  # noqa: SIM115
+    # engine_env 注入额外环境变量（与 os.environ 合并）；start_new_session=True：让引擎及
+    # 其 multiprocessing 子进程（EngineCore/Worker）成独立进程组，stop_engine 用 killpg
+    # 一锅端，避免孤儿 EngineCore 占着 NPU HBM。
     proc = subprocess.Popen(cmd, stdout=out_fh, stderr=subprocess.STDOUT,
-                            env={**os.environ, **engine_env(cfg)})
+                            env={**os.environ, **engine_env(cfg)}, start_new_session=True)
     base_url = f"http://127.0.0.1:{port}/v1"
     return proc, base_url
 
@@ -159,13 +165,26 @@ def wait_for_engine(base_url: str, *, timeout: float = 600, interval: float = 2)
 
 
 def stop_engine(proc: subprocess.Popen, *, timeout: float = 30) -> None:
-    """优雅停止引擎子进程（terminate→kill）。"""
+    """优雅停止引擎子进程（terminate→kill 整个进程组）。
+
+    用 ``killpg`` 杀进程组（:func:`start_engine` 用 ``start_new_session=True`` 起），
+    连 multiprocessing 子进程（EngineCore / Worker）一起带走，避免孤儿占着 NPU HBM。
+    """
+    import os
+    import signal
+
     if proc.poll() is None:
-        proc.terminate()
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            proc.terminate()
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
 
 
 def main() -> int:

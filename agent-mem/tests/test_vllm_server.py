@@ -150,11 +150,11 @@ def test_render_kv_transfer_with_extra_passthrough():
     kvt = KVTransferConfig(
         connector="LMCacheAscendConnector",
         role="kv_both",
-        extra={"host": "127.0.0.1", "port": 1234},
+        extra_config={"host": "127.0.0.1", "port": 1234},
     )
     args = render_kv_transfer_arg(kvt)
     cfg = json.loads(args[1])
-    assert cfg["connector"] == {"host": "127.0.0.1", "port": 1234}
+    assert cfg["kv_connector_extra_config"] == {"host": "127.0.0.1", "port": 1234}
 
 
 def test_build_serve_args_excludes_kv_transfer_when_empty():

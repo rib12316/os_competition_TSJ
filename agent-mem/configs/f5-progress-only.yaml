@@ -1,0 +1,35 @@
+# F5 progress 优先级隔离测试：priority 抢占 + progress 策略，admission 关掉。
+# 对照 E0 = f5-native（FCFS）。两者都在"抢占必然发生"工况（小 pool + 高并发 + admission off）。
+#
+# progress 策略：priority = f(步数)。早步→priority 高（可踢、重算便宜）；晚步→低（保护、重算贵）。
+# 压力下 vLLM 应先踢早步 session（cheap recompute），保住晚步的（avoid expensive recompute）。
+#
+# 引擎启动：
+#   python -m agent_mem.server.vllm_server --config configs/f5-progress-only.yaml \
+#     --model-path models/Qwen2.5-7B-Instruct --tool-call-parser hermes
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  priority_scheduling: true
+  extra_args:
+    - "--gpu-memory-utilization 0.27"
+    - "--max-model-len 16384"
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+session:
+  strategy: progress-evict
+  idle_timeout_s: 30          # progress 模式不用 idle，但 schema 要求
+  target_hi: 999              # 关 admission（永远放行）→ 强制抢占必然发生
+  target_lo: 0
+  options: {}
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

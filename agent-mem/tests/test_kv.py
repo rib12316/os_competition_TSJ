@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
-
-from pathlib import Path
 
 from agent_mem.kv import KVConnectorConfig, render_kv_connector_args
 from agent_mem.kv.c8 import (
@@ -19,43 +18,40 @@ from agent_mem.kv.c8 import (
 )
 
 
-# ---- KV connector 抽象 ----
+# ---- KV connector 抽象（vLLM 0.22.1 flat schema）----
 
 
 def test_render_connector_none_empty():
     assert render_kv_connector_args(None) == []
 
 
-def test_render_connector_produces_flag_and_json():
-    kcc = KVConnectorConfig(connector="pykvconnector")
+def test_render_connector_flat_schema_no_kv_connector_flag():
+    kcc = KVConnectorConfig(connector="SimpleCPUOffloadConnector")
     args = render_kv_connector_args(kcc)
-    i = args.index("--kv-connector")
-    assert args[i + 1] == "pykvconnector"
+    assert "--kv-connector" not in args  # vLLM 0.22.1 不认该 flag（被拒）
     j = args.index("--kv-transfer-config")
-    transfer = json.loads(args[j + 1])
-    assert transfer["format"] == "by_layer"
-    assert transfer["connector"]["name"] == "pykvconnector"
+    cfg = json.loads(args[j + 1])
+    assert cfg["kv_connector"] == "SimpleCPUOffloadConnector"
+    assert cfg["kv_role"] == "kv_both"
+    assert cfg["kv_connector_extra_config"] == {}
 
 
-def test_render_connector_opts_and_extra():
+def test_render_connector_extra_config_and_raw():
     kcc = KVConnectorConfig(
-        connector="pykvconnector",
-        transfer_format="split_pytorch_serialize",
-        connector_opts={"host": "127.0.0.1"},
+        connector="SimpleCPUOffloadConnector",
+        extra_config={"cpu_bytes_to_use": 4294967296, "lazy_offload": True},
         extra=["--max-num-seqs", "8"],
     )
     args = render_kv_connector_args(kcc)
-    transfer = json.loads(args[args.index("--kv-transfer-config") + 1])
-    assert transfer["format"] == "split_pytorch_serialize"
-    assert transfer["connector"]["host"] == "127.0.0.1"
+    cfg = json.loads(args[args.index("--kv-transfer-config") + 1])
+    assert cfg["kv_connector_extra_config"]["cpu_bytes_to_use"] == 4294967296
+    assert cfg["kv_connector_extra_config"]["lazy_offload"] is True
     assert "--max-num-seqs" in args and "8" in args
 
 
-def test_connector_rejects_bad_args():
+def test_connector_rejects_empty_name():
     with pytest.raises(ValueError):
         KVConnectorConfig(connector="")
-    with pytest.raises(ValueError):
-        KVConnectorConfig(connector="x", transfer_format="bogus")
 
 
 # ---- 缝A F1 C8 int8 KV annotated 产物（纯函数，无 NPU）----

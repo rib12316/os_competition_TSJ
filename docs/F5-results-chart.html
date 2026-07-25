@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh">
+
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>F5 动态资源回收 — A/B/C 对照</title>
+<style>
+  :root { --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a;
+          --surface-1:#fcfcfb; --text-primary:#0b0b0b; --text-secondary:#52514e;
+          --grid:#e4e3df; --rule:#d8d7d2; }
+  @media (prefers-color-scheme: dark){
+    :root{ --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70;
+           --surface-1:#1a1a19; --text-primary:#ffffff; --text-secondary:#c3c2b7;
+           --grid:#2c2c2a; --rule:#34342f; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--surface-1); color:var(--text-primary);
+         font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+         -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1080px; margin:0 auto; padding:32px 28px 48px; }
+  h1 { font-size:22px; margin:0 0 4px; letter-spacing:.2px; }
+  .sub { color:var(--text-secondary); font-size:13px; margin:0 0 22px; }
+  .heroes { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:0 0 26px; }
+  .hero { border:1px solid var(--rule); border-radius:10px; padding:14px 16px; background:color-mix(in srgb,var(--surface-1) 92%, var(--series-3) 4%); }
+  .hero .k { color:var(--text-secondary); font-size:12px; margin-bottom:6px; }
+  .hero .v { font-size:21px; font-weight:650; letter-spacing:.3px; }
+  .hero .d { color:var(--text-secondary); font-size:12px; margin-top:3px; }
+  .panels { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  .panel { border:1px solid var(--rule); border-radius:10px; padding:14px 12px 10px; }
+  .panel .pt { font-size:13px; font-weight:600; margin:0 0 2px 4px; }
+  .panel .pu { color:var(--text-secondary); font-size:11px; margin:0 0 8px 4px; }
+  svg { display:block; width:100%; height:auto; overflow:visible; }
+  .axislbl { fill:var(--text-secondary); font-size:10.5px; }
+  .grid line { stroke:var(--grid); stroke-width:1; shape-rendering:crispEdges; }
+  .bar { rx:4; ry:4; transition:opacity .12s; cursor:default; }
+  .bar:hover { opacity:.82; }
+  .vlabel { fill:var(--text-primary); font-size:11px; font-weight:600; }
+  .xname { fill:var(--text-secondary); font-size:10.5px; }
+  .legend { display:flex; gap:16px; justify-content:center; margin:20px 0 6px; font-size:12px; color:var(--text-secondary); }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .sw { width:11px; height:11px; border-radius:3px; display:inline-block; }
+  .foot { color:var(--text-secondary); font-size:11.5px; line-height:1.6; margin-top:14px; border-top:1px solid var(--rule); padding-top:12px; }
+  code { background:color-mix(in srgb,var(--text-primary) 8%, transparent); padding:1px 5px; border-radius:4px; font-size:11px; }
+</style>
+</head>
+
+<body>
+<div class="wrap">
+  <h1>F5 动态资源回收与重分配 — A/B/C 对照</h1>
+  <p class="sub">NPU 910B2C · Qwen2.5-7B · KV pool 1.27 GiB 刻意制压 · 6 并发 τ-bench retail × 25 steps · 每组 runs=3 取中位数</p>
+
+  <div class="heroes">
+    <div class="hero"><div class="k">KV 缓存命中率</div><div class="v">0.46 → 0.93</div><div class="d">A/B → C（+47pp；抢占重算不吃缓存）</div></div>
+    <div class="hero"><div class="k">vLLM 抢占次数</div><div class="v">有 → 0</div><div class="d">A/B 溢出抢占 → C 准入控制消除</div></div>
+    <div class="hero"><div class="k">eviction-hit-idle</div><div class="v">100%（3/3 run）</div><div class="d">C 抬过的 priority 全命中真 idle</div></div>
+  </div>
+
+  <div class="legend">
+    <span><i class="sw" style="background:var(--series-1)"></i>A · FCFS 原生</span>
+    <span><i class="sw" style="background:var(--series-2)"></i>B · priority-static</span>
+    <span><i class="sw" style="background:var(--series-3)"></i>C · 动态回收（KV-pool 准入）</span>
+  </div>
+
+  <div class="panels" id="panels"></div>
+
+  <p class="foot">
+    <b>读图</b>：三组同 workload、同 KV pool（1.27 GiB 刻意制压），仅应用层策略不同。<b>每面板独立纵轴</b>（指标量纲不同，不做双轴）。
+    KV 命中率越高越好、延迟/TTFT 越低越好。<b>关键判读</b>：A ≈ B（priority-static 给所有 session 同优先级时 ≈ FCFS，priority 单独几乎不增益），
+    真正增益来自 <b>C 的准入控制</b>——它按 KV pool 利用率动态降并发，避免溢出抢占，保住 APC 缓存。<br>
+    <b>诚实说明</b>：成功率 A/C ≈ 0、B=0.17（本地 7B user-sim 噪声，非 F5 问题；"成功率不掉"需外部 mimo user-sim 补最终数）。
+    数据：<code>logs/_summaries/20260725_f5-dynamic-reclaim_comparison.md</code>。详见 <code>docs/F5-technical-report.md</code> §6.2。
+  </p>
+</div>
+
+<script>
+const COLORS = { A:'var(--series-1)', B:'var(--series-2)', C:'var(--series-3)' };
+const NAMES  = { A:'A · FCFS', B:'B · priority', C:'C · 动态回收' };
+// 每组 runs=3 的中位数
+const METRICS = [
+  { title:'KV 缓存命中率', unit:'（越高越好）',  max:1.0,  fmt:v=>(v*100).toFixed(0)+'%', vals:{A:0.48, B:0.46, C:0.93}, good:'high' },
+  { title:'e2e p50 延迟',  unit:'秒（越低越好）', max:125,  fmt:v=>v.toFixed(0)+' s',      vals:{A:114.5, B:108.9, C:89.7}, good:'low' },
+  { title:'TTFT',          unit:'ms（越低越好）', max:165,  fmt:v=>v.toFixed(0)+' ms',     vals:{A:152.1, B:132.1, C:110.7}, good:'low' },
+];
+const W=300, H=240, PADL=34, PADR=10, PADT=18, PADB=46, BW=42, BG=18;
+const plotL=PADL, plotR=W-PADR, plotT=PADT, plotB=H-PADB, plotH=plotB-plotT;
+
+function best(m){ const v=m.vals; return m.good==='high' ? Math.max(v.A,v.B,v.C) : Math.min(v.A,v.B,v.C); }
+
+function panel(m){
+  const span=(plotR-plotL);
+  const step=span/3;
+  const ticks=4;
+  let grid='';
+  for(let i=0;i<=ticks;i++){ const y=plotB-(i/ticks)*plotH; grid+=`<line x1="${plotL}" y1="${y.toFixed(1)}" x2="${plotR}" y2="${y.toFixed(1)}"/>`;
+    const val=(i/ticks)*m.max; grid+=`<text class="axislbl" x="${plotL-6}" y="${(y+3).toFixed(1)}" text-anchor="end">${m.fmt(val)}</text>`; }
+  let bars='';
+  ['A','B','C'].forEach((k,i)=>{
+    const cx=plotL+step*(i+0.5);
+    const h=Math.max(2,(m.vals[k]/m.max)*plotH);
+    const x=cx-BW/2, y=plotB-h;
+    const isBest=m.vals[k]===best(m);
+    bars+=`<rect class="bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${BW}" height="${h.toFixed(1)}" fill="${COLORS[k]}" opacity="${isBest?1:0.92}"><title>${NAMES[k]}：${m.fmt(m.vals[k])}${isBest?'  （最优）':''}</title></rect>`;
+    bars+=`<text class="vlabel" x="${cx.toFixed(1)}" y="${(y-7).toFixed(1)}" text-anchor="middle">${m.fmt(m.vals[k])}</text>`;
+    bars+=`<text class="xname" x="${cx.toFixed(1)}" y="${(plotB+16).toFixed(1)}" text-anchor="middle">${k}</text>`;
+    if(isBest) bars+=`<text x="${cx.toFixed(1)}" y="${(plotB+30).toFixed(1)}" text-anchor="middle" font-size="9.5" fill="var(--series-3)">★ 最优</text>`;
+  });
+  return `<div class="panel"><div class="pt">${m.title}</div><div class="pu">${m.unit}</div>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${m.title}"><g class="grid">${grid}</g>${bars}</svg></div>`;
+}
+document.getElementById('panels').innerHTML = METRICS.map(panel).join('');
+</script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+# F5 实验组 D：动态回收（priority + KV-pool 准入）+ 无损 KV offload 层。
+#
+# ✅ 已真机验证可用（2026-07-25，vllm-ascend 0.22.1rc1 + vllm 0.22.1）：用
+#   SimpleCPUOffloadConnector（注册时被 vllm-ascend 自动替换成 AscendSimpleCPUOffloadConnector，
+#   NPU 原生 aclrtMemcpyBatchAsync + torch.npu streams，正确处理 Ascend 的 K/V 分离 + 2MiB 对齐，
+#   支持 lazy_offload）。这是当前栈唯一 shipping + CI 实测的 KV offload 通路。
+#   （注：NPUOffloadingSpec/OffloadingConnector 路径上游已废弃，不可用——见 docs/F5-phase2-findings.md。）
+#
+# 在 C 组（f5-evict-dynamic）基础上叠加无损 KV offload（冷 KV→CPU，命中时回读），看无损层在
+# KV-pool 准入控制之上是否再加分。
+#
+# 引擎启动：
+#   python -m agent_mem.server.vllm_server --config configs/f5-evict-dynamic-offload.yaml \
+#     --model-path models/Qwen2.5-7B-Instruct --tool-call-parser hermes
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+  priority_scheduling: true
+  kv_transfer:                         # 缝C：无损 KV offload（SimpleCPUOffloadConnector→Ascend 变体）
+    connector: SimpleCPUOffloadConnector
+    role: kv_both
+    extra_config:
+      cpu_bytes_to_use: 4294967296      # 4 GiB CPU offload buffer
+      lazy_offload: true               # 近淘汰块留 CPU 副本，命中时回读（免重算）
+  extra_args:
+    - "--gpu-memory-utilization 0.27"   # 制压：小 KV pool（~1.27GiB）让并发 agent 溢出 → 触发 preempt
+    - "--max-model-len 16384"
+
+benchmark:
+  suite: tau-bench
+  domain: retail
+  runs: 3
+  seed: 42
+
+session:                          # 缝E：动态优先级回收（同 C 组）
+  strategy: priority-evict
+  idle_timeout_s: 30
+  options: {}
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft
