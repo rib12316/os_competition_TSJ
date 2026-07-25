@@ -10,8 +10,8 @@ engine:
   backend: vllm-ascend
   model: Qwen2.5-7B-Instruct
   extra_args:
-    - "--gpu-memory-utilization 0.3"   # 制造 HBM 压力（F5-experiment-design）
-    - "--max-model-len 32768"
+    - "--gpu-memory-utilization 0.27"   # 制压：小 KV pool（~1.27GiB）让并发 agent 溢出 → 触发 preempt
+    - "--max-model-len 16384"
 
 benchmark:
   suite: tau-bench

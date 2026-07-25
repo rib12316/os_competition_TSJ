@@ -9,8 +9,8 @@ engine:
   model: Qwen2.5-7B-Instruct
   priority_scheduling: true       # F5：渲染 --scheduling-policy priority
   extra_args:
-    - "--gpu-memory-utilization 0.3"
-    - "--max-model-len 32768"
+    - "--gpu-memory-utilization 0.27"   # 制压：小 KV pool（~1.27GiB）让并发 agent 溢出 → 触发 preempt
+    - "--max-model-len 16384"
 
 benchmark:
   suite: tau-bench

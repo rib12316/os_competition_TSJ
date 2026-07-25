@@ -21,8 +21,8 @@ engine:
   #     lazy_offload: true
   #     cpu_bytes_to_use: 8589934592   # 8 GiB CPU 缓冲
   extra_args:
-    - "--gpu-memory-utilization 0.3"
-    - "--max-model-len 32768"
+    - "--gpu-memory-utilization 0.27"   # 制压：小 KV pool（~1.27GiB）让并发 agent 溢出 → 触发 preempt
+    - "--max-model-len 16384"
 
 benchmark:
   suite: tau-bench

@@ -1,7 +1,7 @@
 # F5 — 并发场景动态资源回收与重分配（技术报告）
 
 > 分支：`feat/f5-priority-evict` ｜ 赛题方向 1（KV Cache 生命周期管理）原话"动态资源回收与重分配"
-> 状态：**Phase 0（应用层接线）+ Phase 1（真机 B vs C）均完成**：KV-pool 准入控制消除抢占（3→0）、p50 快 3.3×、KV 命中率 0.93 vs 0.385、eviction-hit-idle 100%。
+> 状态：**Phase 0 + Phase 1（真机 A/B/C × runs=3）均完成**：KV-pool 准入控制消除抢占、KV 命中率 0.93 vs 0.46–0.48（+47pp）、p50 −21%、eviction-hit-idle 100%（3/3 run 全命中 idle）。
 
 ## 摘要
 
@@ -108,26 +108,31 @@ run summary），**全量 203 tests 绿**。
 0.22.1rc1 **被正常接受**——探针（`scripts/f5_priority_probe.py`）起引擎不报错、priority 经
 `extra_body` 透传成功、抢占计数器 `vllm:num_preemptions_total` 存在。非 no-op。
 
-**B vs C 对照**（Qwen2.5-7B，KV pool **1.27 GiB** 刻意制压 = util 0.27 / max_model_len 16384，
-6 并发 τ-bench retail × 25 steps，本地 user-sim，单 run；runs=3 取中位数留最终版）：
+**A/B/C 三组对照**（Qwen2.5-7B，KV pool **1.27 GiB** 刻意制压 = util 0.27 / max_model_len 16384，
+6 并发 τ-bench retail × 25 steps，本地 user-sim，**每组 runs=3 取中位数**；对照报告
+`logs/_summaries/20260725_f5-dynamic-reclaim_comparison.md`）：
 
-| 指标 | B 无准入（priority static） | C 动态回收（priority + KV-pool 准入） | 效果 |
-|---|---|---|---|
-| vLLM preemption | 3 | **0** | 准入控制**消除抢占** |
-| e2e p50 延迟 | 270 s | **82 s** | **3.3× 更快** |
-| e2e p95 延迟 | 298 s | **140 s** | 2.1× 更快 |
-| KV 命中率 | 0.385 | **0.932** | +54pp（抢占重算不吃缓存） |
-| TTFT | 556 ms | **130 ms** | 4.3× 更低 |
-| QPS | 0.019 | 0.040 | 2.1× 更高 |
-| eviction-hit-idle | — | **100%（5/5）** | 回收的全是真 idle |
+| 指标 | A FCFS | B priority-static | C 动态回收（priority + KV-pool 准入） | 效果 |
+|---|---|---|---|---|
+| vLLM preemption（实测） | 有 | 有 | **0** | 准入控制**消除抢占** |
+| KV 命中率 | 0.48 | 0.46 | **0.93** | **+45–47pp**（抢占重算不吃缓存） |
+| e2e p50 | 114 s | 109 s | **90 s** | C −21% vs A |
+| e2e p95 | 165 s | 158 s | 155 s | 略优 |
+| TTFT | 152 ms | 132 ms | **111 ms** | C −27% vs A |
+| mem_peak_mb | 17399 | 17401 | 17401 | 同（pool 固定） |
+| eviction-hit-idle | — | — | **100%（3 次 run 均 100%；3/7/4 次全命中 idle）** | 回收全准 |
 
 **机制实证**：实时抓 `/metrics` 见——C 组 KV 到 ~72% 时 `num_requests_running` 从 6 降到 3
-（**KV-pool 准入闸门触发**，KV 不再涨 → 不溢出 → 0 抢占）；B 组无闸门，KV 涨到 ~86% 溢出 →
-3 次 preempt → 重算 → KV 命中率崩到 0.385、p50 飙到 270 s。
+（**KV-pool 准入闸门触发**，KV 不再涨 → 不溢出 → 0 抢占）；A/B 组无闸门，KV 涨到 ~86–89% 溢出 →
+preempt → 重算 → KV 命中率掉到 ~0.46。
 
-**诚实说明**：成功率两组均 0（本地 7B user-sim 太弱，非 F5 问题；"成功率不掉"需外部 user-sim
-如 mimo 补最终数）；A 组（FCFS）预期 ≈ B（都无准入 → 都抢占）。采集写 `metrics.json` +
-`f5_driver_snapshot.json` sidecar（含 admits/evictions/idle_hit_rate）。
+**关键判读（诚实）**：**A ≈ B**——priority-static 给所有 session 同优先级时 ≈ FCFS，priority
+**单独**几乎不增益；**真正的增益来自准入控制（C）**。单 run 里 B 出现过 270 s 的方差离群点，runs=3
+中位数（B 109 s）更稳；而 **KV 命中率 0.46 → 0.93 是稳健的大信号**——准入控制让 KV 不溢出、保住
+APC 缓存，A/B 的抢占重算把命中率打掉一半。
+
+**诚实说明**：成功率 A/C ≈ 0、B=0.17（本地 7B user-sim 噪声，非 F5 问题；"成功率不掉"需外部
+user-sim 如 mimo 补最终数）。采集写 `metrics.json` + `f5_driver_snapshot.json` sidecar。
 
 
 ## 7. 权衡
@@ -144,8 +149,9 @@ run summary），**全量 203 tests 绿**。
 ## 8. 状态与路线
 
 - ✅ **Phase 0**：policy 全接线 + 单测绿（`feat/f5-priority-evict`）。
-- ✅ **Phase 1（真机跑通）**：priority 探针确认 flag 非 no-op；**B vs C 出数字**——KV-pool 准入控制
-  消除抢占（3→0）、p50 快 3.3×（270→82s）、KV 命中率 0.93（vs 0.385）、eviction-hit-idle 100%。
+- ✅ **Phase 1（真机跑通，A/B/C × runs=3）**：priority 探针确认 flag 非 no-op；**三组中位数**——
+  KV-pool 准入控制消除抢占（C:0 vs A/B:有）、KV 命中率 **0.93 vs 0.46–0.48**、p50 −21%、TTFT −27%、
+  eviction-hit-idle 100%（3/3 run）。诚实：A≈B（priority 单独不增益），增益来自准入控制。
 - 🔭 **收尾（可选）**：runs=3 取中位数、外部 user-sim 补成功率、A 组（FCFS）对照、lazy offload
   connector 名；Phase 2 自定义 V1 connector 做真·无损 on-demand offload/restore。
 
