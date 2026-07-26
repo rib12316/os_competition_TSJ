@@ -140,6 +140,8 @@ class BenchmarkConfig:
     runs: int = 3
     seed: int = 42
     split: str = "test"
+    data_zip: str = ""  # longbench: THUDM/LongBench 数据 zip 路径（suite=longbench 必填）
+    options: dict[str, Any] = field(default_factory=dict)  # suite 专属旋钮（longbench: start/limit/...）
 
 
 @dataclass
@@ -203,6 +205,8 @@ def _build_benchmark(data: dict[str, Any]) -> BenchmarkConfig:
         runs=int(data.get("runs", 3)),
         seed=int(data.get("seed", 42)),
         split=data.get("split", "test"),
+        data_zip=str(data.get("data_zip", "")),
+        options=dict(data.get("options") or {}),
     )
 
 
