@@ -638,6 +638,8 @@ class CompressMiddleware(BaseMiddleware):
             "hot_history": hot_preview,
             "trigger_tokens": self.trigger_tokens,
             "recompress_delta_tokens": self.recompress_delta_tokens,
+            "assistant_rate": self.assistant_rate,
+            "tool_result_rate": self.tool_result_rate,
             "new_tokens": new_tokens,
             **self._static_metrics(ctx),
         })

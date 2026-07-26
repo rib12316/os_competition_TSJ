@@ -29,9 +29,12 @@ def test_tau_frontend_can_lower_f2_trigger_without_changing_yaml():
         "F2+F3",
         "Qwen2.5-7B-Instruct",
         f2_trigger_tokens=2000,
+        f2_retention_rate=0.4,
     )
     compress = next(middleware for middleware in stack.middlewares if middleware.name == "compress")
     assert compress.trigger_tokens == 2000
+    assert compress.assistant_rate == 0.4
+    assert compress.tool_result_rate == 0.4
 
     production = _tau_context_stack("F2+F3", "Qwen2.5-7B-Instruct")
     production_compress = next(
@@ -39,6 +42,8 @@ def test_tau_frontend_can_lower_f2_trigger_without_changing_yaml():
         if middleware.name == "compress"
     )
     assert production_compress.trigger_tokens == 8000
+    assert production_compress.assistant_rate == 0.75
+    assert production_compress.tool_result_rate == 0.6
 
 
 def test_tau_frontend_defaults_to_mimo_user_simulator():

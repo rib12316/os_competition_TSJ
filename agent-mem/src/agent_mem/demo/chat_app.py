@@ -273,6 +273,7 @@ def _tau_context_stack(
     model: str,
     *,
     f2_trigger_tokens: int | None = None,
+    f2_retention_rate: float | None = None,
 ) -> MiddlewareStack:
     """Build a fresh per-task F2/F3 stack without changing the running engine."""
     if mode not in _TAU_CONTEXT_PRESETS:
@@ -284,6 +285,12 @@ def _tau_context_stack(
             1,
             int(f2_trigger_tokens),
         )
+    if "compress" in cfg.middleware.active and f2_retention_rate is not None:
+        retention = min(1.0, max(0.1, float(f2_retention_rate)))
+        compress_options = cfg.middleware.options.setdefault("compress", {})
+        compress_options["rate"] = retention
+        compress_options["assistant_rate"] = retention
+        compress_options["tool_result_rate"] = retention
     return middlewares_from_config(cfg)
 
 
@@ -341,7 +348,17 @@ def _tau_context_view(
 
     f2 = snapshot.get("f2") or {}
     f2_enabled = "compress" in middleware_names
-    f2_before = f2.get("cold_before") or {
+    f2_before = ({
+        **f2["cold_before"],
+        "decision": {
+            "phase": f2.get("phase"),
+            "action": f2.get("action"),
+            "reason": f2.get("reason"),
+            "assistant_retention_rate": f2.get("assistant_rate"),
+            "tool_result_retention_rate": f2.get("tool_result_rate"),
+            "trigger_tokens": f2.get("trigger_tokens"),
+        },
+    } if f2.get("cold_before") else {
         "available": False,
         "enabled": f2_enabled,
         "phase": f2.get("phase") or "waiting",
@@ -349,8 +366,17 @@ def _tau_context_view(
             "Waiting for the first model request."
             if f2_enabled else "F2 is disabled in this mode."
         ),
-    }
-    f2_after = f2.get("cold_after") or {
+    })
+    f2_after = ({
+        **f2["cold_after"],
+        "compression_metrics": {
+            "origin_tokens": f2.get("origin_tokens"),
+            "compressed_tokens": f2.get("compressed_tokens"),
+            "saved_tokens": f2.get("saved_tokens"),
+            "ratio": f2.get("ratio"),
+            "compress_ms": f2.get("compress_ms"),
+        },
+    } if f2.get("cold_after") else {
         "available": False,
         "enabled": f2_enabled,
         "phase": f2.get("phase") or "waiting",
@@ -362,7 +388,7 @@ def _tau_context_view(
             "Cold history has not been dynamically compressed in this step."
             if f2_enabled else "F2 is disabled in this mode."
         ),
-    }
+    })
 
     f3_state = snapshot.get("f3") or {}
     latest_f3 = f3_state.get("latest") or {}
@@ -454,10 +480,18 @@ def build_app(
             yield new_history
 
     # ---- τ-bench 任务（流式）----
-    def run_tau(domain, task_id, max_steps, context_mode, f2_trigger_tokens):
+    def run_tau(
+        domain,
+        task_id,
+        max_steps,
+        context_mode,
+        f2_trigger_tokens,
+        f2_retention_rate,
+    ):
         tid = int(task_id)
         mode = str(context_mode)
         demo_trigger = max(1, int(f2_trigger_tokens or 2000))
+        demo_retention = min(1.0, max(0.1, float(f2_retention_rate or 0.4)))
         buffer = ContextEventBuffer(max_events=5000)
         if not tau_run_lock.acquire(blocking=False):
             empty_view = _tau_context_view(
@@ -473,6 +507,7 @@ def build_app(
                 mode,
                 model,
                 f2_trigger_tokens=demo_trigger,
+                f2_retention_rate=demo_retention,
             )
             names = stack.names
             user_sim = _tau_user_sim_settings()
@@ -486,7 +521,8 @@ def build_app(
                 [],
                 f"⏳ 构建 τ-bench 环境（{domain} #{tid}）… "
                 f"middleware={names}，USER simulator={user_sim['model']}，"
-                f"F2 demo trigger={demo_trigger} token，首次加载 litellm ~6s",
+                f"F2 demo trigger={demo_trigger} token，"
+                f"正文保留率={demo_retention:.2f}，首次加载 litellm ~6s",
                 *view,
             )
             for hist_msgs, status in tau_bench_ui.run_tau_task_streaming(
@@ -797,6 +833,13 @@ def build_app(
                             step=500,
                             label="F2 演示压缩阈值（仅当前前端任务；正式配置仍为 8000）",
                         )
+                        tau_f2_retention = gr.Slider(
+                            minimum=0.2,
+                            maximum=0.75,
+                            value=0.4,
+                            step=0.05,
+                            label="F2 演示正文保留率（0.40 ≈ 目标压掉 60%；仅作用于可压正文）",
+                        )
                         tau_chatbot = gr.Chatbot(
                             type="messages", height=460,
                             label="τ-bench agent 对话（tool-calling）",
@@ -898,6 +941,7 @@ def build_app(
                 tau_maxsteps,
                 tau_context_mode,
                 tau_f2_trigger,
+                tau_f2_retention,
             ],
             [
                 tau_chatbot,
