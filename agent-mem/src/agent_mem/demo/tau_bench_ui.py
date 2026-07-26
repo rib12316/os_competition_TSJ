@@ -92,6 +92,10 @@ def run_tau_task_streaming(
     engine_url: str,
     model: str,
     api_key: str = "EMPTY",
+    user_model: str = "mimo-v2.5-pro",
+    user_provider: str = "openai",
+    user_api_base: str = "https://token-plan-cn.xiaomimimo.com/v1",
+    user_api_key: str | None = None,
     max_steps: int = 20,
     middlewares: MiddlewareStack | Sequence[Middleware] | None = None,
     context_event_sink: ContextEventSink | None = None,
@@ -99,7 +103,7 @@ def run_tau_task_streaming(
     """流式跑一个 τ-bench 任务，逐步 yield ``(chatbot_history, status_text)``。
 
     每步一次 LLM 调用（打本地引擎），故右侧监控曲线会随之动。agent 侧用显式
-    OpenAI client 直连本地引擎；user-sim 走 litellm（``OPENAI_API_BASE`` 指本地引擎）。
+    OpenAI client 直连本地引擎；user-sim 默认通过 litellm 使用 MIMO。
     """
     # 惰性重导入
     from openai import OpenAI
@@ -111,6 +115,7 @@ def run_tau_task_streaming(
         prompt_meter_enabled,
     )
     from agent_mem.agent.tau_bench_agent import _message_to_action
+    from agent_mem.bench.tasks.tau_bench_adapter import _resolve_user_sim
     from agent_mem.middleware import MiddlewareContext
     from tau_bench.envs import get_env
     from tau_bench.envs.user import UserStrategy
@@ -118,21 +123,35 @@ def run_tau_task_streaming(
 
     stack = _as_stack(middlewares)
     ctx = MiddlewareContext(session_id=f"tau-{task_id}", event_sink=context_event_sink)
+    resolved_user_model, resolved_user_provider, user_env = _resolve_user_sim(
+        engine_url=engine_url,
+        model=model,
+        user_model=user_model,
+        user_provider=user_provider,
+        user_api_base=user_api_base,
+        user_api_key=user_api_key,
+        api_key=api_key,
+    )
     previous_env = {
         "OPENAI_API_BASE": os.environ.get("OPENAI_API_BASE"),
         "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
     }
-    os.environ["OPENAI_API_BASE"] = engine_url
-    os.environ["OPENAI_API_KEY"] = api_key
+    os.environ.update(user_env)
 
     try:
+        if user_api_base and not user_api_key:
+            yield ([{
+                "role": "assistant",
+                "content": "❌ MIMO user-sim 未启动：环境变量 MIMO_KEY 未设置。",
+            }], "MIMO_KEY 未设置")
+            return
         stack.prepare()
         try:
             env = get_env(
                 domain,
                 user_strategy=UserStrategy.LLM,
-                user_model=model,
-                user_provider="openai",
+                user_model=resolved_user_model,
+                user_provider=resolved_user_provider,
                 task_split=split,
                 task_index=task_id,
             )

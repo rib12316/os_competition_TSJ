@@ -58,6 +58,7 @@ _TAU_CONTEXT_PRESETS = {
     "F3": _CONFIGS_DIR / "f3-lazyload.yaml",
     "F2+F3": _CONFIGS_DIR / "f2-f3-combined.yaml",
 }
+_TAU_USER_SIM_PRESET = _CONFIGS_DIR / "f2-f3-combined.yaml"
 
 # 统一 benchmark 场景 → preset（preset 编码 suite+middleware+session；引擎由上方按钮单独起）
 BENCH_SCENARIOS: dict[str, str] = {
@@ -275,6 +276,19 @@ def _tau_context_stack(mode: str, model: str) -> MiddlewareStack:
     return middlewares_from_config(cfg)
 
 
+def _tau_user_sim_settings() -> dict[str, str | None]:
+    """Load the frontend's default MIMO user simulator without exposing its key."""
+    cfg = load_config(_TAU_USER_SIM_PRESET)
+    user_sim = cfg.user_sim
+    return {
+        "model": user_sim.model,
+        "provider": user_sim.provider,
+        "api_base": user_sim.api_base,
+        "api_key_env": user_sim.api_key_env,
+        "api_key": os.environ.get(user_sim.api_key_env) if user_sim.api_key_env else None,
+    }
+
+
 def _tau_context_view(
     buffer: ContextEventBuffer,
     *,
@@ -398,6 +412,7 @@ def build_app(
     history = load_history(history_dir)
     assistant = _build_assistant(engine_url, model)
     n_runs = sum(h.n_runs for h in history)
+    tau_user_sim = _tau_user_sim_settings()
 
     # 引擎管理器：前端按钮按档位起/停引擎；config 作 bench 自动标签
     engine_mgr = EngineManager(model_path=model_path, served_name=model)
@@ -444,6 +459,7 @@ def build_app(
         try:
             stack = _tau_context_stack(mode, model)
             names = stack.names
+            user_sim = _tau_user_sim_settings()
             view = _tau_context_view(
                 buffer,
                 session_id=f"tau-{tid}",
@@ -453,7 +469,8 @@ def build_app(
             yield (
                 [],
                 f"⏳ 构建 τ-bench 环境（{domain} #{tid}）… "
-                f"middleware={names}，首次加载 litellm ~6s",
+                f"middleware={names}，USER simulator={user_sim['model']}，"
+                "首次加载 litellm ~6s",
                 *view,
             )
             for hist_msgs, status in tau_bench_ui.run_tau_task_streaming(
@@ -463,6 +480,10 @@ def build_app(
                 engine_url=engine_url,
                 model=model,
                 api_key=os.environ.get("OPENAI_API_KEY", "EMPTY"),
+                user_model=str(user_sim["model"]),
+                user_provider=str(user_sim["provider"]),
+                user_api_base=str(user_sim["api_base"]),
+                user_api_key=user_sim["api_key"],
                 max_steps=int(max_steps),
                 middlewares=stack,
                 context_event_sink=buffer,
@@ -730,7 +751,13 @@ def build_app(
                         gr.Markdown(
                             "选 **domain + task_id** 运行真实 τ-bench 客服任务。agent 多轮调工具解任务，"
                             "逐步流式刷对话；每步打本地引擎，**右侧指标实时变化**。"
-                            "（retail 115 个任务；user-sim 也走本地引擎）"
+                            "（retail 115 个任务；Agent 走本地引擎，USER simulator 默认走 MIMO）"
+                        )
+                        gr.Markdown(
+                            f"USER simulator：`{tau_user_sim['model']}`　"
+                            f"API：`{tau_user_sim['api_base']}`　"
+                            f"key：`{tau_user_sim['api_key_env']}` "
+                            f"{'已设置' if tau_user_sim['api_key'] else '未设置'}"
                         )
                         with gr.Row():
                             tau_domain = gr.Dropdown(
