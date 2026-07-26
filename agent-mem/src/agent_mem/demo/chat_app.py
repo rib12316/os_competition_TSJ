@@ -327,62 +327,60 @@ def build_app(
             yield [*chat_history, {"role": "user", "content": user_msg},
                    {"role": "assistant", "content": f"⚠️ 引擎调用失败（{url}）：{e}"}]
 
-    # ============================ 布局 ============================
+    # ============================ 布局：一屏 dashboard ============================
+    # 上：架构总览(可折叠) + 引擎控制(常驻)；左：跑bench/对话(切换)；右：实时监控+结果(常驻)
     with gr.Blocks(title="agent-mem · 内存管理优化演示", theme=gr.themes.Soft()) as demo:
         gr.Markdown(
             "# agent-mem · 面向智能体的内存管理优化（赛题14）\n"
-            "架构总览 → 引擎控制 → 跑 benchmark → 实时监控 → 结果对比 → 对话演示。"
-            "全流程在浏览器执行：选 preset、起引擎、跑 bench、看结果。"
+            "**一屏 dashboard**：上方控制引擎；**右侧实时监控+结果常驻**——跑 bench 时无需切页即见负载与结果。"
+            " 👇 展开「🏗 架构总览」看完整架构（7 缝 / 痛点→功能 / 三档递进）。"
         )
-        with gr.Tabs():
-            # T1 架构总览
-            with gr.TabItem("🏗 架构总览"):
-                gr.HTML(value=overview.overview_html())
+        # 🏗 架构总览（评委展开看全；操作时折叠让出空间）
+        with gr.Accordion("🏗 架构总览（7 缝 / 痛点→功能 / 5 功能 / 三档递进 / αβγ 场景）", open=False):
+            gr.HTML(value=overview.overview_html())
 
-            # T2 引擎控制
-            with gr.TabItem("🎛 引擎控制"):
-                with gr.Row():
-                    preset_dd = gr.Dropdown(
-                        choices=preset_stems, value=default_stem, label="配置预设（configs/*.yaml）",
-                        scale=3,
+        # 🎛 引擎控制（顶部常驻，不分页）
+        with gr.Accordion("🎛 引擎控制（选 preset → 起/停引擎）", open=True):
+            with gr.Row():
+                preset_dd = gr.Dropdown(
+                    choices=preset_stems, value=default_stem,
+                    label="配置预设（configs/*.yaml）", scale=4,
+                )
+                start_btn = gr.Button("▶ 启动引擎", variant="primary", scale=1)
+                stop_btn = gr.Button("⏹ 停止", variant="stop", scale=1)
+            with gr.Row():
+                with gr.Column(scale=3):
+                    cfg_preview = gr.Markdown(
+                        _preview_config(default_stem, preset_path_of) if default_stem else "_未选中_"
                     )
-                    with gr.Column(scale=2):
-                        start_btn = gr.Button("▶ 启动引擎", variant="primary")
-                        stop_btn = gr.Button("⏹ 停止", variant="stop")
-                cfg_preview = gr.Markdown(
-                    _preview_config(default_stem, preset_path_of) if default_stem else "_未选中_"
-                )
-                engine_status_md = gr.Markdown("引擎未启动。选 preset 后点 ▶ 启动。")
+                with gr.Column(scale=2):
+                    engine_status_md = gr.Markdown("引擎未启动。选 preset 后点 ▶。")
 
-            # T3 跑 Benchmark
-            with gr.TabItem("🚀 跑 Benchmark"):
-                bench_preset_dd = gr.Dropdown(
-                    choices=preset_stems, value=default_stem, label="benchmark preset", scale=3,
-                )
-                with gr.Row():
-                    runs_slider = gr.Slider(1, 5, value=3, step=1, label="重复次数（取中位数）")
-                    conc_slider = gr.Slider(1, 8, value=1, step=1, label="并发 (max_concurrency)")
-                run_btn = gr.Button("🚀 跑 Benchmark", variant="primary")
-                bench_progress_md = gr.Markdown("选 preset + 调参数后点 🚀（需先在 🎛 起引擎）。")
-
-            # T4 实时监控
-            with gr.TabItem("📊 实时监控"):
+        # 主体：左（交互 Tabs）+ 右（常驻 监控+结果）
+        with gr.Row():
+            with gr.Column(scale=3):
+                with gr.Tabs():
+                    with gr.Tab("🚀 跑 Benchmark"):
+                        bench_preset_dd = gr.Dropdown(
+                            choices=preset_stems, value=default_stem, label="benchmark preset",
+                        )
+                        with gr.Row():
+                            runs_slider = gr.Slider(1, 5, value=3, step=1, label="重复次数（中位数）")
+                            conc_slider = gr.Slider(1, 8, value=1, step=1, label="并发 max_concurrency")
+                        run_btn = gr.Button("🚀 跑 Benchmark", variant="primary")
+                        bench_progress_md = gr.Markdown("选 preset + 调参 → 🚀（需先在上方 🎛 起引擎）。进度/结果在此。")
+                    with gr.Tab("💬 对话演示"):
+                        chatbot = gr.Chatbot(type="messages", height=460, label="对话（Qwen-Agent）")
+                        input_box = gr.Textbox(placeholder="和 agent 对话（引擎在线时）...", label="输入", scale=4)
+                        with gr.Row():
+                            send_btn = gr.Button("发送", variant="primary")
+                            clear_btn = gr.Button("清空")
+            with gr.Column(scale=2):
                 mon_status_md = gr.Markdown()
-                live_plot = gr.Plot(label=f"实时（窗口={WINDOW_S:.0f}s）")
+                live_plot = gr.Plot(label=f"实时监控（窗口={WINDOW_S:.0f}s）")
                 history_plot = gr.Plot(label="历史 before/after（中位数）")
-
-            # T5 结果对比
-            with gr.TabItem("📈 结果对比"):
                 compare_md = gr.Markdown()
                 compare_plot = gr.Plot(label="各 config before/after")
-
-            # T6 对话演示
-            with gr.TabItem("💬 对话演示"):
-                chatbot = gr.Chatbot(type="messages", height=520, label="对话（Qwen-Agent）")
-                input_box = gr.Textbox(placeholder="和 agent 对话（引擎在线时）...", label="输入", scale=4)
-                with gr.Row():
-                    send_btn = gr.Button("发送", variant="primary")
-                    clear_btn = gr.Button("清空")
 
         gr.Markdown(
             f"_服务绑 127.0.0.1，经 `ssh -L 7860:localhost:7860` 在笔记本浏览器打开。"
