@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import plotly.graph_objects as go
@@ -27,6 +29,8 @@ from plotly.subplots import make_subplots
 
 from qwen_agent.agents import Assistant
 
+from agent_mem.config import load_config
+from agent_mem.context_telemetry import ContextEventBuffer
 from agent_mem.demo import bench_runner, tau_bench_ui
 from agent_mem.demo.engine_control import CONFIG_FLAGS, PENDING_CONFIGS, EngineManager
 from agent_mem.demo.monitor import (
@@ -39,12 +43,21 @@ from agent_mem.demo.monitor import (
     load_history,
 )
 from agent_mem.demo.overview import overview_html
+from agent_mem.middleware import MiddlewareStack, middlewares_from_config
 
 DEFAULT_ENGINE_URL = os.environ.get("AGENT_MEM_ENGINE_URL", "http://127.0.0.1:8000/v1")
 DEFAULT_MODEL = os.environ.get("AGENT_MEM_MODEL", "Qwen2.5-7B-Instruct")
 DEFAULT_HISTORY_DIR = os.environ.get("AGENT_MEM_HISTORY_DIR", "logs/mvp-newframework")
 WINDOW_S = 10.0  # 窗口速率统计窗口（秒）
 DEFAULT_RUN_ROOT = os.environ.get("AGENT_MEM_RUN_ROOT", "logs")
+
+_CONFIGS_DIR = Path(__file__).resolve().parents[3] / "configs"
+_TAU_CONTEXT_PRESETS = {
+    "baseline": _CONFIGS_DIR / "baseline.yaml",
+    "F2": _CONFIGS_DIR / "f2-compress.yaml",
+    "F3": _CONFIGS_DIR / "f3-lazyload.yaml",
+    "F2+F3": _CONFIGS_DIR / "f2-f3-combined.yaml",
+}
 
 # 统一 benchmark 场景 → preset（preset 编码 suite+middleware+session；引擎由上方按钮单独起）
 BENCH_SCENARIOS: dict[str, str] = {
@@ -253,6 +266,119 @@ def clear_runs() -> tuple[list[dict], go.Figure, str, str]:
     return [], _runs_figure([]), _runs_table([]), _runs_summary([])
 
 
+def _tau_context_stack(mode: str, model: str) -> MiddlewareStack:
+    """Build a fresh per-task F2/F3 stack without changing the running engine."""
+    if mode not in _TAU_CONTEXT_PRESETS:
+        raise ValueError(f"未知上下文模式 {mode!r}")
+    cfg = load_config(_TAU_CONTEXT_PRESETS[mode])
+    cfg.engine.model = model
+    return middlewares_from_config(cfg)
+
+
+def _tau_context_view(
+    buffer: ContextEventBuffer,
+    *,
+    session_id: str,
+    mode: str,
+    middleware_names: list[str],
+) -> tuple[str, dict, dict, dict, dict]:
+    """Render one stable Prompt/F2/F3 view from the method-layer snapshot."""
+    snapshot = buffer.snapshot(session_id)
+    events = buffer.events(session_id=session_id)
+    prompt_events = [
+        event for event in events
+        if event["event"] == "prompt.completed"
+        and isinstance((event.get("data") or {}).get("original_prompt_tokens"), int)
+        and isinstance((event.get("data") or {}).get("transformed_prompt_tokens"), int)
+    ]
+    original_total = sum(
+        event["data"]["original_prompt_tokens"] for event in prompt_events
+    )
+    transformed_total = sum(
+        event["data"]["transformed_prompt_tokens"] for event in prompt_events
+    )
+    saved_total = original_total - transformed_total
+    saved_percent = saved_total / max(1, original_total) * 100
+    latest_prompt = snapshot.get("prompt") or {}
+    cumulative_saved = (
+        f"{saved_total} ({saved_percent:.2f}%)" if prompt_events else "—"
+    )
+    prompt_md = (
+        f"**上下文模式** `{mode}`　**实际 middleware** "
+        f"`{middleware_names or []}`　**模型调用** `{len(prompt_events)}`\n\n"
+        "| Prompt token | 本轮 | 累计 |\n|---|---:|---:|\n"
+        f"| canonical | {latest_prompt.get('original_prompt_tokens', '—')} | "
+        f"{original_total if prompt_events else '—'} |\n"
+        f"| transformed | {latest_prompt.get('transformed_prompt_tokens', '—')} | "
+        f"{transformed_total if prompt_events else '—'} |\n"
+        f"| saved | {latest_prompt.get('saved_tokens', '—')} | {cumulative_saved} |"
+    )
+
+    f2 = snapshot.get("f2") or {}
+    f2_enabled = "compress" in middleware_names
+    f2_before = f2.get("cold_before") or {
+        "available": False,
+        "enabled": f2_enabled,
+        "phase": f2.get("phase") or "waiting",
+        "note": (
+            "Waiting for the first model request."
+            if f2_enabled else "F2 is disabled in this mode."
+        ),
+    }
+    f2_after = f2.get("cold_after") or {
+        "available": False,
+        "enabled": f2_enabled,
+        "phase": f2.get("phase") or "waiting",
+        "action": f2.get("action"),
+        "reason": f2.get("reason"),
+        "system_prompt_compacted": f2.get("system_prompt_compacted"),
+        "tool_descriptions_replaced": f2.get("tool_descriptions_replaced"),
+        "note": (
+            "Cold history has not been dynamically compressed in this step."
+            if f2_enabled else "F2 is disabled in this mode."
+        ),
+    }
+
+    f3_state = snapshot.get("f3") or {}
+    latest_f3 = f3_state.get("latest") or {}
+    f3_enabled = "lazyload" in middleware_names
+    f3_before = (
+        {
+            key: latest_f3.get(key)
+            for key in (
+                "phase",
+                "operation_id",
+                "tool_call_id",
+                "tool_name",
+                "arguments",
+                "threshold_tokens",
+                "original",
+            )
+        }
+        if latest_f3 else {
+            "available": False,
+            "enabled": f3_enabled,
+            "note": (
+                "Waiting for a business tool result."
+                if f3_enabled else "F3 is disabled in this mode."
+            ),
+        }
+    )
+    f3_after = latest_f3.get("externalized") or {
+        "available": False,
+        "enabled": f3_enabled,
+        "phase": latest_f3.get("phase"),
+        "action": latest_f3.get("event"),
+        "reason": latest_f3.get("reason"),
+        "fetches": f3_state.get("fetches") or [],
+        "note": (
+            "Tool result was not externalized; check phase/reason and the 4k threshold."
+            if f3_enabled else "F3 is disabled in this mode."
+        ),
+    }
+    return prompt_md, f2_before, f2_after, f3_before, f3_after
+
+
 # ---- 应用工厂 ----
 
 
@@ -277,6 +403,7 @@ def build_app(
     engine_mgr = EngineManager(model_path=model_path, served_name=model)
     # 并发 bench 各会话的实时对话（tid → 气泡列表）；线程写、Timer 读，实时查看
     convo_store: dict[int, list[dict]] = {}
+    tau_run_lock = threading.Lock()
     # ---- 自由对话 ----
     def respond(user_msg: str, chat_history: list[dict]):
         user_msg = (user_msg or "").strip()
@@ -301,10 +428,34 @@ def build_app(
             yield new_history
 
     # ---- τ-bench 任务（流式）----
-    def run_tau(domain, task_id, max_steps):
+    def run_tau(domain, task_id, max_steps, context_mode):
         tid = int(task_id)
-        yield [], f"⏳ 构建 τ-bench 环境（{domain} #{tid}）… 首次加载 litellm ~6s"
+        mode = str(context_mode)
+        buffer = ContextEventBuffer(max_events=5000)
+        if not tau_run_lock.acquire(blocking=False):
+            empty_view = _tau_context_view(
+                buffer,
+                session_id=f"tau-{tid}",
+                mode=mode,
+                middleware_names=[],
+            )
+            yield [], "⚠️ 已有 tau-bench 任务运行，不能重复启动。", *empty_view
+            return
         try:
+            stack = _tau_context_stack(mode, model)
+            names = stack.names
+            view = _tau_context_view(
+                buffer,
+                session_id=f"tau-{tid}",
+                mode=mode,
+                middleware_names=names,
+            )
+            yield (
+                [],
+                f"⏳ 构建 τ-bench 环境（{domain} #{tid}）… "
+                f"middleware={names}，首次加载 litellm ~6s",
+                *view,
+            )
             for hist_msgs, status in tau_bench_ui.run_tau_task_streaming(
                 domain=str(domain),
                 split="test",
@@ -313,10 +464,29 @@ def build_app(
                 model=model,
                 api_key=os.environ.get("OPENAI_API_KEY", "EMPTY"),
                 max_steps=int(max_steps),
+                middlewares=stack,
+                context_event_sink=buffer,
             ):
-                yield hist_msgs, status
+                yield hist_msgs, status, *_tau_context_view(
+                    buffer,
+                    session_id=f"tau-{tid}",
+                    mode=mode,
+                    middleware_names=names,
+                )
         except Exception as e:  # noqa: BLE001
-            yield [{"role": "assistant", "content": f"❌ 运行失败：{e}"}], f"❌ 失败：{e}"
+            names = locals().get("names", [])
+            yield (
+                [{"role": "assistant", "content": f"❌ 运行失败：{e}"}],
+                f"❌ 失败：{e}",
+                *_tau_context_view(
+                    buffer,
+                    session_id=f"tau-{tid}",
+                    mode=mode,
+                    middleware_names=names,
+                ),
+            )
+        finally:
+            tau_run_lock.release()
 
     # ---- 并发 benchmark（流式：会话表 + 成功率；跑完出系统性能最终结果）----
     def run_conc(domain, ntasks, conc, steps):
@@ -571,11 +741,51 @@ def build_app(
                                 value=20, minimum=1, maximum=40, label="max_steps", scale=1
                             )
                             tau_run = gr.Button("▶ 运行任务", variant="primary", scale=1)
+                        tau_context_mode = gr.Radio(
+                            choices=list(_TAU_CONTEXT_PRESETS),
+                            value="F2+F3",
+                            label="上下文模式（Agent middleware，不重启引擎）",
+                            info="F2=Prompt 压缩，F3=工具数据 lazy-load，组合顺序固定为 [lazyload, compress]",
+                        )
                         tau_chatbot = gr.Chatbot(
                             type="messages", height=460,
                             label="τ-bench agent 对话（tool-calling）",
                         )
                         tau_status = gr.Markdown()
+                        with gr.Accordion("F2/F3 上下文变换（当前 tau-bench session）", open=True):
+                            tau_prompt_view = gr.Markdown(
+                                "等待任务开始：Prompt paired token、F2 冷历史和 F3 工具结果会在每一步刷新。"
+                            )
+                            with gr.Row():
+                                tau_f2_before = gr.JSON(
+                                    label="F2 待压缩冷历史（canonical preview）",
+                                    value={"phase": "waiting"},
+                                    height=300,
+                                    max_height=360,
+                                    scale=1,
+                                )
+                                tau_f2_after = gr.JSON(
+                                    label="F2 压缩后冷历史（发送副本）",
+                                    value={"phase": "waiting"},
+                                    height=300,
+                                    max_height=360,
+                                    scale=1,
+                                )
+                            with gr.Row():
+                                tau_f3_before = gr.JSON(
+                                    label="F3 待结构化存储的工具数据",
+                                    value={"phase": "waiting"},
+                                    height=300,
+                                    max_height=360,
+                                    scale=1,
+                                )
+                                tau_f3_after = gr.JSON(
+                                    label="F3 外置后的 synopsis/reference",
+                                    value={"phase": "waiting"},
+                                    height=300,
+                                    max_height=360,
+                                    scale=1,
+                                )
                     with gr.Tab("📊 统一 Benchmark"):
                         gr.Markdown(_SCENARIO_GUIDE)
                         scenario_dd = gr.Dropdown(
@@ -630,7 +840,19 @@ def build_app(
         clear_btn.click(lambda: [], None, [chatbot])
 
         # 事件：τ-bench
-        tau_run.click(run_tau, [tau_domain, tau_taskid, tau_maxsteps], [tau_chatbot, tau_status])
+        tau_run.click(
+            run_tau,
+            [tau_domain, tau_taskid, tau_maxsteps, tau_context_mode],
+            [
+                tau_chatbot,
+                tau_status,
+                tau_prompt_view,
+                tau_f2_before,
+                tau_f2_after,
+                tau_f3_before,
+                tau_f3_after,
+            ],
+        )
 
         # 事件：统一 benchmark（后台 run_study → Timer 轮询进度/结果）
         bench_run_btn.click(

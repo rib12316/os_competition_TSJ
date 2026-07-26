@@ -16,8 +16,12 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
-from typing import Any
+from collections.abc import Iterator, Sequence
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agent_mem.context_telemetry import ContextEventSink
+    from agent_mem.middleware import Middleware, MiddlewareStack
 
 _TASK_CACHE: dict[tuple[str, str], list[Any]] = {}
 
@@ -89,6 +93,8 @@ def run_tau_task_streaming(
     model: str,
     api_key: str = "EMPTY",
     max_steps: int = 20,
+    middlewares: MiddlewareStack | Sequence[Middleware] | None = None,
+    context_event_sink: ContextEventSink | None = None,
 ) -> Iterator[tuple[list[dict], str]]:
     """流式跑一个 τ-bench 任务，逐步 yield ``(chatbot_history, status_text)``。
 
@@ -98,90 +104,182 @@ def run_tau_task_streaming(
     # 惰性重导入
     from openai import OpenAI
 
-    from agent_mem.agent.react import stream_chat_with_ttft
+    from agent_mem.agent.react import _as_stack, stream_chat_with_ttft
+    from agent_mem.agent.usage_log import (
+        log_prompt_tokens,
+        measure_prompt_pair,
+        prompt_meter_enabled,
+    )
     from agent_mem.agent.tau_bench_agent import _message_to_action
+    from agent_mem.middleware import MiddlewareContext
     from tau_bench.envs import get_env
     from tau_bench.envs.user import UserStrategy
     from tau_bench.types import RESPOND_ACTION_NAME, Action
 
-    # user-sim（litellm）默认指向本地引擎，完全本地可复现
+    stack = _as_stack(middlewares)
+    ctx = MiddlewareContext(session_id=f"tau-{task_id}", event_sink=context_event_sink)
+    previous_env = {
+        "OPENAI_API_BASE": os.environ.get("OPENAI_API_BASE"),
+        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+    }
     os.environ["OPENAI_API_BASE"] = engine_url
     os.environ["OPENAI_API_KEY"] = api_key
 
     try:
-        env = get_env(
-            domain,
-            user_strategy=UserStrategy.LLM,
-            user_model=model,
-            user_provider="openai",
-            task_split=split,
-            task_index=task_id,
-        )
-    except Exception as e:  # noqa: BLE001
-        yield ([{"role": "assistant", "content": f"❌ 构建 τ-bench 环境失败：{e}"}], "环境构建失败")
-        return
-
-    client = OpenAI(base_url=engine_url, api_key=api_key)
-    extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
-
-    try:
-        reset = env.reset(task_index=task_id)
-    except Exception as e:  # noqa: BLE001
-        yield ([{"role": "assistant", "content": f"❌ env.reset 失败：{e}"}], "reset 失败")
-        return
-
-    messages: list[dict] = [
-        {"role": "system", "content": env.wiki},
-        {"role": "user", "content": reset.observation},
-    ]
-    yield tau_messages_to_chatbot(messages), f"▶ 任务 #{task_id}（{domain}/{split}）开始…"
-
-    reward = 0.0
-    step = 0
-    for step in range(1, max_steps + 1):
+        stack.prepare()
         try:
-            next_message, _ttft = stream_chat_with_ttft(
-                client,
-                model=model,
-                messages=messages,
-                tools=env.tools_info,
-                temperature=0.0,
-                max_tokens=512,
-                extra_body=extra_body,
+            env = get_env(
+                domain,
+                user_strategy=UserStrategy.LLM,
+                user_model=model,
+                user_provider="openai",
+                task_split=split,
+                task_index=task_id,
             )
-            action = _message_to_action(next_message, Action, RESPOND_ACTION_NAME)
-            env_response = env.step(action)
-        except Exception as e:  # noqa: BLE001 — 单步失败给出可见错误，不崩整个 UI
-            messages.append({"role": "assistant", "content": f"⚠️ 第 {step} 步出错：{e}"})
-            yield tau_messages_to_chatbot(messages), f"⚠️ 第 {step} 步出错"
+        except Exception as e:  # noqa: BLE001
+            yield ([{"role": "assistant", "content": f"❌ 构建 τ-bench 环境失败：{e}"}], "环境构建失败")
             return
 
-        reward = env_response.reward
-        if action.name != RESPOND_ACTION_NAME:
-            tcs = (next_message.get("tool_calls") or [])[:1]
-            next_message["tool_calls"] = tcs
-            tc = tcs[0] if tcs else {"id": "x", "function": {"name": action.name}}
-            messages.append(next_message)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "name": tc["function"]["name"],
-                "content": env_response.observation,
-            })
-        else:
-            messages.append(next_message)
-            messages.append({"role": "user", "content": env_response.observation})
+        client = OpenAI(base_url=engine_url, api_key=api_key)
+        extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
 
-        done = env_response.done
-        yield (
-            tau_messages_to_chatbot(messages),
-            f"步骤 {step}/{max_steps}　reward={reward:.2f}{'　✅ done' if done else ''}",
-        )
-        if done:
-            break
+        try:
+            reset = env.reset(task_index=task_id)
+        except Exception as e:  # noqa: BLE001
+            yield ([{"role": "assistant", "content": f"❌ env.reset 失败：{e}"}], "reset 失败")
+            return
 
-    verdict = "✅ 成功" if _is_success(reward) else "❌ 未达标"
-    yield tau_messages_to_chatbot(messages), f"🏁 结束　reward={reward:.2f}　{verdict}　共 {step} 步"
+        messages: list[dict] = [
+            {"role": "system", "content": env.wiki},
+            {"role": "user", "content": reset.observation},
+        ]
+        yield tau_messages_to_chatbot(messages), f"▶ 任务 #{task_id}（{domain}/{split}）开始…"
+
+        reward = 0.0
+        step = 0
+        for step in range(1, max_steps + 1):
+            try:
+                ctx.bump_step()
+                if prompt_meter_enabled() or ctx.telemetry_enabled:
+                    baseline_messages, baseline_tools = stack.measurement_baseline(
+                        messages, env.tools_info, ctx
+                    )
+                else:
+                    baseline_messages, baseline_tools = messages, env.tools_info
+                to_send, to_tools = stack.transform_request(
+                    messages, env.tools_info, ctx
+                )
+                measurement = measure_prompt_pair(
+                    model=model,
+                    original_messages=baseline_messages,
+                    transformed_messages=to_send,
+                    original_tools=baseline_tools,
+                    transformed_tools=to_tools,
+                    extra_body=extra_body,
+                    force=ctx.telemetry_enabled,
+                )
+                ctx.emit("prompt.measured", measurement)
+                next_message, _ttft, prompt_tokens = stream_chat_with_ttft(
+                    client,
+                    model=model,
+                    messages=to_send,
+                    tools=to_tools,
+                    temperature=0.0,
+                    max_tokens=512,
+                    extra_body=extra_body,
+                )
+                log_prompt_tokens(ctx, prompt_tokens, measurement)
+                ctx.emit("prompt.completed", {
+                    **measurement,
+                    "prompt_tokens": prompt_tokens,
+                    "source": (
+                        "response.usage.prompt_tokens"
+                        if prompt_tokens is not None else "unavailable"
+                    ),
+                })
+                stack.after_model_call(prompt_tokens, ctx)
+                action = _message_to_action(next_message, Action, RESPOND_ACTION_NAME)
+
+                if action.name != RESPOND_ACTION_NAME:
+                    tcs = (next_message.get("tool_calls") or [])[:1]
+                    next_message["tool_calls"] = tcs
+                    tc = tcs[0] if tcs else {
+                        "id": "x",
+                        "function": {"name": action.name},
+                    }
+                    messages.append(next_message)
+                    ctx.tool_call_id = str(tc.get("id") or "")
+                    ctx.tool_call_index = 0
+                    internal = stack.handle_internal_tool_call(
+                        action.name, dict(action.kwargs), ctx
+                    )
+                    if internal is not None:
+                        observation = stack.intercept_tool_result(
+                            action.name,
+                            dict(action.kwargs),
+                            internal.content,
+                            ctx,
+                        )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "name": tc["function"]["name"],
+                            "content": observation,
+                        })
+                        ctx.tool_call_id = None
+                        ctx.tool_call_index = None
+                        yield (
+                            tau_messages_to_chatbot(messages),
+                            f"步骤 {step}/{max_steps}　F3 内部工具 `{action.name}`",
+                        )
+                        continue
+
+                    env_response = env.step(action)
+                    reward = env_response.reward
+                    observation = stack.intercept_tool_result(
+                        action.name,
+                        dict(action.kwargs),
+                        env_response.observation,
+                        ctx,
+                    )
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "name": tc["function"]["name"],
+                        "content": observation,
+                    })
+                    ctx.tool_call_id = None
+                    ctx.tool_call_index = None
+                else:
+                    env_response = env.step(action)
+                    reward = env_response.reward
+                    messages.append(next_message)
+                    messages.append({"role": "user", "content": env_response.observation})
+            except Exception as e:  # noqa: BLE001 — 单步失败给出可见错误，不崩整个 UI
+                messages.append({"role": "assistant", "content": f"⚠️ 第 {step} 步出错：{e}"})
+                yield tau_messages_to_chatbot(messages), f"⚠️ 第 {step} 步出错"
+                return
+
+            done = env_response.done
+            yield (
+                tau_messages_to_chatbot(messages),
+                f"步骤 {step}/{max_steps}　reward={reward:.2f}{'　✅ done' if done else ''}",
+            )
+            if done:
+                break
+
+        verdict = "✅ 成功" if _is_success(reward) else "❌ 未达标"
+        yield tau_messages_to_chatbot(messages), f"🏁 结束　reward={reward:.2f}　{verdict}　共 {step} 步"
+    finally:
+        for key, previous in previous_env.items():
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
+        for middleware in stack.middlewares:
+            close = getattr(middleware, "close", None)
+            if close is not None:
+                close()
 
 
 # ---- 并发 benchmark（前端展示用）----
@@ -297,7 +395,7 @@ def run_task_into_convo(
         ttfts: list[float] = []
         for step in range(1, max_steps + 1):
             steps = step
-            nm, ttft = stream_chat_with_ttft(
+            nm, ttft, _prompt_tokens = stream_chat_with_ttft(
                 client, model=model, messages=messages, tools=env.tools_info,
                 temperature=0.0, max_tokens=512, extra_body=extra_body,
             )
@@ -380,4 +478,3 @@ def run_concurrent_streaming(
                     "latency_ms": 0.0, "ttft_ms": 0.0, "error": repr(e),
                 }
             yield _conc_snapshot(task_ids, results, total, concurrency)
-
