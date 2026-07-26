@@ -27,7 +27,7 @@ from plotly.subplots import make_subplots
 
 from qwen_agent.agents import Assistant
 
-from agent_mem.demo import tau_bench_ui
+from agent_mem.demo import bench_runner, tau_bench_ui
 from agent_mem.demo.engine_control import CONFIG_FLAGS, PENDING_CONFIGS, EngineManager
 from agent_mem.demo.monitor import (
     HistoryConfig,
@@ -44,6 +44,26 @@ DEFAULT_ENGINE_URL = os.environ.get("AGENT_MEM_ENGINE_URL", "http://127.0.0.1:80
 DEFAULT_MODEL = os.environ.get("AGENT_MEM_MODEL", "Qwen2.5-7B-Instruct")
 DEFAULT_HISTORY_DIR = os.environ.get("AGENT_MEM_HISTORY_DIR", "logs/mvp-newframework")
 WINDOW_S = 10.0  # 窗口速率统计窗口（秒）
+DEFAULT_RUN_ROOT = os.environ.get("AGENT_MEM_RUN_ROOT", "logs")
+
+# 统一 benchmark 场景 → preset（preset 编码 suite+middleware+session；引擎由上方按钮单独起）
+BENCH_SCENARIOS: dict[str, str] = {
+    "α baseline τ-bench（T0/T1 锚）": "agent-mem/configs/baseline.yaml",
+    "α F5 并发回收（tau-bench·combined-evict·think-time）": "agent-mem/configs/unified-tau-freq.yaml",
+    "β F2/F3 长上下文+工具（longbench·compress+lazyload）": "agent-mem/configs/unified-longbench.yaml",
+    "α F1 显存（C8，需先起 +C8 引擎）": "agent-mem/configs/optimized.yaml",
+    "α F4 分层（LMCache，需先起 +LMCache 引擎）": "agent-mem/configs/f4-lmcache.yaml",
+}
+_SCENARIO_GUIDE = (
+    "### 场景 ↔ 功能 ↔ 引擎档位 对照（先起引擎，再选场景跑）\n"
+    "| 演示功能 | bench 场景 | 🛠引擎按钮 | 显存上限 | 看什么指标 |\n|---|---|---|---|---|\n"
+    "| **F5 动态回收** | α F5 并发回收 | **+priority(F5)** | **0.27**(制压触发抢占) | 抢占→0 / KV命中 0.46→0.93 |\n"
+    "| **F1 C8 显存** | α F1 显存 | **+C8(F1)** | 0.9 | 同 HBM token 容量 2× |\n"
+    "| **F4 LMCache 分层** | α F4 分层 | **+LMCache(F4)** | 0.9 | 高并发不 OOM / p50↓ |\n"
+    "| **F2 压缩 / F3 lazyload** | β F2/F3 长上下文 | baseline | 0.9 | prompt↓ / context↓（**填 data-zip**）|\n"
+    "| **baseline 锚** | α baseline | baseline | 0.9 | 对照基线（T0/T1）|\n\n"
+    "**流程**：① 🛠 选档位 + 设显存上限 → ▶起引擎 → ✅就绪 → ② 本页选场景 + 调参 → 🚀 → ③ 右侧实时看负载，完成后看本页结果。"
+)
 
 
 # ---- Qwen-Agent 消息工具 ----
@@ -243,6 +263,7 @@ def build_app(
     model_path: str,
     history_dir: str,
     interval: float,
+    run_root: str = DEFAULT_RUN_ROOT,
 ) -> "gr.Blocks":  # type: ignore[name-defined]
     """构造并返回 Gradio Blocks（不 launch）。监控线程随 launch 后启动。"""
     import gradio as gr
@@ -448,6 +469,40 @@ def build_app(
         )
         return status_md, _live_figure(series, history), _history_figure(history)
 
+    # ---- 统一 benchmark（后台 run_study；worker 改 bench_h，Timer 读）----
+    bench_h = bench_runner.BenchHandle()
+
+    def run_unified(scenario, runs, conc, maxtasks, datazip):
+        url = engine_mgr.base_url if engine_mgr.is_alive() else None
+        if not url:
+            return "⚠️ 请先在 🛠 引擎控制 起一档引擎（点按钮 → ✅就绪）。"
+        preset = BENCH_SCENARIOS.get(scenario)
+        if not preset:
+            return "❌ 未知场景。"
+        bench_runner.run_bench_async(
+            bench_h, preset_path=preset, engine_url=url, run_root=run_root,
+            runs=int(runs), max_concurrency=int(conc), device="npu",
+            data_zip=(str(datazip).strip() or None),
+            max_tasks=int(maxtasks) if maxtasks else None,
+        )
+        return (f"▶ 已提交 **{scenario}** → 后台 run_study 落盘 `{run_root}/`。"
+                f"进度每 2s 刷新于此；实时负载见右侧 📊。")
+
+    def poll_unified():
+        s = bench_h.snapshot()
+        st = s["status"]
+        if st == "running":
+            return f"⏳ running… **{s['completed_runs']}/{s['total_runs']}** runs（preset={s['preset']}）"
+        if st == "done":
+            med = s["median"] or {}
+            rows = "\n".join(f"| `{k}` | {v:.4g} |" for k, v in med.items()) or "| — | — |"
+            latest = s["run_dirs"][-1] if s["run_dirs"] else "—"
+            return (f"### ✅ 完成（{s['completed_runs']} runs）\n"
+                    f"| 指标 | 中位数 |\n|---|---|\n{rows}\n\n最新 run dir：`{latest}`")
+        if st == "error":
+            return f"### ❌ 出错\n```\n{s['error']}```"
+        return f"状态：{st}"
+
     # ---- 布局 ----
     with gr.Blocks(title="agent-mem 优化对比演示", theme=gr.themes.Soft()) as demo:
         gr.Markdown(
@@ -471,10 +526,17 @@ def build_app(
                 eng_btn_priority = gr.Button("+priority(F5)", scale=1)
                 eng_btn_all = gr.Button("全开", scale=1)
                 eng_btn_stop = gr.Button("⏹ 停止引擎", scale=1)
-            engine_status_md = gr.Markdown(
-                f"当前档位：**{engine_mgr.config or '未起'}**　"
-                f"引擎：`{engine_url}`　（点上方按钮起/换档；激活档标 🟢，换档重启 ~1-2min）"
-            )
+            with gr.Row():
+                with gr.Column(scale=1):
+                    eng_memutil = gr.Number(
+                        value=0.9, label="显存上限（F5 制压场景调 0.27）",
+                        minimum=0.1, maximum=0.95, step=0.01,
+                    )
+                with gr.Column(scale=2):
+                    engine_status_md = gr.Markdown(
+                        f"当前档位：**{engine_mgr.config or '未起'}**　引擎：`{engine_url}`"
+                        "（点按钮起/换档；激活档标 🟢，换档重启 ~1-2min）"
+                    )
         with gr.Row():
             with gr.Column(scale=3):
                 with gr.Tabs():
@@ -509,44 +571,27 @@ def build_app(
                             label="τ-bench agent 对话（tool-calling）",
                         )
                         tau_status = gr.Markdown()
-                    with gr.Tab("📊 并发 benchmark"):
-                        gr.Markdown(
-                            "并发跑多个 τ-bench 会话，**最后统计成功率**。"
-                            "右侧实时监控会随并发负载飙升——正是显存/KV/调度优化该发力的场景。"
-                            "（成功率 = 成功会话数 / 总会话数）"
+                    with gr.Tab("📊 统一 Benchmark"):
+                        gr.Markdown(_SCENARIO_GUIDE)
+                        scenario_dd = gr.Dropdown(
+                            choices=list(BENCH_SCENARIOS.keys()),
+                            value=list(BENCH_SCENARIOS.keys())[0],
+                            label="场景（= bench preset：suite + middleware(F2/F3) + session(F5) 都编码在内）",
                         )
                         with gr.Row():
-                            conc_domain = gr.Dropdown(
-                                ["retail", "airline"], value="retail", label="domain", scale=1
-                            )
-                            conc_ntasks = gr.Number(
-                                value=8, minimum=1, maximum=115, label="任务数", scale=1
-                            )
-                            conc_conc = gr.Number(
-                                value=4, minimum=1, maximum=16, label="并发数", scale=1
-                            )
-                            conc_steps = gr.Number(
-                                value=10, minimum=1, maximum=40, label="max_steps", scale=1
-                            )
+                            bench_runs = gr.Slider(1, 5, value=3, step=1, label="重复次数(中位数)")
+                            bench_conc = gr.Slider(1, 8, value=1, step=1, label="并发 max_concurrency")
                         with gr.Row():
-                            conc_run = gr.Button("▶ 并发运行（结果按当前引擎档位自动入「优化对比」）", variant="primary")
-                        conc_progress = gr.Markdown("（先用上方「🛠 引擎控制」起一档引擎，再设任务数/并发数 → 运行）")
-                        conc_table = gr.DataFrame(
-                            headers=["task_id", "状态", "reward", "步数", "延迟ms", "error"],
-                            label="会话状态（实时刷新）",
-                            interactive=False,
-                        )
-                        with gr.Accordion("🔍 展开查看会话对话（实时）", open=False):
-                            with gr.Row():
-                                session_tid = gr.Number(
-                                    value=0, minimum=0, label="会话 task_id（与上表一致）", scale=1,
-                                )
-                                session_hint = gr.Markdown(
-                                    "运行并发 benchmark 时，改 task_id 或等 2s 自动刷新 → 看该会话的 τ-bench 多轮对话（🔧 工具调用 / ↩️ 结果 / user-sim）。"
-                                )
-                            session_chatbot = gr.Chatbot(
-                                type="messages", height=380, label="该会话 τ-bench 对话（实时）",
+                            bench_maxtasks = gr.Number(
+                                value=8, minimum=1, label="max_tasks 任务数", scale=1,
                             )
+                            bench_datazip = gr.Textbox(
+                                value="", label="longbench data-zip 路径（β 场景必填）", scale=2,
+                            )
+                        bench_run_btn = gr.Button("🚀 跑统一 Benchmark", variant="primary")
+                        bench_progress = gr.Markdown(
+                            "选场景 + 调参 → 🚀（需先在 🛠 起匹配引擎档位）。进度/结果在此，实时负载见右侧。"
+                        )
                     with gr.Tab("⚙️ 优化对比"):
                         gr.Markdown(
                             "**实时继承**前端并发 benchmark 的结果（不读历史 logs）。"
@@ -582,14 +627,14 @@ def build_app(
         # 事件：τ-bench
         tau_run.click(run_tau, [tau_domain, tau_taskid, tau_maxsteps], [tau_chatbot, tau_status])
 
-        # 事件：并发 benchmark（跑完 → 指标入 run_store + 刷新优化对比，标签=当前引擎档位）
-        conc_run.click(
-            run_conc, [conc_domain, conc_ntasks, conc_conc, conc_steps],
-            [conc_progress, conc_table, last_metrics], api_name="concurrent",
-        ).then(
-            capture_run_labeled, [run_store, last_metrics],
-            [run_store, compare_plot, compare_table, compare_status],
+        # 事件：统一 benchmark（后台 run_study → Timer 轮询进度/结果）
+        bench_run_btn.click(
+            run_unified,
+            [scenario_dd, bench_runs, bench_conc, bench_maxtasks, bench_datazip],
+            [bench_progress], api_name="unified_bench",
         )
+        bench_timer = gr.Timer(value=2.0)
+        bench_timer.tick(poll_unified, None, [bench_progress])
 
         # 事件：引擎档位按钮（起/换引擎 → 流式状态 + 激活档标 🟢）
         _eng_cfgs = ("baseline", "prefix-cache", "c8", "lmcache", "priority", "all-engine")
@@ -604,7 +649,8 @@ def build_app(
                      eng_btn_lmcache, eng_btn_priority, eng_btn_all]
 
         def _starter(cfg: str):
-            def _h():
+            def _h(memutil):
+                engine_mgr.gpu_mem_util = float(memutil) if memutil else 0.9
                 for status in engine_mgr.start(cfg):
                     yield status, *_eng_labels(engine_mgr.config)
             return _h
@@ -614,7 +660,7 @@ def build_app(
             (eng_btn_c8, "c8"), (eng_btn_lmcache, "lmcache"),
             (eng_btn_priority, "priority"), (eng_btn_all, "all-engine"),
         ):
-            _btn.click(_starter(_cfg), None, _eng_outs)
+            _btn.click(_starter(_cfg), [eng_memutil], _eng_outs)
 
         def _stop_engine():
             engine_mgr.stop()
@@ -627,10 +673,7 @@ def build_app(
             clear_runs, None, [run_store, compare_plot, compare_table, compare_status]
         )
 
-        # 事件：会话对话查看（tid 改变 + 2s 定时刷新，从 convo_store 实时读）
-        session_tid.change(render_convo, [session_tid], [session_chatbot])
-        session_timer = gr.Timer(value=2.0)
-        session_timer.tick(render_convo, [session_tid], [session_chatbot])
+        # 事件：会话对话查看已移除（统一 benchmark 改为后台 run_study 落盘，结果见本页 + 右侧历史）
 
         # 事件：监控刷新（共享，与对话/任务解耦）
         timer = gr.Timer(value=2.0)

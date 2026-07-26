@@ -59,7 +59,7 @@ class BenchHandle:
             }
 
 
-def _build_runner(cfg, *, engine_url: str, max_concurrency: int):
+def _build_runner(cfg, *, engine_url: str, max_concurrency: int, max_tasks: int | None = None):
     """镜像 benchmarks/runner.py 的 QwenAgentRunner 构造（lazy import 重依赖）。"""
     from agent_mem.bench.runners.qwen_agent import QwenAgentRunner
     from agent_mem.middleware import middlewares_from_config
@@ -75,6 +75,7 @@ def _build_runner(cfg, *, engine_url: str, max_concurrency: int):
         user_api_base=us.api_base or None,
         user_api_key=user_api_key,
         max_concurrency=max_concurrency,
+        max_tasks=max_tasks,
         middlewares=mw.middlewares,
         dynamic=(cfg.session.strategy in ("priority-evict", "progress-evict", "combined-evict")),
         idle_timeout_s=cfg.session.idle_timeout_s,
@@ -93,6 +94,8 @@ def _run_study_thread(
     runs: int | None,
     max_concurrency: int,
     device: str,
+    data_zip: str | None = None,
+    max_tasks: int | None = None,
 ) -> None:
     """worker：load_config → 构造 runner → run_once 循环 → aggregate。所有 IO 在 try 内。"""
     try:
@@ -104,7 +107,11 @@ def _run_study_thread(
         cfg = load_config(preset_path)
         if runs is not None:
             cfg.benchmark.runs = max(1, int(runs))
-        runner = _build_runner(cfg, engine_url=engine_url, max_concurrency=max_concurrency)
+        if data_zip:  # longbench 场景：覆盖数据 zip 路径
+            cfg.benchmark.data_zip = data_zip
+        runner = _build_runner(
+            cfg, engine_url=engine_url, max_concurrency=max_concurrency, max_tasks=max_tasks,
+        )
         handle.update(
             status="running",
             preset=Path(preset_path).stem,
@@ -161,15 +168,17 @@ def run_bench_async(
     runs: int | None = None,
     max_concurrency: int = 1,
     device: str = "npu",
+    data_zip: str | None = None,
+    max_tasks: int | None = None,
 ) -> BenchHandle:
-    """起 daemon 线程跑 bench，立即返回（非阻塞）。``handle`` 由 gr.State 持有。"""
+    """起 daemon 线程跑 bench，立即返回（非阻塞）。``handle`` 由调用方持有。"""
     handle.update(status="queued", error=None, completed_runs=0, run_dirs=[], median={})
     t = threading.Thread(
         target=_run_study_thread,
         kwargs=dict(
             handle=handle, preset_path=str(preset_path), engine_url=engine_url,
             run_root=run_root, runs=runs, max_concurrency=max_concurrency,
-            device=device,
+            device=device, data_zip=data_zip, max_tasks=max_tasks,
         ),
         daemon=True,
         name="agent-mem-bench",
