@@ -51,9 +51,8 @@ CONFIG_FLAGS: dict[str, list[str]] = {
 # v1：全部档可起（C8 需模型预 annotate + 校准，见 docs/F1-c8-injection.md）
 PENDING_CONFIGS: () = ()
 
-# 所有档共用的基础 flag（模型加载 + τ-bench 工具调用；mem-util 由 EngineManager.gpu_mem_util 注入）
+# 所有档共用的基础 flag（mem-util / max-model-len 由 EngineManager 注入）
 BASE_FLAGS = [
-    "--max-model-len", "32768",
     "--enable-auto-tool-choice", "--tool-call-parser", "hermes",
 ]
 
@@ -71,6 +70,7 @@ class EngineManager:
         python_exe: str | None = None,
         log_file: str = "/data/os_competition_TSJ/logs-demo/engine.log",
         gpu_mem_util: float = 0.9,
+        max_model_len: int = 32768,
     ):
         self.model_path = model_path
         self.served_name = served_name
@@ -79,6 +79,7 @@ class EngineManager:
         self.python_exe = python_exe or os.environ.get("AGENT_MEM_PYTHON", _detect_venv_python())
         self.log_file = log_file
         self.gpu_mem_util = gpu_mem_util  # 显存上限（F5 制压场景调小，如 0.27）
+        self.max_model_len = max_model_len  # F5 制压(0.27)时须调小到 16384，否则 1 个 max-len 请求都装不下
         os.makedirs(os.path.dirname(self.log_file), exist_ok=True)  # 日志目录（/data 数据盘）
         self.proc: subprocess.Popen | None = None
         self.config: str | None = None  # 当前引擎档位（作 bench 自动标签）
@@ -103,6 +104,7 @@ class EngineManager:
             "--port", str(self.port), "--host", self.host,
             "--served-model-name", self.served_name,
             "--gpu-memory-utilization", str(self.gpu_mem_util),
+            "--max-model-len", str(self.max_model_len),
             *BASE_FLAGS,
             *CONFIG_FLAGS.get(config, []),
         ]

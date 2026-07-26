@@ -57,7 +57,7 @@ BENCH_SCENARIOS: dict[str, str] = {
 _SCENARIO_GUIDE = (
     "### 场景 ↔ 功能 ↔ 引擎档位 对照（先起引擎，再选场景跑）\n"
     "| 演示功能 | bench 场景 | 🛠引擎按钮 | 显存上限 | 看什么指标 |\n|---|---|---|---|---|\n"
-    "| **F5 动态回收** | α F5 并发回收 | **+priority(F5)** | **0.27**(制压触发抢占) | 抢占→0 / KV命中 0.46→0.93 |\n"
+    "| **F5 动态回收** | α F5 并发回收 | **+priority(F5)** | **0.27** + **max-len 16384**(制压触发抢占) | 抢占→0 / KV命中 0.46→0.93 |\n"
     "| **F1 C8 显存** | α F1 显存 | **+C8(F1)** | 0.9 | 同 HBM token 容量 2× |\n"
     "| **F4 LMCache 分层** | α F4 分层 | **+LMCache(F4)** | 0.9 | 高并发不 OOM / p50↓ |\n"
     "| **F2 压缩 / F3 lazyload** | β F2/F3 长上下文 | baseline | 0.9 | prompt↓ / context↓（**填 data-zip**）|\n"
@@ -529,8 +529,13 @@ def build_app(
             with gr.Row():
                 with gr.Column(scale=1):
                     eng_memutil = gr.Number(
-                        value=0.9, label="显存上限（F5 制压场景调 0.27）",
+                        value=0.9, label="显存上限（F5 制压调 0.27）",
                         minimum=0.1, maximum=0.95, step=0.01,
+                    )
+                with gr.Column(scale=1):
+                    eng_maxmlen = gr.Number(
+                        value=32768, label="max_model_len（F5 制压调 16384）",
+                        minimum=2048, step=1024,
                     )
                 with gr.Column(scale=2):
                     engine_status_md = gr.Markdown(
@@ -649,8 +654,9 @@ def build_app(
                      eng_btn_lmcache, eng_btn_priority, eng_btn_all]
 
         def _starter(cfg: str):
-            def _h(memutil):
+            def _h(memutil, maxmlen):
                 engine_mgr.gpu_mem_util = float(memutil) if memutil else 0.9
+                engine_mgr.max_model_len = int(maxmlen) if maxmlen else 32768
                 for status in engine_mgr.start(cfg):
                     yield status, *_eng_labels(engine_mgr.config)
             return _h
@@ -660,7 +666,7 @@ def build_app(
             (eng_btn_c8, "c8"), (eng_btn_lmcache, "lmcache"),
             (eng_btn_priority, "priority"), (eng_btn_all, "all-engine"),
         ):
-            _btn.click(_starter(_cfg), [eng_memutil], _eng_outs)
+            _btn.click(_starter(_cfg), [eng_memutil, eng_maxmlen], _eng_outs)
 
         def _stop_engine():
             engine_mgr.stop()
