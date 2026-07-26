@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 
 from agent_mem.bench.runner import Runner
+from agent_mem.bench.tasks.registry import RunContext, SuiteAdapter, get_adapter
 from agent_mem.bench.tasks.tau_bench_adapter import TaskRunResult
 from agent_mem.config import AppConfig
 from agent_mem.scheduler.driver import ConcurrentSessionDriver
@@ -63,43 +65,28 @@ class QwenAgentRunner(Runner):
         return "qwen-agent"
 
     def run_all(self, cfg: AppConfig) -> list[TaskRunResult]:
-        from agent_mem.bench.tasks.tau_bench_adapter import list_tasks, run_task
-
-        tasks = list_tasks(cfg.benchmark.domain, cfg.benchmark.split)
+        adapter = get_adapter(cfg.benchmark.suite)
+        tasks = adapter.list_tasks(cfg)
         if self.max_tasks is not None:
             tasks = tasks[: self.max_tasks]
+        base_ctx = RunContext(
+            cfg=cfg, engine_url=self.engine_url, model=self.model, api_key=self.api_key,
+            max_steps=self.max_steps, middlewares=self.middlewares,
+            user_model=self.user_model, user_provider=self.user_provider,
+            user_api_base=self.user_api_base, user_api_key=self.user_api_key,
+            priority=self.priority,
+        )
         # F5 动态调度路径：HBM 准入闸门 + 后台 sweep 抬 idle priority
         if self.dynamic and self.max_concurrency > 1:
-            return self._run_dynamic(cfg, [t.task_id for t in tasks], run_task)
+            return self._run_dynamic(cfg, tasks, adapter, base_ctx)
 
         if self.max_concurrency <= 1:
-            return [
-                run_task(
-                    t.task_id, domain=cfg.benchmark.domain, split=cfg.benchmark.split,
-                    engine_url=self.engine_url, model=self.model,
-                    user_model=self.user_model, user_provider=self.user_provider,
-                    user_api_base=self.user_api_base, user_api_key=self.user_api_key,
-                    api_key=self.api_key, max_steps=self.max_steps,
-                    priority=self.priority, middlewares=self.middlewares,
-                )
-                for t in tasks
-            ]
+            return [adapter.run_task(t, base_ctx) for t in tasks]
 
         # 并发跑
         results: list[TaskRunResult] = []
         with ThreadPoolExecutor(max_workers=self.max_concurrency) as ex:
-            futures = {
-                ex.submit(
-                    run_task, t.task_id,
-                    domain=cfg.benchmark.domain, split=cfg.benchmark.split,
-                    engine_url=self.engine_url, model=self.model,
-                    user_model=self.user_model, user_provider=self.user_provider,
-                    user_api_base=self.user_api_base, user_api_key=self.user_api_key,
-                    api_key=self.api_key, max_steps=self.max_steps,
-                    priority=self.priority, middlewares=self.middlewares,
-                ): t.task_id
-                for t in tasks
-            }
+            futures = {ex.submit(adapter.run_task, t, base_ctx): t.task_id for t in tasks}
             for f in as_completed(futures):
                 try:
                     results.append(f.result())
@@ -111,21 +98,16 @@ class QwenAgentRunner(Runner):
         return results
 
     def _run_dynamic(
-        self, cfg: AppConfig, task_ids: list[int], run_task: Callable[..., TaskRunResult]
+        self, cfg: AppConfig, tasks: list, adapter: SuiteAdapter, base_ctx: RunContext,
     ) -> list[TaskRunResult]:
         """F5 动态调度：用 :class:`ConcurrentSessionDriver` 跑，注入 priority/turn 回调。"""
-        domain, split = cfg.benchmark.domain, cfg.benchmark.split
+        by_id = {t.task_id: t for t in tasks}
 
         def _runner(tid: int, on_turn, pfn) -> TaskRunResult:
+            task = by_id.get(tid)
+            ctx = replace(base_ctx, priority_fn=pfn, on_turn_start=on_turn)
             try:
-                return run_task(
-                    tid, domain=domain, split=split, engine_url=self.engine_url,
-                    model=self.model, user_model=self.user_model,
-                    user_provider=self.user_provider, user_api_base=self.user_api_base,
-                    user_api_key=self.user_api_key, api_key=self.api_key,
-                    max_steps=self.max_steps, priority=self.priority,
-                    middlewares=self.middlewares, priority_fn=pfn, on_turn_start=on_turn,
-                )
+                return adapter.run_task(task, ctx)
             except Exception as e:  # noqa: BLE001 — 单任务异常不杀并发 run
                 return TaskRunResult(
                     task_id=tid, reward=0.0, success=False,
