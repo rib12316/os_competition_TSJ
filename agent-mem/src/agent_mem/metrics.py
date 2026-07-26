@@ -24,6 +24,7 @@ class RunMetrics:
     qps: float = 0.0
     mem_peak_mb: int = 0
     kv_cache_hit_rate: float = 0.0
+    kv_cache_usage_perc: float = 0.0  # KV pool 利用率（vllm:kv_cache_usage_perc gauge；F5 准入信号，旧日志缺则为 0）
     task_success_rate: float = 0.0
     ttft_ms: float = 0.0
     # F5 动态资源回收指标（仅 session.strategy=priority-evict 的 dynamic 路径采集）

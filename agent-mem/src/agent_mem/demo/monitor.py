@@ -5,13 +5,12 @@
 - :class:`LiveMonitor` —— 后台 daemon 线程，定时采 NPU HBM（复用
   :class:`agent_mem.bench.mem_sampler.NpuSmiBackend`，subprocess ``npu-smi``，
   headless 可跑、无需 torch）+ 抓 vLLM ``/metrics``（复用
-  :func:`agent_mem.bench.vllm_metrics.scrape` / :func:`kv_cache_hit_rate`），
-  维护一个滚动 buffer（最近 ``window_s`` 秒）。
+  :func:`agent_mem.bench.vllm_metrics.scrape`），维护滚动 buffer（最近 ``window_s`` 秒）。
 - :func:`engine_status` —— 探活 ``<root>/health`` → ``"online"`` / ``"offline"``。
 - :func:`load_history` —— 扫历史 run 的 ``metrics.json`` + ``mem_timeseries.csv``，
   按 ``config`` 分组取中位数，供 before/after 对比。
 
-设计：引擎离线时采显存仍可（NPU 占用），``/metrics`` 失败则 KV 等指标记 ``None``，
+设计：引擎离线时采显存仍可（NPU 占用），``/metrics`` 失败则所有 vLLM 字段记 ``None``，
 单次采样失败不终止监控循环（与 :class:`MemSampler` 同策略）。
 """
 
@@ -70,6 +69,7 @@ class Sample:
     gen_tokens: float | None  # generation_tokens_total（counter）
     running: int | None  # num_requests_running（gauge）
     waiting: int | None  # num_requests_waiting（gauge）
+    kv_usage_perc: float | None  # gpu_cache_usage_perc（gauge，真实 KV 利用率）
 
 
 # vLLM /metrics 指标名（直方图暴露 _sum/_count；counter 暴露 _total/本名；gauge 本名）
@@ -84,6 +84,19 @@ M_INTER_COUNT = "vllm:request_time_per_output_token_seconds_count"
 M_GEN_TOKENS = "vllm:generation_tokens_total"
 M_RUNNING = "vllm:num_requests_running"
 M_WAITING = "vllm:num_requests_waiting"
+# 真实 KV 利用率指标名：Ascend/新版 ``vllm:kv_cache_usage_perc``，旧版 CUDA ``vllm:gpu_cache_usage_perc``。
+# 两个都试（适配不同框架）；修 mem_peak 被预分配掩盖。
+KV_USAGE_NAMES = ("vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc")
+
+
+def kv_usage_from_map(m: dict[str, float] | None) -> float | None:
+    """从 metrics map 取真实 KV 利用率（兼容双指标名）；map 为 None/无 → None。"""
+    if not m:
+        return None
+    for name in KV_USAGE_NAMES:
+        if name in m:
+            return m[name]
+    return None
 
 
 def _metrics_map(text: str) -> dict[str, float]:
@@ -107,7 +120,7 @@ def scrape_snapshot(base_url: str | None, *, timeout: float = 3.0) -> dict[str, 
 
 @dataclass(frozen=True)
 class WindowSeries:
-    """``compute_window_series`` 的产物：各指标的等长时间序列（前 ``window_s`` 内为 None）。"""
+    """``compute_window_series`` 的产物：各指标的等长时间序列（开头窗口未满时为 None）。"""
 
     t: list[float]
     mem: list[float | None]
@@ -135,7 +148,7 @@ def compute_window_series(samples: list[Sample], window_s: float = 10.0) -> Wind
     - TTFT / e2e / inter-token = Δsum / Δcount（秒→毫秒）
     - 吞吐 = Δgen_tokens / Δt
     - mem / running / waiting 取瞬时值
-    窗口起点之前（开头 ``window_s`` 秒）的点对应值为 ``None``。
+    窗口起点之前（开头不足 window_s）的点用最早可用样本（部分窗口），首个样本无前置 → None。
     """
     import bisect
 
@@ -239,7 +252,11 @@ class LiveMonitor:
         m = scrape_snapshot(self.base_url)  # None → 所有 /metrics 字段为 None
 
         def pick(name: str) -> float | None:
-            return None if m is None else m.get(name)
+            # counter 在 Prometheus 里暴露为 ``<name>_total``（如 prefix_cache_queries_total），
+            # 故同时查 ``name`` 与 ``name+_total``，避免漏抓 KV 计数。
+            if m is None:
+                return None
+            return m.get(name) if name in m else m.get(f"{name}_total")
 
         return Sample(
             t=t,
@@ -255,6 +272,7 @@ class LiveMonitor:
             gen_tokens=pick(M_GEN_TOKENS),
             running=None if m is None else m.get(M_RUNNING),
             waiting=None if m is None else m.get(M_WAITING),
+            kv_usage_perc=kv_usage_from_map(m),
         )
 
     def _loop(self) -> None:
@@ -292,6 +310,7 @@ class HistoryConfig:
     qps: float
     kv_cache_hit_rate: float
     ttft_ms: float
+    kv_cache_usage_perc: float  # 真实 KV 利用率（修 mem_peak 预分配掩盖；旧日志缺则为 0）
     mem_curve: list[tuple[float, int]]  # (timestamp_s, used_mb)，取该 config 首条 run
 
 
@@ -332,7 +351,7 @@ def load_history(logs_dir: str | Path = "logs/mvp-newframework") -> list[History
         except (json.JSONDecodeError, TypeError, ValueError):
             continue
         groups.setdefault(m.config, []).append(m)
-        # 取该 config 首条 run 的显存曲线作代表（覆盖即得，无需聚合多 run）
+        # 取该 config 首条 run 的显存曲线作代表
         if m.config not in curves:
             curve_csv = run_dir / "mem_timeseries.csv"
             if curve_csv.is_file():
@@ -354,8 +373,114 @@ def load_history(logs_dir: str | Path = "logs/mvp-newframework") -> list[History
                 qps=med("qps"),
                 kv_cache_hit_rate=med("kv_cache_hit_rate"),
                 ttft_ms=med("ttft_ms"),
+                kv_cache_usage_perc=med("kv_cache_usage_perc"),
                 mem_curve=curves.get(cfg, []),
             )
         )
     out.sort(key=lambda h: h.config)
     return out
+
+
+def load_all_history(logs_roots: list[str | Path]) -> list[HistoryConfig]:
+    """扫多个 logs 根目录的全部 ``metrics.json``，按 ``config`` **跨根聚合**取中位数。
+
+    供前端「优化对比」用：把散在 logs/、logs-mimo/、logs-trial/ 等的各档 bench 结果
+    汇到一起，一个 config 一条（跨根跨 run 取中位数）。
+    """
+    groups: dict[str, list[RunMetrics]] = {}
+    curves: dict[str, list[tuple[float, int]]] = {}
+    for root in logs_roots:
+        rd = Path(root)
+        if not rd.is_dir():
+            continue
+        for run_dir in sorted(p for p in rd.iterdir() if p.is_dir()):
+            mj = run_dir / "metrics.json"
+            if not mj.is_file():
+                continue
+            try:
+                m = _runmetrics_from_json(json.loads(mj.read_text(encoding="utf-8")))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            groups.setdefault(m.config, []).append(m)
+            if m.config not in curves:
+                curve_csv = run_dir / "mem_timeseries.csv"
+                if curve_csv.is_file():
+                    curves[m.config] = _read_mem_curve(curve_csv)
+
+    out: list[HistoryConfig] = []
+    for cfg, runs in groups.items():
+
+        def med(field: str) -> float:
+            return float(statistics.median(getattr(r, field) for r in runs))
+
+        out.append(
+            HistoryConfig(
+                config=cfg,
+                n_runs=len(runs),
+                mem_peak_mb=med("mem_peak_mb"),
+                e2e_latency_p50_ms=med("e2e_latency_p50_ms"),
+                e2e_latency_p95_ms=med("e2e_latency_p95_ms"),
+                qps=med("qps"),
+                kv_cache_hit_rate=med("kv_cache_hit_rate"),
+                ttft_ms=med("ttft_ms"),
+                kv_cache_usage_perc=med("kv_cache_usage_perc"),
+                mem_curve=curves.get(cfg, []),
+            )
+        )
+    out.sort(key=lambda h: h.config)
+    return out
+
+
+# ---- 运行窗口性能聚合（供 bench 最终结果）----
+
+
+@dataclass(frozen=True)
+class RunPerf:
+    """一次 bench run 窗口内的系统性能聚合（衡量优化收益）。None = 该指标无数据。"""
+
+    hbm_mean_mb: float | None
+    hbm_peak_mb: float | None
+    kv_rate: float | None  # 0~1
+    ttft_ms: float | None
+    e2e_ms: float | None
+    throughput: float | None  # tok/s
+    duration_s: float
+
+
+def run_perf_summary(
+    samples: list[Sample],
+    start: Sample | None,
+    end: Sample | None,
+    duration_s: float,
+) -> RunPerf:
+    """从 run 起止样本算运行窗口性能。
+
+    - KV率/TTFT/e2e/吞吐：用 **累积计数器增量**（end−start）算，精确覆盖整个 run。
+    - HBM：run 窗口内（``t >= start.t``）样本的均值/峰值。
+    起止样本任一为 None → 对应增量为 None；窗口内无显存样本 → HBM 为 None。
+    """
+    start_t = start.t if start is not None else 0.0
+
+    def delt(attr: str) -> float | None:
+        if start is None or end is None:
+            return None
+        a, b = getattr(end, attr), getattr(start, attr)
+        return None if (a is None or b is None) else a - b
+
+    mems = [s.mem_mb for s in samples if s.mem_mb is not None and s.t >= start_t]
+    hbm_mean = sum(mems) / len(mems) if mems else None
+    hbm_peak = max(mems) if mems else None
+
+    dq = delt("kv_queries")
+    kv = None if (dq is None or dq <= 0) else ((delt("kv_hits") or 0.0) / dq)
+    dc = delt("ttft_count")
+    ttft = None if (dc is None or dc <= 0) else ((delt("ttft_sum") or 0.0) / dc * 1000.0)
+    dec = delt("e2e_count")
+    e2e = None if (dec is None or dec <= 0) else ((delt("e2e_sum") or 0.0) / dec * 1000.0)
+    dg = delt("gen_tokens")
+    thr = None if (dg is None or duration_s <= 0) else dg / duration_s
+
+    return RunPerf(
+        hbm_mean_mb=hbm_mean, hbm_peak_mb=hbm_peak, kv_rate=kv,
+        ttft_ms=ttft, e2e_ms=e2e, throughput=thr, duration_s=duration_s,
+    )

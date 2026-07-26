@@ -17,6 +17,7 @@ _EXPECTED_FIELDS = (
     "qps",
     "mem_peak_mb",
     "kv_cache_hit_rate",
+    "kv_cache_usage_perc",
     "task_success_rate",
     "ttft_ms",
     "evictions",

@@ -111,6 +111,7 @@ def test_compute_window_series_rates_and_means():
             t=t, mem_mb=50000 + int(t), kv_hits=kv_h, kv_queries=kv_q,
             ttft_sum=ttft_sum, ttft_count=ttft_cnt, e2e_sum=None, e2e_count=None,
             inter_tok_sum=None, inter_tok_count=None, gen_tokens=gen, running=1, waiting=0,
+            kv_usage_perc=None,
         )
 
     samples = [
