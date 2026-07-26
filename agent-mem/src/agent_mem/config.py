@@ -30,7 +30,7 @@ _DOMAINS = ("retail", "airline")
 _SUITES = ("tau-bench", "agentbench")
 _SPLITS = ("train", "test", "dev")
 # 缝E 策略名（对齐 scheduler.strategies 的类 name）
-_SESSION_STRATEGIES = ("noop", "idle-evict", "checkpoint", "priority-evict", "progress-evict")
+_SESSION_STRATEGIES = ("noop", "idle-evict", "checkpoint", "priority-evict", "progress-evict", "combined-evict")
 
 # 6 大必采指标（赛题硬指标）
 DEFAULT_METRICS: tuple[str, ...] = (

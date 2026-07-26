@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import random
 import threading
 import time
 from collections.abc import Callable
@@ -45,6 +46,8 @@ class ConcurrentSessionDriver:
         active_priority: int = 0,
         priority_mode: str = "idle",
         max_steps: int = 25,
+        think_time_profiles: list[tuple[float, float]] | None = None,
+        sleep_fn: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.tracker = EvictionTracker()
@@ -58,8 +61,11 @@ class ConcurrentSessionDriver:
             max_workers=max_workers, idle_timeout_s=idle_timeout_s,
             interval=sweep_interval, hbm_pct_fn=hbm_pct_fn, tracker=self.tracker,
         )
-        self.priority_mode = priority_mode  # "idle"（idle→抬 priority）或 "progress"（步数→priority）
+        self.priority_mode = priority_mode  # "idle" / "progress" / "combined"
         self.max_steps = max_steps
+        self._think_time_profiles = think_time_profiles or []  # [(lo,hi),...] 用户活跃度 profile（round-robin 分配）
+        self._sleep_fn = sleep_fn  # think-time 注入（默认 time.sleep；测试可注入 recorder）
+        self._clock = clock  # EWMA 时间戳（生产=time.monotonic；测试可注入 fake clock）
         self._stop = threading.Event()
         self._sweep_thread: threading.Thread | None = None
 
@@ -84,10 +90,26 @@ class ConcurrentSessionDriver:
         sid = self._sid(task_id)
         active = self.strategy.active_priority
         max_steps = max(self.max_steps, 1)
+        # 用户活跃度 profile（round-robin 分配）：模拟真实用户的异质交互节奏
+        think_range = None
+        if self._think_time_profiles:
+            think_range = self._think_time_profiles[task_id % len(self._think_time_profiles)]
 
         def on_turn_start(step: int = 0) -> None:
+            # 模拟用户 think-time（step>1 时注入 inter-turn 间隔；sleep 在 touch 之前）
+            if step > 1 and think_range:
+                self._sleep_fn(random.uniform(*think_range))
             s = self.mgr.touch(sid)
             s.metadata["step"] = step
+            # EWMA 交互间隔（recency 信号）：不随 touch 清零，记录 session 一贯节奏
+            if self.priority_mode in ("combined", "idle"):
+                now = self._clock()
+                last_req = s.metadata.get("last_req_time")
+                if last_req is not None:
+                    gap = max(0.0, now - last_req)
+                    prev = s.metadata.get("ewma_gap", gap)
+                    s.metadata["ewma_gap"] = 0.7 * prev + 0.3 * gap
+                s.metadata["last_req_time"] = now
             if self.priority_mode == "idle":
                 self.strategy.mark_active(s)
 
@@ -95,8 +117,15 @@ class ConcurrentSessionDriver:
             s = self.mgr.get(sid)
             if s is None:
                 return active
+            if self.priority_mode == "combined":
+                # Recency 分量 (0-70)：EWMA gap 短=活跃=低分（保护）
+                ewma = s.metadata.get("ewma_gap", 0.0)
+                recency = min(70, int(ewma * 3.5))
+                # Progress 分量 (0-30)：步数多=近完成=低分（保护/SRTF）
+                step = s.metadata.get("step", 0)
+                progress = max(0, 30 - int(step * 1.2))
+                return recency + progress
             if self.priority_mode == "progress":
-                # 进度优先级：早步→高（可踢、重算便宜），晚步→低（保护、重算贵）
                 step = s.metadata.get("step", 0)
                 return max(0, round((1 - step / max_steps) * 100))
             return s.metadata.get("priority", active)

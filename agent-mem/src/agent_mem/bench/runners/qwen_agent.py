@@ -132,10 +132,16 @@ class QwenAgentRunner(Runner):
                     latency_ms=0.0, n_steps=0, error=repr(e),
                 )
 
+        strategy = cfg.session.strategy
+        priority_mode = ("combined" if strategy == "combined-evict"
+                         else "progress" if strategy == "progress-evict" else "idle")
+        # Think-time profiles from config: list of [lo,hi] pairs simulating user engagement
+        profiles_raw = cfg.session.options.get("think_time_profiles") or []
+        think_profiles = [tuple(p) for p in profiles_raw] if profiles_raw else None
         driver = ConcurrentSessionDriver(
             max_workers=self.max_concurrency, idle_timeout_s=self.idle_timeout_s,
             target_lo=self.target_lo, target_hi=self.target_hi, hbm_pct_fn=self.hbm_pct_fn,
-            priority_mode=("progress" if cfg.session.strategy == "progress-evict" else "idle"),
+            priority_mode=priority_mode, think_time_profiles=think_profiles,
             max_steps=self.max_steps,
         )
         self.last_driver = driver  # 暴露给 metrics / 实时监控取 snapshot
