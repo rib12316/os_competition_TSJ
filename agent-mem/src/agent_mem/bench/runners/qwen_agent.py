@@ -127,4 +127,4 @@ class QwenAgentRunner(Runner):
             max_steps=self.max_steps,
         )
         self.last_driver = driver  # 暴露给 metrics / 实时监控取 snapshot
-        return driver.run(task_ids, _runner)
+        return driver.run([t.task_id for t in tasks], _runner)
