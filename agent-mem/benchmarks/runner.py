@@ -47,6 +47,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--runs", type=int, default=None, help="覆盖 config 中的 benchmark.runs")
     p.add_argument("--domain", default=None, help="覆盖 config 中的 benchmark.domain")
     p.add_argument(
+        "--suite", default=None, choices=["tau-bench", "longbench"],
+        help="覆盖 benchmark.suite（统一 benchmark：tau-bench 多轮工具调用 / longbench 长上下文 QA）",
+    )
+    p.add_argument("--data-zip", default=None, help="longbench 数据 zip 路径（THUDM/LongBench）")
+    p.add_argument("--start", type=int, default=None, help="longbench: 起始 example 下标")
+    p.add_argument("--limit", type=int, default=None, help="longbench: 取多少 example")
+    p.add_argument(
         "--model-name",
         default=None,
         help="覆盖 engine.model（同时作 agent 调用名 + metrics 标签）",
@@ -160,6 +167,17 @@ def main(argv: list[str] | None = None) -> int:
         cfg.benchmark.runs = args.runs
     if args.domain:
         cfg.benchmark.domain = args.domain
+    if args.suite:
+        cfg.benchmark.suite = args.suite
+    if args.data_zip:
+        cfg.benchmark.data_zip = str(args.data_zip)
+    if args.start is not None or args.limit is not None:
+        opts = dict(cfg.benchmark.options or {})
+        if args.start is not None:
+            opts["start"] = args.start
+        if args.limit is not None:
+            opts["limit"] = args.limit
+        cfg.benchmark.options = opts
     if args.model_name:
         cfg.engine.model = args.model_name  # 影响 agent 调用名 + metrics 标签
 

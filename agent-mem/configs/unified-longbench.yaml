@@ -1,0 +1,53 @@
+# 统一 benchmark · longbench 长上下文 QA（2WikiMultihopQA）经 F2/F3 middleware
+# 大 context 经 retrieve_documents 工具注入 → LazyLoadMiddleware 外化 + CompressMiddleware 压缩。
+# 测 prompt 压缩（F2）+ 工具数据 lazy-load（F3）。
+#
+# 前置：
+#   - benchmark.data_zip 指向 THUDM/LongBench zip（含 data/2wikimqa.jsonl）；CLI --data-zip 可覆盖。
+#     data_zip 留空时 load_config 不报错，但跑时会由 longbench adapter 在 list_tasks 报清晰错。
+#   - 压缩需 .venv-compress（worker_venv 指向隔离压缩 venv，绕开 transformers 版本冲突）。
+#
+# 跑 benchmark（stub 联调 / NPU 真跑）：
+#   python benchmarks/runner.py --config configs/unified-longbench.yaml --runner qwen-agent \
+#     --engine-url http://localhost:8000/v1 --data-zip /path/to/longbench.zip
+engine:
+  backend: vllm-ascend
+  model: Qwen2.5-7B-Instruct
+
+benchmark:
+  suite: longbench
+  domain: 2wikimqa
+  runs: 1            # 确定性 QA（temperature=0），单次取中位数
+  seed: 42
+  data_zip: ""       # 留空：用 CLI --data-zip 覆盖；或在此填 THUDM/LongBench zip 路径
+  options:
+    start: 0
+    limit: 5
+
+middleware:                            # 缝D：lazyload（F3）+ compress（F2）
+  active: [lazyload, compress]
+  options:
+    lazyload:
+      tokenizer_model: Qwen2.5-7B-Instruct
+    compress:
+      method: llmlingua2
+      rate: 0.65
+      trigger_tokens: 8000
+      keep_hot: 6
+      tool_aware: true
+      assistant_rate: 0.75
+      tool_result_rate: 0.60
+      device: cpu
+      model_name: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank
+      backend: subprocess
+      worker_venv: /data/os_competition_TSJ/.venv-compress/bin/python
+      worker_pool_size: 1
+
+metrics:
+  - e2e_latency_p50
+  - e2e_latency_p95
+  - qps
+  - mem_peak_mb
+  - kv_cache_hit_rate
+  - task_success_rate
+  - ttft

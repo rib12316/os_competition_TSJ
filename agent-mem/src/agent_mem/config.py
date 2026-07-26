@@ -27,7 +27,7 @@ import yaml
 # 注：sglang 在 v2 作废（不支持 Ascend），保留在白名单仅为向后兼容旧 config，真机不可用。
 _BACKENDS = ("vllm", "sglang", "vllm-ascend")
 _DOMAINS = ("retail", "airline")
-_SUITES = ("tau-bench", "agentbench")
+_SUITES = ("tau-bench", "agentbench", "longbench")
 _SPLITS = ("train", "test", "dev")
 # 缝E 策略名（对齐 scheduler.strategies 的类 name）
 _SESSION_STRATEGIES = ("noop", "idle-evict", "checkpoint", "priority-evict", "progress-evict", "combined-evict")
@@ -298,7 +298,10 @@ def validate(cfg: AppConfig) -> None:
     b = cfg.benchmark
     if b.suite not in _SUITES:
         raise ConfigError(f"benchmark.suite={b.suite!r} 不在白名单 {_SUITES}")
-    if b.domain not in _DOMAINS:
+    # longbench：domain 是数据集名（如 2wikimqa），不在 retail/airline 白名单。
+    # 仅 tau-bench/agentbench 校验 domain 白名单；longbench 的 data_zip 由 adapter 运行时校验
+    # （这样 preset 可留空 data_zip、由 CLI --data-zip 覆盖，不卡 load_config）。
+    if b.suite != "longbench" and b.domain not in _DOMAINS:
         raise ConfigError(f"benchmark.domain={b.domain!r} 不在白名单 {_DOMAINS}")
     if b.runs < 1:
         raise ConfigError(f"benchmark.runs={b.runs} 必须 >= 1")
