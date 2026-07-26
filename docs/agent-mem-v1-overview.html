@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agent-mem v1 — 技术架构与分层评估方案</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --page: #f9f9f7;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --baseline: #c3c2b7; --ring: rgba(11,11,11,0.10);
+    --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4;
+    --seq-250:#86b6ef; --seq-400:#3987e5; --seq-600:#184f95;
+    --good:#0ca30c; --good-text:#006300; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+    --code-bg:#f3f2ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { color-scheme: dark;
+      --surface-1:#1a1a19; --page:#0d0d0d;
+      --ink-1:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+      --grid:#2c2c2a; --baseline:#383835; --ring:rgba(255,255,255,0.10);
+      --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181;
+      --seq-250:#5598e7; --seq-400:#3987e5; --seq-600:#1c5cab;
+      --good:#0ca30c; --good-text:#0ca30c; --code-bg:#232321;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--page); color:var(--ink-1);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height:1.6; }
+  .wrap { max-width:980px; margin:0 auto; padding:0 24px 96px; }
+  /* header */
+  header { padding:56px 0 32px; border-bottom:1px solid var(--grid); margin-bottom:40px; }
+  .eyebrow { color:var(--s1); font-weight:600; letter-spacing:.08em; font-size:.78rem; text-transform:uppercase; }
+  h1 { font-size:2.1rem; margin:.4em 0 .2em; letter-spacing:-.01em; }
+  .lede { color:var(--ink-2); font-size:1.08rem; max-width:62ch; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }
+  .chip { font-size:.8rem; padding:4px 10px; border:1px solid var(--ring); border-radius:999px; color:var(--ink-2); background:var(--surface-1); }
+  .banner { margin-top:22px; padding:12px 16px; border-left:3px solid var(--warn); background:var(--surface-1); border-radius:0 8px 8px 0; color:var(--ink-2); font-size:.88rem; }
+  /* sections */
+  section { margin:56px 0; }
+  h2 { font-size:1.5rem; margin:0 0 .3em; letter-spacing:-.01em; }
+  h3 { font-size:1.12rem; margin:1.6em 0 .4em; }
+  .sec-lede { color:var(--ink-2); margin:0 0 24px; max-width:70ch; }
+  p { margin:.6em 0; }
+  /* tables */
+  table { width:100%; border-collapse:collapse; font-size:.9rem; margin:12px 0; background:var(--surface-1); }
+  th, td { padding:9px 12px; text-align:left; border-bottom:1px solid var(--grid); vertical-align:top; }
+  th { color:var(--ink-2); font-weight:600; font-size:.78rem; text-transform:uppercase; letter-spacing:.04em; background:var(--page); }
+  td.num, th.num { font-variant-numeric: tabular-nums; text-align:right; }
+  .delta-good { color:var(--good-text); font-weight:600; font-variant-numeric:tabular-nums; }
+  .delta-flat { color:var(--muted); font-variant-numeric:tabular-nums; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size:.85em; background:var(--code-bg); padding:1px 5px; border-radius:4px; }
+  pre { background:var(--code-bg); padding:14px 16px; border-radius:8px; overflow-x:auto; font-size:.82rem; }
+  pre code { background:none; padding:0; }
+  /* cards */
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media(max-width:720px){ .grid2{ grid-template-columns:1fr; } }
+  .card { background:var(--surface-1); border:1px solid var(--ring); border-radius:12px; padding:18px 20px; }
+  .card h4 { margin:0 0 6px; font-size:1.02rem; display:flex; align-items:center; gap:10px; }
+  .dot { width:11px; height:11px; border-radius:3px; display:inline-block; flex:none; }
+  .feat-tag { font-size:.72rem; color:var(--ink-2); font-weight:600; }
+  .mech { color:var(--ink-2); font-size:.9rem; margin:.3em 0 .6em; }
+  .kpi-row { display:flex; gap:18px; flex-wrap:wrap; margin:8px 0; }
+  .kpi { }
+  .kpi .v { font-size:1.18rem; font-weight:700; font-variant-numeric:tabular-nums; }
+  .kpi .l { font-size:.74rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .necessity { margin-top:10px; font-size:.83rem; color:var(--ink-2); padding:8px 10px; background:var(--page); border-radius:6px; border-left:2px solid var(--s4); }
+  /* seam diagram */
+  .seam { display:grid; grid-template-columns:repeat(7,1fr); gap:8px; margin:18px 0; }
+  @media(max-width:720px){ .seam{ grid-template-columns:repeat(2,1fr);} }
+  .seam .b { border:1px solid var(--ring); border-radius:10px; padding:12px 10px; background:var(--surface-1); text-align:center; }
+  .seam .id { font-size:.72rem; color:var(--muted); font-weight:700; letter-spacing:.05em; }
+  .seam .nm { font-size:.82rem; margin:4px 0 6px; font-weight:600; }
+  .seam .who { font-size:.72rem; color:var(--ink-2); }
+  /* tier visual (ordinal blue ramp) */
+  .tiers { display:grid; grid-template-columns:1fr 1fr 1fr; gap:0; margin:20px 0; border:1px solid var(--ring); border-radius:12px; overflow:hidden; }
+  .tier { padding:18px 20px; position:relative; }
+  .tier.t0 { background:var(--page); }
+  .tier.t1 { background:color-mix(in srgb, var(--seq-250) 22%, var(--surface-1)); }
+  .tier.t2 { background:color-mix(in srgb, var(--seq-400) 30%, var(--surface-1)); color:#fff; }
+  .tier .step { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; opacity:.8; font-weight:700; }
+  .tier .tt { font-size:1.05rem; font-weight:700; margin:4px 0 6px; }
+  .tier .dd { font-size:.82rem; opacity:.92; }
+  .arrow { text-align:center; color:var(--muted); margin:-6px 0; font-size:1.2rem; }
+  /* status pills */
+  .pill { font-size:.74rem; padding:2px 8px; border-radius:999px; font-weight:600; display:inline-block; }
+  .pill.noop { background:color-mix(in srgb,var(--crit) 16%,transparent); color:var(--crit); }
+  .pill.weak { background:color-mix(in srgb,var(--serious) 18%,transparent); color:var(--serious); }
+  .pill.ok { background:color-mix(in srgb,var(--good) 16%,transparent); color:var(--good-text); }
+  .legend { display:flex; gap:18px; flex-wrap:wrap; font-size:.8rem; color:var(--ink-2); margin:10px 0; }
+  footer { margin-top:64px; padding-top:20px; border-top:1px solid var(--grid); color:var(--muted); font-size:.8rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">赛题 14 · 面向智能体的内存管理系统</div>
+  <h1>agent-mem v1 — 技术架构与分层评估方案</h1>
+  <p class="lede">在 <strong>vllm-ascend / 昇腾 910B</strong> 之上，针对智能体推理的独特内存特征，构建一套可独立 toggle、可组合、可复现的内存优化系统，并以 <em>baseline → MVP → ours</em> 三档递进证明每一项工作的必要性。</p>
+  <div class="chips">
+    <span class="chip">Ascend 910B2C · 64GB HBM</span>
+    <span class="chip">vllm-ascend 0.22.1rc1（CUDA-free）</span>
+    <span class="chip">910B = BF16（无 FP8 → KV 走 int8/C8）</span>
+    <span class="chip">5 功能 F1–F5 · 7 条稳定缝</span>
+    <span class="chip">统一 benchmark（tau-bench + longbench）</span>
+  </div>
+  <div class="banner">⚠️ <strong>数字来源声明：</strong>本文指标来自各功能分支的真机实测；<strong>v1 统一分支上的 before/after 重跑待 NPU 启用</strong>。所有对照遵循"同硬件 / 同模型 / 同 prompt / 同 seed、3 次取中位数"。</div>
+</header>
+
+<!-- ============ 1. 问题 ============ -->
+<section>
+  <h2>1. 我们在解决什么问题</h2>
+  <p class="sec-lede">智能体推理 ≠ 普通单轮生成。它的内存使用有 5 个独特特征，每个都是一条独立的优化机会——也是赛题的评分指挥棒。</p>
+  <table>
+    <thead><tr><th>智能体内存特征（痛点）</th><th>不优化的后果</th><th>我们的解</th></tr></thead>
+    <tbody>
+      <tr><td>① 系统/工具 prompt 每轮重复</td><td>prefill 反复算同样前缀，TTFT 高</td><td>prefix cache（MVP）+ <strong>F2 压缩</strong></td></tr>
+      <tr><td>② 多轮 KV 持续累积，单 session 寿命长</td><td>HBM 吃紧 → 抢占重算 / OOM</td><td><strong>F5 动态回收</strong> + <strong>F4 分层</strong></td></tr>
+      <tr><td>③ 工具返回值（HTML/长 JSON）一次性塞进 context</td><td>context/KV 膨胀</td><td><strong>F3 lazy-load</strong></td></tr>
+      <tr><td>④ KV 显存绝对占用大</td><td>并发上限低、易 OOM</td><td><strong>F1 C8 量化</strong></td></tr>
+      <tr><td>⑤ 多 session 并发 + 价值异构（忙/闲不一）</td><td>抢占误伤活跃 session</td><td><strong>F5 会话感知调度</strong></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============ 2. 架构 ============ -->
+<section>
+  <h2>2. 技术架构：7 条稳定缝 + 5 个独立功能</h2>
+  <p class="sec-lede">每个功能挂在一条"稳定缝（seam）"上——有自己的 yaml、自己的开关、走现成 harness 出自己的 before/after，可单独测、可组合。这是整个系统能"独立 toggle 又能叠一起"的地基。</p>
+
+  <h3>2.1 缝 ↔ 功能 归属</h3>
+  <div class="seam">
+    <div class="b"><div class="id">缝 A</div><div class="nm">引擎 flag</div><div class="who">F1</div></div>
+    <div class="b"><div class="id">缝 B</div><div class="nm">引擎后端</div><div class="who">F8(未整合)</div></div>
+    <div class="b"><div class="id">缝 C</div><div class="nm">KV connector</div><div class="who">F4 / F5-P2</div></div>
+    <div class="b"><div class="id">缝 D</div><div class="nm">上下文中间件</div><div class="who">F2 / F3</div></div>
+    <div class="b"><div class="id">缝 E</div><div class="nm">Session 生命周期</div><div class="who">F5</div></div>
+    <div class="b"><div class="id">缝 F</div><div class="nm">自带 workload</div><div class="who">baseline</div></div>
+    <div class="b"><div class="id">缝 G</div><div class="nm">部署</div><div class="who">F9(待补)</div></div>
+  </div>
+
+  <h3>2.2 统一缝C：一个 connector 槽，yaml 二选一</h3>
+  <p>F4（LMCache）与 F5-Phase2（SimpleCPUOffload）原本抢同一个 <code>--kv-transfer-config</code> 槽（vLLM 只接受一个 connector）。v1 把三种不兼容写法收敛成<strong>一个 schema</strong>：</p>
+<pre><code>engine:
+  kv_transfer:               # 缝C 唯一槽，后端二选一
+    connector: LMCacheAscendConnector      # 或 SimpleCPUOffloadConnector
+    role: kv_both
+    extra_config: { ... }
+  c8: { enabled, patch_qwen2 }             # F1（缝A）
+  priority_scheduling: true                # F5（缝A scheduling flag）</code></pre>
+  <p>已验证：F4 档 → <code>LMCacheAscendConnector</code>，F5-P2 档 → <code>SimpleCPUOffloadConnector</code>，二者经同一个 <code>render_kv_transfer_arg</code> 渲染。F5 核心（准入+优先级）始终叠加在 connector 之上，与 connector 互不冲突。</p>
+</section>
+
+<!-- ============ 3. 三档递进（核心思路） ============ -->
+<section>
+  <h2>3. 评估框架：baseline → MVP → ours 三档递进</h2>
+  <p class="sec-lede">按"<strong>谁的东西 / 要不要写代码</strong>"划界，正好是公平边界——不把 vllm 白送的算成自研。三档共享同一套指标，数字可比。</p>
+
+  <div class="tiers">
+    <div class="tier t0">
+      <div class="step">T0 · baseline</div>
+      <div class="tt">绝对零点</div>
+      <div class="dd">prefix cache <strong>OFF</strong>，全功能关。仅用于画递进图最左端。</div>
+    </div>
+    <div class="tier t1">
+      <div class="step">T1 · MVP（vllm 白送）</div>
+      <div class="tt">纯 flag 能拿到的</div>
+      <div class="dd">prefix cache ON + 其它免费 flag（含实测为 no-op 的 int8 / priority flag）。</div>
+    </div>
+    <div class="tier t2">
+      <div class="step">T2 · agent-mem v1（ours）</div>
+      <div class="tt">T1 + 我们写的代码</div>
+      <div class="dd">F1 / F2 / F3 / F4 / F5 —— 全部需要我们的代码或集成。</div>
+    </div>
+  </div>
+
+  <h3>3.1 为什么 T1 要放"no-op flag"——这是必要性证明，不是凑数</h3>
+  <p>T1 不止 prefix cache，而是"<strong>不写代码、只靠启动参数能开的一切</strong>"。其中有几个开了等于没开——这恰好证明了我们为什么要写 F1 / F5：</p>
+  <table>
+    <thead><tr><th>vllm 免费 flag</th><th>开了之后</th><th>结论</th><th>我们的回应</th></tr></thead>
+    <tbody>
+      <tr><td>prefix caching（V1 默认）</td><td><span class="pill ok">真有用</span></td><td>解决特征①（prompt 重复）</td><td>作为 MVP 基线保留</td></tr>
+      <tr><td><code>--kv-cache-dtype int8</code></td><td><span class="pill noop">no-op</span></td><td>0.22.1rc1 后端硬断言 scales==1，不路由到 C8</td><td><strong>F1</strong>：c8.py 校准 + Qwen2 patch 才让 int8 KV 真生效</td></tr>
+      <tr><td><code>--scheduling-policy priority</code></td><td><span class="pill weak">≈FCFS</span></td><td>给所有 session 同优先级时几乎无增益（实测 A≈B）</td><td><strong>F5</strong>：准入控制 + combined priority 才真消除抢占</td></tr>
+    </tbody>
+  </table>
+  <p>于是 <strong>T1 → T2 的跳变就是"必要性证明"</strong>：免费 flag 给不了的东西，必须靠我们的代码。这比单纯的"off vs on"有说服力得多。</p>
+
+  <h3>3.2 特征消融基线 = T1</h3>
+  <p>每个 F 功能的 before/after 都对照 <strong>T1（prefix cache ON + 全 F 关）</strong>，单变量 toggle。这样既公平（prefix cache 是真实部署默认，不是造虚高），又与三档递进共享同一个中间档——一个定义，两个用途，无术语冲突。F5 尤其依赖此基线：它的 KV 命中提升本质是"保护 prefix cache 不被抢占打掉"，prefix cache OFF 时该指标无意义。</p>
+</section>
+
+<!-- ============ 4. 我们干了什么 ============ -->
+<section>
+  <h2>4. 我们究竟干了什么（5 个功能）</h2>
+  <p class="sec-lede">每个功能：解决哪个痛点 / 机制 / 实测数字 / 关键文件 / 相对免费 flag 的必要性。数字为各功能分支真机实测。</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h4><span class="dot" style="background:var(--s1)"></span>F1 · C8 int8 KV 量化 <span class="feat-tag">缝A · 解决痛点④</span></h4>
+      <p class="mech"><code>--quantization ascend</code> + <code>c8.py</code> 做 post-RoPE per-channel MinMax 校准 + <code>sitecustomize</code> 给 Qwen2 打 load_weights 补丁，让 vllm-ascend 的 C8 真正加载 KV scale。</p>
+      <div class="kpi-row">
+        <div class="kpi"><div class="v">2.0×</div><div class="l">同 HBM token 容量</div></div>
+        <div class="kpi"><div class="v">+35%</div><div class="l">并发16 吞吐</div></div>
+      </div>
+      <div class="necessity">必要性：免费 <code>--kv-cache-dtype int8</code> 是 no-op；我们的 C8 才把显存砍半。</div>
+    </div>
+
+    <div class="card">
+      <h4><span class="dot" style="background:var(--s2)"></span>F2 · Prompt 压缩 <span class="feat-tag">缝D · 解决痛点①</span></h4>
+      <p class="mech">LLMLingua-2 BERT 压缩冷历史，热尾 + system 原样保留；<strong>tool-aware</strong> 保护 user/arguments/关键 JSON；隔离 venv 子进程池并行压缩。</p>
+      <div class="kpi-row">
+        <div class="kpi"><div class="v">−19%</div><div class="l">tau-bench prompt</div></div>
+        <div class="kpi"><div class="v">−27%</div><div class="l">长上下文</div></div>
+        <div class="kpi"><div class="v">≤2.6pp</div><div class="l">成功率(噪声内)</div></div>
+      </div>
+      <div class="necessity">必要性：prefix cache 只免"重复前缀重算"，F2 进一步压"冷历史正文"，二者叠加。</div>
+    </div>
+
+    <div class="card">
+      <h4><span class="dot" style="background:var(--s3)"></span>F3 · 工具数据 lazy-load <span class="feat-tag">缝D · 解决痛点③</span></h4>
+      <p class="mech">超大工具返回值外化到 SQLite，context 只留结构化引用 <code>&lt;doc id summary&gt;</code>；模型用 <code>fetch_tool_result</code> 按需取有界片段（JSON Pointer / 字段搜索，硬上限 768 token）。</p>
+      <div class="kpi-row">
+        <div class="kpi"><div class="v">−93%</div><div class="l">长工具结果 context</div></div>
+        <div class="kpi"><div class="v">−66%</div><div class="l">LongBench 累计 prompt</div></div>
+        <div class="kpi"><div class="v">0</div><div class="l">成功率下降</div></div>
+      </div>
+      <div class="necessity">必要性：vllm 无任何 flag 能处理工具大数据进 KV——纯自研 middleware。</div>
+    </div>
+
+    <div class="card">
+      <h4><span class="dot" style="background:var(--s4)"></span>F4 · LMCache 分层 <span class="feat-tag">缝C · 解决痛点②</span></h4>
+      <p class="mech">经统一 <code>kv_transfer</code> 槽激活 <code>LMCacheAscendConnector</code>，KV 在 NPU↔CPU↔Disk 三级自动分层（社区 lmcache_ascend 插件 + 我们的 config wiring / 可用性检查）。</p>
+      <div class="kpi-row">
+        <div class="kpi"><div class="v">−21%</div><div class="l">单 agent p50</div></div>
+        <div class="kpi"><div class="v">+32%</div><div class="l">并发4 QPS</div></div>
+      </div>
+      <div class="necessity">必要性：KV 超 HBM 即 OOM；分层让容量突破物理 HBM。（诚实：retail 短任务 offload 未触发，收益需长 session / 高并发场景。）</div>
+    </div>
+
+    <div class="card" style="grid-column:1 / -1">
+      <h4><span class="dot" style="background:var(--s5)"></span>F5 · 动态资源回收与会话感知调度 <span class="feat-tag">缝E · 解决痛点②⑤</span></h4>
+      <p class="mech">多 session 并发共享 HBM 时，vLLM 原生抢占"机械随机踢人"。F5 装上<strong>会话感知策略层</strong>：① <code>AdmissionController</code>（HBM 驱动的 KV-pool 准入闸门）② <code>--scheduling-policy priority</code> + 应用层把 idle/低价值 session 的 priority 抬高 ③ <strong>combined priority</strong> = EWMA recency（交互节奏）+ progress（步数/SRTF）④ <code>think_time_profiles</code> 模拟异质用户活跃度。</p>
+      <div class="kpi-row">
+        <div class="kpi"><div class="v">0</div><div class="l">抢占次数(原多次)</div></div>
+        <div class="kpi"><div class="v">0.46→0.93</div><div class="l">KV 命中率</div></div>
+        <div class="kpi"><div class="v">−21%</div><div class="l">e2e p50</div></div>
+        <div class="kpi"><div class="v">3.5×</div><div class="l">progress p50</div></div>
+        <div class="kpi"><div class="v">100%</div><div class="l">eviction 命中 idle</div></div>
+      </div>
+      <div class="necessity">必要性：免费 <code>--scheduling-policy priority</code> 单独 ≈ FCFS（实测 A≈B）；真正的增益全部来自我们的准入控制 + combined 信号。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5. 测试场景 ============ -->
+<section>
+  <h2>5. 测试场景：尊重每个功能的"触发条件"</h2>
+  <p class="sec-lede">一个功能只在它的触发条件满足时才有收益。所以不搞"一套统一场景跑全部"（会系统性低估未触发功能），而是<strong>每个功能配最能触发它的场景</strong>，单变量对照 T1。5 个触发条件聚类成 2 个场景族：</p>
+  <table>
+    <thead><tr><th>场景族</th><th>workload</th><th>触发谁</th><th>对照（单变量 toggle vs T1）</th></tr></thead>
+    <tbody>
+      <tr><td><strong>α 并发资源受限</strong></td><td><code>unified-tau-freq</code>：6 并发 τ-bench + 小 KV pool（<code>--gpu-memory-utilization 0.27</code>）+ think-time profiles</td><td>F5 / F1 / F4</td><td>F5: T1→combined-evict+准入 ｜ F1: T1→c8 ｜ F4: T1→LMCache</td></tr>
+      <tr><td><strong>β 长上下文 / 大工具</strong></td><td><code>unified-longbench</code>：LongBench 2WikiMQA（大 context 当工具结果）</td><td>F2 / F3</td><td>F3: T1→lazyload ｜ F2: T1→compress</td></tr>
+      <tr><td><strong>γ 集成（headline）</strong></td><td>综合 workload（α 压力 + β 长context 同时造）</td><td>全部</td><td>T1（全关）→ T2（全开）整体显存/延迟/成功率</td></tr>
+    </tbody>
+  </table>
+  <p>共享：同一 harness（统一 benchmark）、同一套 <code>RunMetrics</code>、同模型（Qwen2.5-7B + MiniCPM3 各跑，命中"通用性"）、成功率红线 ≤2pp、3 次中位数。</p>
+  <p><strong>诚实判读：</strong>Layer 1（每功能触发消融）= 各功能"上限/潜力"；Layer 2（γ 集成）= 现实整体效果，<em>可能 &lt; 各功能之和</em>（综合场景未必同时触发所有条件 + connector 二选一等约束）。两者是不同问题，不要把 γ 的"整体只快 X%"当成某功能没用。</p>
+</section>
+
+<!-- ============ 6. 指标 ============ -->
+<section>
+  <h2>6. 我们统计的指标（核心集）</h2>
+  <table>
+    <thead><tr><th>指标</th><th>单位</th><th>命中的评分主张</th><th>主要由谁体现</th></tr></thead>
+    <tbody>
+      <tr><td><code>mem_peak_mb</code> + KV token 容量</td><td class="num">MB / tokens</td><td>显存↓（40 分主战场）</td><td>F1（2×）/ F4</td></tr>
+      <tr><td><code>e2e_latency_p50/p95</code> + <code>ttft</code> + <code>qps</code></td><td class="num">ms / req·s⁻¹</td><td>延迟↓</td><td>F2 / F5 / 全局</td></tr>
+      <tr><td><code>task_success_rate</code></td><td class="num">0–1</td><td>成功率不掉（红线 ≤2pp）</td><td>全部</td></tr>
+      <tr><td><code>num_preemptions_total</code> + <code>kv_cache_hit_rate</code> + <code>idle_hit_rate</code></td><td class="num">计数 / 0–1</td><td>长生命周期动态回收</td><td>F5</td></tr>
+      <tr><td><code>prompt_tokens</code> + 工具结果节省</td><td class="num">tokens</td><td>压缩 / 工具数据</td><td>F2 / F3</td></tr>
+    </tbody>
+  </table>
+  <p>完整指标目录（含每功能"必要性 counterfactual"提议）见 <code>docs/metrics-catalog.md</code>。</p>
+</section>
+
+<footer>
+  agent-mem v1 · 分支 <code>agent-mem-v1</code> · 290 pytest 绿 · 25/25 yaml 过 unified schema 校验<br>
+  缺口：① v1 真机 before/after（待 NPU）② F9 国产 OS 部署（deploy/ 现为空壳）③ 统一技术报告。本页数字为各功能分支实测，重跑以 v1 为准。
+</footer>
+
+</div>
+</body>
+</html>
