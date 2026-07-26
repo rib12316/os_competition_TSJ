@@ -24,6 +24,23 @@ def test_tau_context_modes_build_expected_middleware_order():
         assert stack.names == names
 
 
+def test_tau_frontend_can_lower_f2_trigger_without_changing_yaml():
+    stack = _tau_context_stack(
+        "F2+F3",
+        "Qwen2.5-7B-Instruct",
+        f2_trigger_tokens=2000,
+    )
+    compress = next(middleware for middleware in stack.middlewares if middleware.name == "compress")
+    assert compress.trigger_tokens == 2000
+
+    production = _tau_context_stack("F2+F3", "Qwen2.5-7B-Instruct")
+    production_compress = next(
+        middleware for middleware in production.middlewares
+        if middleware.name == "compress"
+    )
+    assert production_compress.trigger_tokens == 8000
+
+
 def test_tau_frontend_defaults_to_mimo_user_simulator():
     settings = _tau_user_sim_settings()
     assert settings["model"] == "mimo-v2.5-pro"

@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pandas as _pandas  # noqa: F401 - preload before concurrent Plotly timer callbacks
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -267,12 +268,22 @@ def clear_runs() -> tuple[list[dict], go.Figure, str, str]:
     return [], _runs_figure([]), _runs_table([]), _runs_summary([])
 
 
-def _tau_context_stack(mode: str, model: str) -> MiddlewareStack:
+def _tau_context_stack(
+    mode: str,
+    model: str,
+    *,
+    f2_trigger_tokens: int | None = None,
+) -> MiddlewareStack:
     """Build a fresh per-task F2/F3 stack without changing the running engine."""
     if mode not in _TAU_CONTEXT_PRESETS:
         raise ValueError(f"未知上下文模式 {mode!r}")
     cfg = load_config(_TAU_CONTEXT_PRESETS[mode])
     cfg.engine.model = model
+    if "compress" in cfg.middleware.active and f2_trigger_tokens is not None:
+        cfg.middleware.options.setdefault("compress", {})["trigger_tokens"] = max(
+            1,
+            int(f2_trigger_tokens),
+        )
     return middlewares_from_config(cfg)
 
 
@@ -443,9 +454,10 @@ def build_app(
             yield new_history
 
     # ---- τ-bench 任务（流式）----
-    def run_tau(domain, task_id, max_steps, context_mode):
+    def run_tau(domain, task_id, max_steps, context_mode, f2_trigger_tokens):
         tid = int(task_id)
         mode = str(context_mode)
+        demo_trigger = max(1, int(f2_trigger_tokens or 2000))
         buffer = ContextEventBuffer(max_events=5000)
         if not tau_run_lock.acquire(blocking=False):
             empty_view = _tau_context_view(
@@ -457,7 +469,11 @@ def build_app(
             yield [], "⚠️ 已有 tau-bench 任务运行，不能重复启动。", *empty_view
             return
         try:
-            stack = _tau_context_stack(mode, model)
+            stack = _tau_context_stack(
+                mode,
+                model,
+                f2_trigger_tokens=demo_trigger,
+            )
             names = stack.names
             user_sim = _tau_user_sim_settings()
             view = _tau_context_view(
@@ -470,7 +486,7 @@ def build_app(
                 [],
                 f"⏳ 构建 τ-bench 环境（{domain} #{tid}）… "
                 f"middleware={names}，USER simulator={user_sim['model']}，"
-                "首次加载 litellm ~6s",
+                f"F2 demo trigger={demo_trigger} token，首次加载 litellm ~6s",
                 *view,
             )
             for hist_msgs, status in tau_bench_ui.run_tau_task_streaming(
@@ -774,6 +790,13 @@ def build_app(
                             label="上下文模式（Agent middleware，不重启引擎）",
                             info="F2=Prompt 压缩，F3=工具数据 lazy-load，组合顺序固定为 [lazyload, compress]",
                         )
+                        tau_f2_trigger = gr.Number(
+                            value=2000,
+                            minimum=500,
+                            maximum=8000,
+                            step=500,
+                            label="F2 演示压缩阈值（仅当前前端任务；正式配置仍为 8000）",
+                        )
                         tau_chatbot = gr.Chatbot(
                             type="messages", height=460,
                             label="τ-bench agent 对话（tool-calling）",
@@ -869,7 +892,13 @@ def build_app(
         # 事件：τ-bench
         tau_run.click(
             run_tau,
-            [tau_domain, tau_taskid, tau_maxsteps, tau_context_mode],
+            [
+                tau_domain,
+                tau_taskid,
+                tau_maxsteps,
+                tau_context_mode,
+                tau_f2_trigger,
+            ],
             [
                 tau_chatbot,
                 tau_status,
