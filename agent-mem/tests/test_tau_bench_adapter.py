@@ -77,8 +77,8 @@ def test_list_tasks_retail():
     assert t0.task_id == 0
     assert t0.domain == "retail"
     assert t0.split == "test"
-    assert isinstance(t0.instruction, str) and t0.instruction
-    assert isinstance(t0.action_names, tuple)
+    assert t0.suite == "tau-bench"
+    assert t0.payload is None  # tau 按 task_id 重载，不带 payload
 
 
 def test_n_tasks_matches_list():

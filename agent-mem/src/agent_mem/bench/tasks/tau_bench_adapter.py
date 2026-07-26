@@ -23,17 +23,9 @@ SUPPORTED_ENVS = ("retail", "airline")
 SUPPORTED_SPLITS = ("train", "test", "dev")
 
 
-@dataclass(frozen=True)
-class TaskInfo:
-    """与 ``tau_bench.types.Task`` 解耦的轻量 DTO（避免顶层 import tau_bench）。"""
-
-    task_id: int
-    user_id: str
-    instruction: str
-    action_names: tuple[str, ...]  # [a.name for a in task.actions]
-    n_outputs: int
-    domain: str  # retail | airline
-    split: str  # test | train | dev
+# TaskInfo 已抽到 bench/tasks/types.py（suite-agnostic：tau/longbench 共享 lean DTO）。
+# 此处 re-export 保持向后兼容（tests / __init__ docstring 仍可从本模块导入 TaskInfo）。
+from agent_mem.bench.tasks.types import TaskInfo  # noqa: F401
 
 
 @dataclass(frozen=True)
@@ -86,16 +78,8 @@ def list_tasks(domain: str = "retail", split: str = "test") -> list[TaskInfo]:
         task_index=0,
     )
     return [
-        TaskInfo(
-            task_id=i,
-            user_id=t.user_id,
-            instruction=t.instruction,
-            action_names=tuple(a.name for a in t.actions),
-            n_outputs=len(t.outputs),
-            domain=domain,
-            split=split,
-        )
-        for i, t in enumerate(env.tasks)
+        TaskInfo(task_id=i, suite="tau-bench", domain=domain, split=split)
+        for i, _ in enumerate(env.tasks)
     ]
 
 

@@ -21,7 +21,7 @@ def test_run_all_delegates_to_run_task(monkeypatch):
     calls: list[tuple] = []
 
     def fake_list_tasks(domain, split="test"):
-        return [TaskInfo(i, "u", "instr", (), 0, domain, split) for i in range(5)]
+        return [TaskInfo(task_id=i, suite="tau-bench", domain=domain, split=split) for i in range(5)]
 
     def fake_run_task(task_id, **kw):
         calls.append((task_id, kw.get("engine_url"), kw.get("model")))
@@ -42,7 +42,7 @@ def test_run_all_delegates_to_run_task(monkeypatch):
 def test_run_all_respects_max_tasks(monkeypatch):
     monkeypatch.setattr(
         adapter, "list_tasks",
-        lambda d, s="test": [TaskInfo(i, "u", "i", (), 0, d, s) for i in range(10)],
+        lambda d, s="test": [TaskInfo(task_id=i, suite="tau-bench", domain=d, split=s) for i in range(10)],
     )
     monkeypatch.setattr(
         adapter, "run_task",
