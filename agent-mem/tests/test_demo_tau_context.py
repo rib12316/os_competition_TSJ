@@ -29,10 +29,12 @@ def test_tau_frontend_can_lower_f2_trigger_without_changing_yaml():
         "F2+F3",
         "Qwen2.5-7B-Instruct",
         f2_trigger_tokens=2000,
+        f2_recompress_delta_tokens=1000,
         f2_retention_rate=0.4,
     )
     compress = next(middleware for middleware in stack.middlewares if middleware.name == "compress")
     assert compress.trigger_tokens == 2000
+    assert compress.recompress_delta_tokens == 1000
     assert compress.assistant_rate == 0.4
     assert compress.tool_result_rate == 0.4
 
@@ -42,6 +44,7 @@ def test_tau_frontend_can_lower_f2_trigger_without_changing_yaml():
         if middleware.name == "compress"
     )
     assert production_compress.trigger_tokens == 8000
+    assert production_compress.recompress_delta_tokens == 4000
     assert production_compress.assistant_rate == 0.75
     assert production_compress.tool_result_rate == 0.6
 

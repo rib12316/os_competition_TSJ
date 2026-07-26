@@ -273,6 +273,7 @@ def _tau_context_stack(
     model: str,
     *,
     f2_trigger_tokens: int | None = None,
+    f2_recompress_delta_tokens: int | None = None,
     f2_retention_rate: float | None = None,
 ) -> MiddlewareStack:
     """Build a fresh per-task F2/F3 stack without changing the running engine."""
@@ -284,6 +285,11 @@ def _tau_context_stack(
         cfg.middleware.options.setdefault("compress", {})["trigger_tokens"] = max(
             1,
             int(f2_trigger_tokens),
+        )
+    if "compress" in cfg.middleware.active and f2_recompress_delta_tokens is not None:
+        cfg.middleware.options.setdefault("compress", {})["recompress_delta_tokens"] = max(
+            1,
+            int(f2_recompress_delta_tokens),
         )
     if "compress" in cfg.middleware.active and f2_retention_rate is not None:
         retention = min(1.0, max(0.1, float(f2_retention_rate)))
@@ -357,6 +363,7 @@ def _tau_context_view(
             "assistant_retention_rate": f2.get("assistant_rate"),
             "tool_result_retention_rate": f2.get("tool_result_rate"),
             "trigger_tokens": f2.get("trigger_tokens"),
+            "recompress_delta_tokens": f2.get("recompress_delta_tokens"),
         },
     } if f2.get("cold_before") else {
         "available": False,
@@ -486,11 +493,13 @@ def build_app(
         max_steps,
         context_mode,
         f2_trigger_tokens,
+        f2_recompress_delta_tokens,
         f2_retention_rate,
     ):
         tid = int(task_id)
         mode = str(context_mode)
         demo_trigger = max(1, int(f2_trigger_tokens or 2000))
+        demo_recompress_delta = max(1, int(f2_recompress_delta_tokens or 1000))
         demo_retention = min(1.0, max(0.1, float(f2_retention_rate or 0.4)))
         buffer = ContextEventBuffer(max_events=5000)
         if not tau_run_lock.acquire(blocking=False):
@@ -507,6 +516,7 @@ def build_app(
                 mode,
                 model,
                 f2_trigger_tokens=demo_trigger,
+                f2_recompress_delta_tokens=demo_recompress_delta,
                 f2_retention_rate=demo_retention,
             )
             names = stack.names
@@ -522,6 +532,7 @@ def build_app(
                 f"⏳ 构建 τ-bench 环境（{domain} #{tid}）… "
                 f"middleware={names}，USER simulator={user_sim['model']}，"
                 f"F2 demo trigger={demo_trigger} token，"
+                f"recompress delta={demo_recompress_delta} token，"
                 f"正文保留率={demo_retention:.2f}，首次加载 litellm ~6s",
                 *view,
             )
@@ -833,6 +844,13 @@ def build_app(
                             step=500,
                             label="F2 演示压缩阈值（仅当前前端任务；正式配置仍为 8000）",
                         )
+                        tau_f2_recompress_delta = gr.Number(
+                            value=1000,
+                            minimum=250,
+                            maximum=4000,
+                            step=250,
+                            label="F2 演示重压新增量（首次压缩后新增多少 token 再压；正式配置为 4000）",
+                        )
                         tau_f2_retention = gr.Slider(
                             minimum=0.2,
                             maximum=0.75,
@@ -941,6 +959,7 @@ def build_app(
                 tau_maxsteps,
                 tau_context_mode,
                 tau_f2_trigger,
+                tau_f2_recompress_delta,
                 tau_f2_retention,
             ],
             [
