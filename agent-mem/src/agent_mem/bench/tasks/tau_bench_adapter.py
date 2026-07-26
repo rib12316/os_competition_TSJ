@@ -164,6 +164,7 @@ def run_task(
     max_steps: int = 30,
     priority: int = 0,
     middlewares: list | None = None,
+    context_event_sink=None,
     priority_fn: Callable[[], int] | None = None,
     on_turn_start: Callable[[int], None] | None = None,
 ) -> TaskRunResult:
@@ -208,6 +209,7 @@ def run_task(
     agent = TauBenchAgent(
         client, model, priority=priority, priority_fn=priority_fn,
         on_turn_start=on_turn_start, middlewares=middlewares,
+        context_event_sink=context_event_sink,
     )
 
     t0 = time.monotonic()

@@ -25,7 +25,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from agent_mem.context_telemetry import ContextEventSink
 
 
 @dataclass
@@ -40,11 +43,36 @@ class MiddlewareContext:
     session_id: str
     step: int = 0
     scratch: dict[str, Any] = field(default_factory=dict)
+    event_sink: ContextEventSink | None = field(default=None, repr=False)
+    tool_call_id: str | None = None
+    tool_call_index: int | None = None
 
     def bump_step(self) -> int:
         """步号 +1，返回新步号。"""
         self.step += 1
         return self.step
+
+    @property
+    def telemetry_enabled(self) -> bool:
+        return self.event_sink is not None
+
+    def emit(self, event: str, data: dict[str, Any] | None = None) -> None:
+        """Publish a best-effort telemetry event without affecting Agent behavior."""
+        if self.event_sink is None:
+            return
+        from agent_mem.context_telemetry import ContextEvent
+
+        try:
+            self.event_sink.emit(
+                ContextEvent(
+                    event=event,
+                    session_id=self.session_id,
+                    step=self.step,
+                    data=dict(data or {}),
+                )
+            )
+        except Exception:  # noqa: BLE001 - observability must not break inference
+            return
 
 
 @dataclass(frozen=True, slots=True)

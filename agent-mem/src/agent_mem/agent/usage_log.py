@@ -53,9 +53,10 @@ def measure_prompt_pair(
     original_tools: list[dict] | None,
     transformed_tools: list[dict] | None,
     extra_body: dict[str, Any] | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """同一 tokenizer/chat template 下配对计算变换前后的完整 prompt。"""
-    if not prompt_meter_enabled():
+    if not force and not prompt_meter_enabled():
         return {}
     t0 = time.monotonic()
     try:

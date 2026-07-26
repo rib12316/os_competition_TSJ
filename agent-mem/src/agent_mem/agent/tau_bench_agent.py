@@ -22,6 +22,7 @@ from agent_mem.agent.usage_log import (
     prepare_prompt_meter,
     prompt_meter_enabled,
 )
+from agent_mem.context_telemetry import ContextEventSink
 from agent_mem.middleware import Middleware, MiddlewareContext, MiddlewareStack
 
 
@@ -68,6 +69,7 @@ class TauBenchAgent:
         priority_fn: Callable[[], int] | None = None,
         on_turn_start: Callable[[int], None] | None = None,
         middlewares: MiddlewareStack | Sequence[Middleware] | None = None,
+        context_event_sink: ContextEventSink | None = None,
     ):
         self.client = client
         self.model = model
@@ -78,6 +80,7 @@ class TauBenchAgent:
         self._priority_fn = priority_fn
         # F5：每轮开始回调（driver 接 mgr.touch + 策略 mark_active，标记活跃、回落 priority）
         self._on_turn_start = on_turn_start
+        self.context_event_sink = context_event_sink
         # extra_body：关闭 thinking + 透传 priority 给 vLLM 调度器（priority 每轮刷新）
         body: dict[str, Any] = {}
         if not enable_thinking:
@@ -114,7 +117,10 @@ class TauBenchAgent:
         steps = 0
         ttft_ms_list: list[float] = []
         # 缝D：每 session 一份 context（session_id 透传给 F5/F6）
-        ctx = MiddlewareContext(session_id=f"tau-{task_index}")
+        ctx = MiddlewareContext(
+            session_id=f"tau-{task_index}",
+            event_sink=self.context_event_sink,
+        )
 
         for _ in range(max_num_steps):
             steps += 1
@@ -123,7 +129,7 @@ class TauBenchAgent:
             if self._on_turn_start is not None:
                 self._on_turn_start(steps)
             self.extra_body["priority"] = self._current_priority()
-            if prompt_meter_enabled():
+            if prompt_meter_enabled() or ctx.telemetry_enabled:
                 baseline_messages, baseline_tools = self.stack.measurement_baseline(
                     messages, env.tools_info, ctx
                 )
@@ -140,7 +146,9 @@ class TauBenchAgent:
                 original_tools=baseline_tools,
                 transformed_tools=to_tools,
                 extra_body=self.extra_body,
+                force=ctx.telemetry_enabled,
             )
+            ctx.emit("prompt.measured", token_measurement)
             # 流式调用：拿到 message dict + 本步 TTFT
             next_message, ttft_s, prompt_tokens = stream_chat_with_ttft(
                 self.client,
@@ -152,6 +160,14 @@ class TauBenchAgent:
                 extra_body=self.extra_body,
             )
             log_prompt_tokens(ctx, prompt_tokens, token_measurement)
+            ctx.emit("prompt.completed", {
+                **token_measurement,
+                "prompt_tokens": prompt_tokens,
+                "source": (
+                    "response.usage.prompt_tokens"
+                    if prompt_tokens is not None else "unavailable"
+                ),
+            })
             self.stack.after_model_call(prompt_tokens, ctx)
             ttft_ms_list.append(ttft_s * 1000)
             action = _message_to_action(next_message, Action, RESPOND_ACTION_NAME)
@@ -161,6 +177,8 @@ class TauBenchAgent:
                 next_message["tool_calls"] = tcs[:1]  # τ-bench 每步一个 action
                 tc = tcs[0] if tcs else {"id": "x", "function": {"name": action.name}}
                 messages.append(next_message)
+                ctx.tool_call_id = str(tc.get("id") or "")
+                ctx.tool_call_index = 0
                 internal = self.stack.handle_internal_tool_call(
                     action.name, dict(action.kwargs), ctx
                 )
@@ -174,6 +192,8 @@ class TauBenchAgent:
                         "name": tc["function"]["name"],
                         "content": obs,
                     })
+                    ctx.tool_call_id = None
+                    ctx.tool_call_index = None
                     continue
                 env_response = env.step(action)
                 reward = env_response.reward
@@ -189,6 +209,8 @@ class TauBenchAgent:
                     "name": tc["function"]["name"],
                     "content": obs,
                 })
+                ctx.tool_call_id = None
+                ctx.tool_call_index = None
             else:
                 env_response = env.step(action)
                 reward = env_response.reward

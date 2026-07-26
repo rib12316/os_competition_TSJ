@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from agent_mem.context_telemetry import text_preview
 from agent_mem.middleware.artifact_store import (
     ArtifactStore,
     build_artifact_store,
@@ -191,6 +192,7 @@ class LazyLoadMiddleware(BaseMiddleware):
         tokenizer_model: str = "",
         event_log: str | None = None,
         artifact_store: ArtifactStore | None = None,
+        telemetry_preview_chars: int = 4000,
     ) -> None:
         if externalize_trigger_tokens <= 0:
             raise ValueError("externalize_trigger_tokens must be > 0")
@@ -225,6 +227,7 @@ class LazyLoadMiddleware(BaseMiddleware):
             )
         self.store = artifact_store
         self._event_log_path = event_log or os.environ.get("F3_EVENT_LOG", "")
+        self.telemetry_preview_chars = max(200, int(telemetry_preview_chars))
 
     def prepare(self) -> None:
         if self.tokenizer_model:
@@ -273,17 +276,54 @@ class LazyLoadMiddleware(BaseMiddleware):
             return list(tools)
         return [*tools, FETCH_TOOL_SCHEMA]
 
+    @staticmethod
+    def _next_operation_id(ctx: MiddlewareContext) -> str:
+        counter = int(ctx.scratch.get("lazyload:operation_counter", 0)) + 1
+        ctx.scratch["lazyload:operation_counter"] = counter
+        return f"{ctx.session_id}:{ctx.step}:{counter}"
+
     def intercept_tool_result(
         self, name: str, args: dict[str, Any], result: str, ctx: MiddlewareContext
     ) -> str:
         if name in self.exempt_tools:
             return result
+        telemetry = ctx.telemetry_enabled
+        operation_id = self._next_operation_id(ctx) if telemetry else ""
         threshold = int(self.tool_overrides.get(name, self.externalize_trigger_tokens))
-        if threshold <= 0:
-            return result
         started = time.monotonic()
         original_tokens = self._count(result)
+        event_base: dict[str, Any] = {}
+        if telemetry:
+            original = {
+                "preview": text_preview(result, limit=self.telemetry_preview_chars),
+                "tokens": original_tokens,
+                "byte_count": len(result.encode("utf-8")),
+            }
+            event_base = {
+                "operation_id": operation_id,
+                "phase": "observed",
+                "tool_call_id": ctx.tool_call_id,
+                "tool_call_index": ctx.tool_call_index,
+                "tool_name": name,
+                "arguments": args,
+                "threshold_tokens": threshold,
+                "original": original,
+            }
+            ctx.emit("f3.tool_result_observed", event_base)
+        if threshold <= 0:
+            ctx.emit("f3.tool_result_passthrough", {
+                **event_base,
+                "phase": "passthrough",
+                "reason": "tool_disabled",
+            })
+            return result
         if original_tokens < threshold:
+            ctx.emit("f3.tool_result_passthrough", {
+                **event_base,
+                "phase": "passthrough",
+                "reason": "below_trigger",
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            })
             self._log_event(ctx, {
                 "action": "passthrough",
                 "tool_name": name,
@@ -295,6 +335,13 @@ class LazyLoadMiddleware(BaseMiddleware):
         content_type, synopsis = build_tool_synopsis(
             result, max_parse_bytes=self.max_parse_bytes
         )
+        if telemetry:
+            ctx.emit("f3.externalize_started", {
+                **event_base,
+                "phase": "storing",
+                "content_type": content_type,
+                "synopsis": synopsis,
+            })
         try:
             store_started = time.monotonic()
             artifact = self.store.put(
@@ -305,11 +352,33 @@ class LazyLoadMiddleware(BaseMiddleware):
                 token_count=original_tokens,
             )
             store_ms = (time.monotonic() - store_started) * 1000
-        except Exception:
+        except Exception as exc:
             if self.on_store_error == "raise":
+                ctx.emit("f3.externalize_failed", {
+                    **event_base,
+                    "phase": "failed",
+                    "error": repr(exc),
+                })
                 raise
             if self.on_store_error == "head_tail":
-                return self._head_tail_fallback(result)
+                fallback = self._head_tail_fallback(result)
+                ctx.emit("f3.externalize_failed", {
+                    **event_base,
+                    "phase": "fallback",
+                    "reason": "store_error_head_tail",
+                    "error": repr(exc),
+                    "fallback": text_preview(
+                        fallback,
+                        limit=self.telemetry_preview_chars,
+                    ),
+                })
+                return fallback
+            ctx.emit("f3.externalize_failed", {
+                **event_base,
+                "phase": "passthrough",
+                "reason": "store_error_passthrough",
+                "error": repr(exc),
+            })
             self._log_event(ctx, {
                 "action": "store_error_passthrough",
                 "tool_name": name,
@@ -329,9 +398,40 @@ class LazyLoadMiddleware(BaseMiddleware):
             reference_tokens = self._count(reference)
         if reference_tokens >= original_tokens or reference_tokens > self.max_reference_tokens:
             self.store.delete(ctx.session_id, artifact.result_id)
+            ctx.emit("f3.tool_result_passthrough", {
+                **event_base,
+                "phase": "passthrough",
+                "reason": "reference_not_smaller",
+                "reference_tokens": reference_tokens,
+            })
             return result
 
         ctx.scratch.setdefault("lazyload:result_ids", set()).add(artifact.result_id)
+        if telemetry:
+            externalized = {
+                "result_id": artifact.result_id,
+                "content_type": content_type,
+                "byte_count": artifact.byte_count,
+                "sha256": artifact.sha256,
+                "synopsis": synopsis,
+                "reference": text_preview(
+                    reference,
+                    limit=self.telemetry_preview_chars,
+                ),
+                "reference_tokens": reference_tokens,
+            }
+            ctx.emit("f3.tool_result_externalized", {
+                **event_base,
+                "phase": "externalized",
+                "externalized": externalized,
+                "saved_tokens": original_tokens - reference_tokens,
+                "saved_percent": round(
+                    (original_tokens - reference_tokens) / max(1, original_tokens) * 100,
+                    4,
+                ),
+                "store_ms": round(store_ms, 3),
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            })
         self._log_event(ctx, {
             "action": "externalize",
             "tool_name": name,
@@ -357,6 +457,34 @@ class LazyLoadMiddleware(BaseMiddleware):
             return None
         started = time.monotonic()
         result_id = str(args.get("result_id") or "")
+        telemetry = ctx.telemetry_enabled
+        fetch_base: dict[str, Any] = {}
+        if telemetry:
+            fetch_id = self._next_operation_id(ctx)
+            selector = {
+                key: args[key]
+                for key in (
+                    "json_pointer",
+                    "match_field",
+                    "match_value",
+                    "match_mode",
+                    "max_matches",
+                    "start_line",
+                    "max_lines",
+                    "start_char",
+                    "max_chars",
+                )
+                if key in args
+            }
+            fetch_base = {
+                "fetch_id": fetch_id,
+                "phase": "fetching",
+                "tool_call_id": ctx.tool_call_id,
+                "tool_call_index": ctx.tool_call_index,
+                "result_id": result_id,
+                "selector": selector,
+            }
+            ctx.emit("f3.fetch_started", fetch_base)
         artifact = self.store.get(ctx.session_id, result_id)
         if artifact is None:
             content = json.dumps(
@@ -364,12 +492,26 @@ class LazyLoadMiddleware(BaseMiddleware):
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
+            ctx.emit("f3.fetch_failed", {
+                **fetch_base,
+                "phase": "failed",
+                "status": "not_found",
+                "response": text_preview(content, limit=self.telemetry_preview_chars),
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            })
             return HandledToolCall(content=content, status="error")
         if hashlib.sha256(artifact.content.encode("utf-8")).hexdigest() != artifact.sha256:
             content = json.dumps(
                 {"status": "integrity_error", "result_id": result_id},
                 separators=(",", ":"),
             )
+            ctx.emit("f3.fetch_failed", {
+                **fetch_base,
+                "phase": "failed",
+                "status": "integrity_error",
+                "response": text_preview(content, limit=self.telemetry_preview_chars),
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            })
             return HandledToolCall(content=content, status="error")
 
         pointer = str(args.get("json_pointer") or "")
@@ -390,6 +532,16 @@ class LazyLoadMiddleware(BaseMiddleware):
                         {"status": "selector_too_large", "result_id": result_id},
                         separators=(",", ":"),
                     )
+                    ctx.emit("f3.fetch_failed", {
+                        **fetch_base,
+                        "phase": "failed",
+                        "status": "selector_too_large",
+                        "response": text_preview(
+                            content,
+                            limit=self.telemetry_preview_chars,
+                        ),
+                        "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                    })
                     return HandledToolCall(content=content, status="error")
                 selected, pointer = _select_match_array(
                     json.loads(artifact.content), pointer, match_field
@@ -447,6 +599,13 @@ class LazyLoadMiddleware(BaseMiddleware):
                 {"status": "invalid_selector", "result_id": result_id},
                 separators=(",", ":"),
             )
+            ctx.emit("f3.fetch_failed", {
+                **fetch_base,
+                "phase": "failed",
+                "status": "invalid_selector",
+                "response": text_preview(content, limit=self.telemetry_preview_chars),
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            })
             return HandledToolCall(content=content, status="error")
 
         start_char = max(0, int(args.get("start_char") or 0))
@@ -473,11 +632,23 @@ class LazyLoadMiddleware(BaseMiddleware):
                 source_start_char=start_char,
                 has_more_chars=char_truncated,
             )
+        fetch_tokens = self._count(content)
+        if telemetry:
+            ctx.emit("f3.fetch_finished", {
+                **fetch_base,
+                "phase": "fetched",
+                "status": "ok",
+                "response": text_preview(content, limit=self.telemetry_preview_chars),
+                "fetch_tokens": fetch_tokens,
+                "source_truncated": source_truncated,
+                "token_truncated": token_truncated,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            })
         self._log_event(ctx, {
             "action": "fetch",
             "tool_name": name,
             "result_id": result_id,
-            "fetch_tokens": self._count(content),
+            "fetch_tokens": fetch_tokens,
             "source_truncated": source_truncated,
             "token_truncated": token_truncated,
             "elapsed_ms": round((time.monotonic() - started) * 1000, 3),

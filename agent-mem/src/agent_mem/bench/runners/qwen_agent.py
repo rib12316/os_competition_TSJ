@@ -35,6 +35,7 @@ class QwenAgentRunner(Runner):
         max_concurrency: int = 1,
         priority: int = 0,
         middlewares: list | None = None,
+        context_event_sink=None,
         dynamic: bool = False,
         idle_timeout_s: float = 30.0,
         target_lo: int = 70,
@@ -53,6 +54,7 @@ class QwenAgentRunner(Runner):
         self.max_concurrency = max_concurrency
         self.priority = priority
         self.middlewares = middlewares
+        self.context_event_sink = context_event_sink
         # F5 动态调度参数（dynamic=True 且 max_concurrency>1 时走 ConcurrentSessionDriver）
         self.dynamic = dynamic
         self.idle_timeout_s = idle_timeout_s
@@ -72,6 +74,7 @@ class QwenAgentRunner(Runner):
         base_ctx = RunContext(
             cfg=cfg, engine_url=self.engine_url, model=self.model, api_key=self.api_key,
             max_steps=self.max_steps, middlewares=self.middlewares,
+            context_event_sink=self.context_event_sink,
             user_model=self.user_model, user_provider=self.user_provider,
             user_api_base=self.user_api_base, user_api_key=self.user_api_key,
             priority=self.priority,

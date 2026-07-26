@@ -154,6 +154,7 @@ def run_task(
     api_key: str = "stub",
     client: Any = None,
     middlewares: list | None = None,
+    context_event_sink: Any = None,
     max_steps: int = 8,
     max_tokens: int = 256,
     system_prompt: str | None = None,
@@ -197,6 +198,7 @@ def run_task(
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             middlewares=stack,
             session_id=f"longbench-{task.task_id}-{time.time_ns()}",
+            context_event_sink=context_event_sink,
         )
     except Exception as exc:  # noqa: BLE001 — 单任务异常返回失败，不杀 run
         for mw in stack.middlewares:

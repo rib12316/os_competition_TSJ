@@ -32,6 +32,7 @@ class RunContext:
     api_key: str = "stub"
     max_steps: int = 30
     middlewares: list[Any] | None = None
+    context_event_sink: Any = None
     # tau-bench user-simulator
     user_model: str | None = None
     user_provider: str = "openai"
@@ -84,6 +85,7 @@ class _TauAdapter(SuiteAdapter):
             max_steps=ctx.max_steps,
             priority=ctx.priority,
             middlewares=ctx.middlewares,
+            context_event_sink=ctx.context_event_sink,
             priority_fn=ctx.priority_fn,
             on_turn_start=ctx.on_turn_start,
         )
@@ -108,6 +110,7 @@ class _LongbenchAdapter(SuiteAdapter):
             model=ctx.model,
             api_key=ctx.api_key,
             middlewares=ctx.middlewares,
+            context_event_sink=ctx.context_event_sink,
             max_steps=ctx.max_steps,
             system_prompt=ctx.longbench_system_prompt,
         )

@@ -20,6 +20,7 @@ from agent_mem.agent.usage_log import (
     measure_prompt_pair,
     prompt_meter_enabled,
 )
+from agent_mem.context_telemetry import ContextEventSink
 from agent_mem.middleware import Middleware, MiddlewareContext, MiddlewareStack
 
 # 工具执行器签名：(name, args_dict) -> 观察文本
@@ -168,6 +169,7 @@ def run_react(
     extra_body: dict[str, Any] | None = None,
     middlewares: MiddlewareStack | Sequence[Middleware] | None = None,
     session_id: str = "default",
+    context_event_sink: ContextEventSink | None = None,
 ) -> ReactResult:
     """跑 ReAct 循环，返回 :class:`ReactResult`。
 
@@ -178,7 +180,7 @@ def run_react(
     """
     stack = _as_stack(middlewares)
     stack.prepare()
-    ctx = MiddlewareContext(session_id=session_id)
+    ctx = MiddlewareContext(session_id=session_id, event_sink=context_event_sink)
 
     msgs = list(messages)
     n_steps = 0
@@ -197,7 +199,7 @@ def run_react(
         n_steps += 1
         ctx.bump_step()
         # Measurement-only expansion restores F3 artifacts without changing canonical history.
-        if prompt_meter_enabled():
+        if prompt_meter_enabled() or ctx.telemetry_enabled:
             baseline_messages, baseline_tools = stack.measurement_baseline(
                 msgs, tools or [], ctx
             )
@@ -212,12 +214,22 @@ def run_react(
             original_tools=baseline_tools,
             transformed_tools=to_tools,
             extra_body=extra_body,
+            force=ctx.telemetry_enabled,
         )
+        ctx.emit("prompt.measured", token_measurement)
         resp = client.chat.completions.create(
             **base_kw, messages=to_send, tools=to_tools or None
         )
         prompt_tokens = _prompt_tokens_from_usage(getattr(resp, "usage", None))
         log_prompt_tokens(ctx, prompt_tokens, token_measurement)
+        ctx.emit("prompt.completed", {
+            **token_measurement,
+            "prompt_tokens": prompt_tokens,
+            "source": (
+                "response.usage.prompt_tokens"
+                if prompt_tokens is not None else "unavailable"
+            ),
+        })
         stack.after_model_call(prompt_tokens, ctx)
         msg = resp.choices[0].message
         msgs.append(assistant_message_to_dict(msg))
@@ -231,9 +243,11 @@ def run_react(
                 tool_calls_made=tool_calls_made,
             )
 
-        for tc in tcs:
+        for tool_call_index, tc in enumerate(tcs):
             tool_calls_made += 1
             name = tc.function.name
+            ctx.tool_call_id = str(tc.id or "")
+            ctx.tool_call_index = tool_call_index
             try:
                 args = json.loads(tc.function.arguments or "{}")
             except (ValueError, TypeError):
@@ -246,6 +260,8 @@ def run_react(
             # 缝D：工具结果回灌前拦截（可改写进正典历史的内容）
             obs = stack.intercept_tool_result(name, args, str(obs), ctx)
             msgs.append({"role": "tool", "tool_call_id": tc.id, "content": obs})
+            ctx.tool_call_id = None
+            ctx.tool_call_index = None
 
     return ReactResult(
         final_text="(max steps reached)",

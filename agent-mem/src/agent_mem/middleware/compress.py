@@ -43,6 +43,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from agent_mem.context_telemetry import messages_preview, text_preview
 from agent_mem.middleware.base import BaseMiddleware, MiddlewareContext
 from agent_mem.middleware.static_prompt import (
     compact_system_messages,
@@ -406,6 +407,8 @@ class CompressMiddleware(BaseMiddleware):
         tokenizer_model: str = "",
         recompress_delta_tokens: int | None = None,
         event_log: str | None = None,
+        telemetry_preview_chars: int = 4000,
+        telemetry_max_messages: int = 30,
     ) -> None:
         if method not in _METHODS:
             raise ValueError(f"method 必须是 {sorted(_METHODS)}，得到 {method!r}")
@@ -473,6 +476,8 @@ class CompressMiddleware(BaseMiddleware):
         if self.recompress_delta_tokens < 0:
             raise ValueError("recompress_delta_tokens 必须 >= 0")
         self._event_log_path = event_log or os.environ.get("F2_EVENT_LOG") or ""
+        self.telemetry_preview_chars = max(200, int(telemetry_preview_chars))
+        self.telemetry_max_messages = max(1, int(telemetry_max_messages))
         self._log_lock = threading.Lock()  # 并发跑多任务时串行化事件日志写文件
         self._compressor_lock = threading.Lock()  # 首次并发触发时只构造一个 worker pool
         self._compressor: Any = None  # 懒加载，进程级单例
@@ -595,6 +600,69 @@ class CompressMiddleware(BaseMiddleware):
     def _static_metrics(ctx: MiddlewareContext) -> dict[str, Any]:
         return dict(ctx.scratch.get("compress:static_metrics", {}))
 
+    def _history_ready_event(
+        self,
+        ctx: MiddlewareContext,
+        *,
+        cold: list[dict],
+        hot: list[dict],
+        cold_tokens: int,
+        compressible_cold_tokens: int,
+        hot_tokens: int,
+        action: str,
+        reason: str,
+        new_tokens: int = 0,
+    ) -> None:
+        if not ctx.telemetry_enabled:
+            return
+        cold_preview = messages_preview(
+            cold,
+            max_messages=self.telemetry_max_messages,
+            content_limit=min(800, self.telemetry_preview_chars),
+        )
+        cold_preview.update({
+            "tokens": cold_tokens,
+            "compressible_tokens": compressible_cold_tokens,
+        })
+        hot_preview = messages_preview(
+            hot,
+            max_messages=self.telemetry_max_messages,
+            content_limit=min(400, self.telemetry_preview_chars),
+        )
+        hot_preview["tokens"] = hot_tokens
+        ctx.emit("f2.history_ready", {
+            "phase": "ready",
+            "action": action,
+            "reason": reason,
+            "cold_before": cold_preview,
+            "hot_history": hot_preview,
+            "trigger_tokens": self.trigger_tokens,
+            "recompress_delta_tokens": self.recompress_delta_tokens,
+            "new_tokens": new_tokens,
+            **self._static_metrics(ctx),
+        })
+
+    def _cold_after_event(
+        self,
+        *,
+        messages: list[dict],
+        tokens: int,
+        compressed: str,
+    ) -> dict[str, Any]:
+        preview = messages_preview(
+            messages,
+            max_messages=self.telemetry_max_messages,
+            content_limit=min(800, self.telemetry_preview_chars),
+        )
+        preview.update({
+            "tokens": tokens,
+            "compressed_text": text_preview(
+                compressed,
+                limit=self.telemetry_preview_chars,
+            ),
+        })
+        return preview
+
     def transform_messages(
         self, messages: list[dict], ctx: MiddlewareContext
     ) -> list[dict]:
@@ -608,6 +676,26 @@ class CompressMiddleware(BaseMiddleware):
         if len(rest) <= self.keep_hot:
             send_rest, hot_extra = self._compress_hot_tool_results(rest, ctx)
             out = list(sys_msgs) + send_rest
+            hot_tokens = (
+                self._count_tokens([_msg_to_text(m) for m in rest])
+                if ctx.telemetry_enabled else 0
+            )
+            self._history_ready_event(
+                ctx,
+                cold=[],
+                hot=rest,
+                cold_tokens=0,
+                compressible_cold_tokens=0,
+                hot_tokens=hot_tokens,
+                action="skip",
+                reason="history_shorter_than_keep_hot",
+            )
+            ctx.emit("f2.skipped", {
+                "phase": "skipped",
+                "action": "skip",
+                "reason": "history_shorter_than_keep_hot",
+                **hot_extra,
+            })
             self._stage_event(ctx, {"action": "skip", "n_msgs": len(messages),
                                     "cold_n": 0, "hot_n": len(rest), "cold_tokens": 0,
                                     "token_count_source": self.token_count_source,
@@ -652,20 +740,73 @@ class CompressMiddleware(BaseMiddleware):
         # 触发门：冷历史没过阈值 → 完全不压（短上下文无 lost-in-the-middle）
         gate_tokens = compressible_cold_tokens if self.tool_aware else cold_tokens
         if gate_tokens < self.trigger_tokens:
+            self._history_ready_event(
+                ctx,
+                cold=cold,
+                hot=hot,
+                cold_tokens=cold_tokens,
+                compressible_cold_tokens=compressible_cold_tokens,
+                hot_tokens=hot_tokens,
+                action="skip",
+                reason="below_trigger",
+                new_tokens=new_tokens,
+            )
             st["frozen_count"] = 0
             st["compressed"] = ""
             out = list(sys_msgs) + list(cold) + send_hot
+            ctx.emit("f2.skipped", {
+                "phase": "skipped",
+                "action": "skip",
+                "reason": "below_trigger",
+                "gate_tokens": gate_tokens,
+                "trigger_tokens": self.trigger_tokens,
+                **hot_extra,
+            })
             self._stage_event(ctx, {**common, "action": "skip", "reason": "below_trigger",
                                     "estimated_sent_tokens": self._estimate_message_tokens(out)})
             return out
 
         # 决定 compress vs reuse：首次压缩，或自上次压缩后新增冷 >= delta
         do_compress = (not st["compressed"]) or (new_tokens >= self.recompress_delta_tokens)
+        decision_reason = (
+            "first_compression"
+            if not st["compressed"]
+            else "recompress_delta_reached"
+            if do_compress
+            else "cached_compression_reused"
+        )
+        self._history_ready_event(
+            ctx,
+            cold=cold,
+            hot=hot,
+            cold_tokens=cold_tokens,
+            compressible_cold_tokens=compressible_cold_tokens,
+            hot_tokens=hot_tokens,
+            action="compress" if do_compress else "reuse",
+            reason=decision_reason,
+            new_tokens=new_tokens,
+        )
         extra: dict = {}
         if do_compress:
             question = self._pick_question(rest)
+            ctx.emit("f2.compress_started", {
+                "phase": "compressing",
+                "action": "compress",
+                "reason": decision_reason,
+                "cold_tokens": cold_tokens,
+                "compressible_cold_tokens": compressible_cold_tokens,
+            })
             t0 = time.monotonic()
-            res = self._compress_cold(chunks, question, cold=cold, ctx=ctx)
+            try:
+                res = self._compress_cold(chunks, question, cold=cold, ctx=ctx)
+            except Exception as exc:
+                ctx.emit("f2.compress_failed", {
+                    "phase": "failed",
+                    "action": "compress",
+                    "error": repr(exc),
+                    "elapsed_ms": round((time.monotonic() - t0) * 1000.0, 1),
+                })
+                raise
             ms = (time.monotonic() - t0) * 1000.0
             compressed = res.get("compressed_prompt", "")
             st["compressed"] = compressed
@@ -689,15 +830,41 @@ class CompressMiddleware(BaseMiddleware):
         # 重建：[sys] + [压缩段(覆盖 cold[:frozen_count])] + [新增冷 cold[frozen_count:] verbatim] + [hot]
         # tool_call 配对安全：frozen_count 总落在完整 tool_call→tool 组边界（见 _pick 切分）
         out: list[dict] = list(sys_msgs)
+        sent_cold: list[dict] = []
         if compressed:
-            out.append(
-                {
-                    "role": self.history_role,
-                    "content": f"[compressed history]\n{compressed}",
-                }
-            )
-        out.extend(cold[st["frozen_count"]:])  # 自上次压缩后新增的冷（verbatim，不丢信息）
+            sent_cold.append({
+                "role": self.history_role,
+                "content": f"[compressed history]\n{compressed}",
+            })
+        sent_cold.extend(cold[st["frozen_count"]:])
+        out.extend(sent_cold)  # 自上次压缩后新增的冷（verbatim，不丢信息）
         out.extend(send_hot)
+
+        if ctx.telemetry_enabled:
+            cold_after_tokens = self._estimate_message_tokens(sent_cold)
+            cold_after = self._cold_after_event(
+                messages=sent_cold,
+                tokens=cold_after_tokens,
+                compressed=compressed,
+            )
+            if do_compress:
+                ctx.emit("f2.compress_finished", {
+                    "phase": "compressed",
+                    **extra,
+                    "saved_tokens": max(
+                        0,
+                        int(extra.get("origin_tokens") or cold_tokens)
+                        - int(extra.get("compressed_tokens") or cold_after_tokens),
+                    ),
+                    "cold_after": cold_after,
+                })
+            else:
+                ctx.emit("f2.reused", {
+                    "phase": "reused",
+                    "action": "reuse",
+                    "reason": decision_reason,
+                    "cold_after": cold_after,
+                })
 
         self._stage_event(ctx, {
             **common, **extra,
@@ -881,6 +1048,10 @@ class CompressMiddleware(BaseMiddleware):
         payload["sent_tokens_source"] = (
             "response.usage.prompt_tokens" if prompt_tokens is not None else "unavailable"
         )
+        ctx.emit("f2.request_completed", {
+            "sent_prompt_tokens": prompt_tokens,
+            "sent_tokens_source": payload["sent_tokens_source"],
+        })
         self._log_event(ctx, payload)
 
     @staticmethod
