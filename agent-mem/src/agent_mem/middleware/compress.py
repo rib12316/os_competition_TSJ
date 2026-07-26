@@ -632,6 +632,8 @@ class CompressMiddleware(BaseMiddleware):
         hot_preview["tokens"] = hot_tokens
         ctx.emit("f2.history_ready", {
             "phase": "ready",
+            "method": self.method,
+            "tool_aware": self.tool_aware,
             "action": action,
             "reason": reason,
             "cold_before": cold_preview,

@@ -272,6 +272,7 @@ def _tau_context_stack(
     mode: str,
     model: str,
     *,
+    f2_method: str | None = None,
     f2_trigger_tokens: int | None = None,
     f2_recompress_delta_tokens: int | None = None,
     f2_retention_rate: float | None = None,
@@ -281,6 +282,15 @@ def _tau_context_stack(
         raise ValueError(f"未知上下文模式 {mode!r}")
     cfg = load_config(_TAU_CONTEXT_PRESETS[mode])
     cfg.engine.model = model
+    if "compress" in cfg.middleware.active and f2_method is not None:
+        if f2_method not in {"llmlingua2", "longllmlingua"}:
+            raise ValueError(f"未知 F2 压缩方法 {f2_method!r}")
+        compress_options = cfg.middleware.options.setdefault("compress", {})
+        compress_options["method"] = f2_method
+        if f2_method == "longllmlingua":
+            compress_options["tool_aware"] = False
+            compress_options["model_name"] = "gpt2"
+            compress_options["hot_tool_trigger_tokens"] = 0
     if "compress" in cfg.middleware.active and f2_trigger_tokens is not None:
         cfg.middleware.options.setdefault("compress", {})["trigger_tokens"] = max(
             1,
@@ -358,6 +368,8 @@ def _tau_context_view(
         **f2["cold_before"],
         "decision": {
             "phase": f2.get("phase"),
+            "method": f2.get("method"),
+            "tool_aware": f2.get("tool_aware"),
             "action": f2.get("action"),
             "reason": f2.get("reason"),
             "assistant_retention_rate": f2.get("assistant_rate"),
@@ -492,6 +504,7 @@ def build_app(
         task_id,
         max_steps,
         context_mode,
+        f2_method,
         f2_trigger_tokens,
         f2_recompress_delta_tokens,
         f2_retention_rate,
@@ -515,6 +528,7 @@ def build_app(
             stack = _tau_context_stack(
                 mode,
                 model,
+                f2_method=str(f2_method),
                 f2_trigger_tokens=demo_trigger,
                 f2_recompress_delta_tokens=demo_recompress_delta,
                 f2_retention_rate=demo_retention,
@@ -531,6 +545,7 @@ def build_app(
                 [],
                 f"⏳ 构建 τ-bench 环境（{domain} #{tid}）… "
                 f"middleware={names}，USER simulator={user_sim['model']}，"
+                f"F2 method={f2_method}，"
                 f"F2 demo trigger={demo_trigger} token，"
                 f"recompress delta={demo_recompress_delta} token，"
                 f"正文保留率={demo_retention:.2f}，首次加载 litellm ~6s",
@@ -844,6 +859,15 @@ def build_app(
                             step=500,
                             label="F2 演示压缩阈值（仅当前前端任务；正式配置仍为 8000）",
                         )
+                        tau_f2_method = gr.Radio(
+                            choices=["llmlingua2", "longllmlingua"],
+                            value="llmlingua2",
+                            label="F2 压缩方法",
+                            info=(
+                                "llmlingua2：tool-aware 结构保护、较快；"
+                                "longllmlingua：GPT-2 question-aware 实验档、压缩比可能更高但更慢且不做结构保护"
+                            ),
+                        )
                         tau_f2_recompress_delta = gr.Number(
                             value=1000,
                             minimum=250,
@@ -958,6 +982,7 @@ def build_app(
                 tau_taskid,
                 tau_maxsteps,
                 tau_context_mode,
+                tau_f2_method,
                 tau_f2_trigger,
                 tau_f2_recompress_delta,
                 tau_f2_retention,

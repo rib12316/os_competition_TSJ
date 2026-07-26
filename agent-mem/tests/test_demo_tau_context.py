@@ -28,12 +28,15 @@ def test_tau_frontend_can_lower_f2_trigger_without_changing_yaml():
     stack = _tau_context_stack(
         "F2+F3",
         "Qwen2.5-7B-Instruct",
+        f2_method="llmlingua2",
         f2_trigger_tokens=2000,
         f2_recompress_delta_tokens=1000,
         f2_retention_rate=0.4,
     )
     compress = next(middleware for middleware in stack.middlewares if middleware.name == "compress")
     assert compress.trigger_tokens == 2000
+    assert compress.method == "llmlingua2"
+    assert compress.tool_aware is True
     assert compress.recompress_delta_tokens == 1000
     assert compress.assistant_rate == 0.4
     assert compress.tool_result_rate == 0.4
@@ -47,6 +50,23 @@ def test_tau_frontend_can_lower_f2_trigger_without_changing_yaml():
     assert production_compress.recompress_delta_tokens == 4000
     assert production_compress.assistant_rate == 0.75
     assert production_compress.tool_result_rate == 0.6
+
+
+def test_tau_frontend_can_select_longllmlingua_experimental_mode():
+    stack = _tau_context_stack(
+        "F2",
+        "Qwen2.5-7B-Instruct",
+        f2_method="longllmlingua",
+        f2_trigger_tokens=2000,
+        f2_recompress_delta_tokens=1000,
+        f2_retention_rate=0.4,
+    )
+    compress = stack.middlewares[0]
+    assert compress.method == "longllmlingua"
+    assert compress.tool_aware is False
+    assert compress.model_name == "gpt2"
+    assert compress.hot_tool_trigger_tokens == 0
+    assert compress.rate == 0.4
 
 
 def test_tau_frontend_defaults_to_mimo_user_simulator():
