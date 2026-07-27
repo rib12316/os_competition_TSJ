@@ -96,7 +96,7 @@ _F5_STRATEGY_DESC = (
     "| 策略 | 引擎 | 做了什么 | 预期 |\n|---|---|---|---|\n"
     "| **baseline (T0)** | prefix 关，FCFS | 裸 vllm，满 HBM → 随机抢占重算 | 抢占风暴，KV 命中低 |\n"
     "| **vllm 原生 (T1)** | prefix on + priority flag | prefix 帮共享前缀；priority flag 同优先级≈FCFS | 抢占未消除 |\n"
-    "| **我们 (T2)** | +priority + 准入 + combined + think-time | 准入闸门（KV 不溢出→抢占→0）+ 会话感知 priority（保护活跃）| 抢占→0，KV 命中↑ |\n"
+    "| **我们 (T2)** | **prefix ON** + priority + 准入闸门 + combined priority + think-time | 准入（KV 不溢出→**抢占→0**）+ 会话感知（保护活跃/近完成）| 抢占→0，KV 命中 0.46→0.93，p50 −21% |\n"
 )
 
 
@@ -794,9 +794,9 @@ def build_app(
     # ---- 高并发 F5 专用 runner（策略 → 起引擎 → 并发 τ-bench → 功能数据 + 对话）----
     def run_f5(strategy, extras, conc, maxsteps):
         if "baseline" in strategy:
-            eng_feats, memutil, maxmlen = [], 0.9, 32768
+            eng_feats, memutil, maxmlen = [], 0.27, 16384
         elif "原生" in strategy:
-            eng_feats, memutil, maxmlen = ["prefix-cache"], 0.9, 32768
+            eng_feats, memutil, maxmlen = ["prefix-cache"], 0.27, 16384
         else:
             eng_feats = ["prefix-cache", "priority"]
             if extras:
@@ -1028,8 +1028,11 @@ def build_app(
                         gr.Markdown(_F5_SCENARIO_DESC)
                         gr.Markdown(_F5_STRATEGY_DESC)
                         f5_strategy = gr.Radio(
-                            ["baseline (T0)", "vllm 原生 (T1)", "我们 (T2)"],
-                            value="我们 (T2)", label="选择策略（决定引擎 flags + 显存参数）",
+                            ["baseline (T0): prefix关·FCFS",
+                             "vllm 原生 (T1): prefix ON（vllm 默认）",
+                             "我们 (T2): prefix ON + priority + 准入 + combined"],
+                            value="我们 (T2): prefix ON + priority + 准入 + combined",
+                            label="选择策略（三档均用 0.27/16384 制压，才能对比抢占差异）",
                         )
                         f5_features = gr.CheckboxGroup(
                             ["F5 准入+combined priority", "think-time 用户频率仿真",

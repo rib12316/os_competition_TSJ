@@ -374,6 +374,7 @@ def run_task_into_convo(
     model: str,
     api_key: str = "EMPTY",
     max_steps: int = 10,
+    user_model: str = "mimo-v2.5-pro",
 ):
     """跑一个 τ-bench 任务，每步把当前对话（气泡）写入 ``convo_store[tid]``，返回 TaskRunResult。
 
@@ -393,12 +394,12 @@ def run_task_into_convo(
     from tau_bench.envs.user import UserStrategy
     from tau_bench.types import RESPOND_ACTION_NAME, Action
 
-    os.environ["OPENAI_API_BASE"] = engine_url
-    os.environ["OPENAI_API_KEY"] = api_key
+    # 不设 os.environ：agent 走 OpenAI(base_url=engine_url) 直连；
+    # user-sim 走 litellm 读 os.environ（mimo），由 run_concurrent_streaming 在起线程前统一设好。
     t0 = time.monotonic()
     try:
         env = get_env(
-            domain, user_strategy=UserStrategy.LLM, user_model=model,
+            domain, user_strategy=UserStrategy.LLM, user_model=user_model,
             user_provider="openai", task_split=split, task_index=tid,
         )
         client = OpenAI(base_url=engine_url, api_key=api_key)
@@ -460,6 +461,9 @@ def run_concurrent_streaming(
     convo_store: dict,
     api_key: str = "EMPTY",
     max_steps: int = 10,
+    user_model: str = "mimo-v2.5-pro",
+    user_api_base: str = "https://token-plan-cn.xiaomimimo.com/v1",
+    user_api_key: str | None = None,
 ) -> Iterator[tuple[str, list[list], dict]]:
     """并发跑多个 τ-bench 会话，每完成一个 yield ``(进度 Markdown, 会话状态表, per-task results)``。
 
@@ -467,10 +471,21 @@ def run_concurrent_streaming(
     agent+env），ThreadPoolExecutor 控并发。每会话都打本地引擎 → 右侧监控曲线随
     并发负载实时变化（显存/KV/延迟/吞吐）。
     """
+    import os as _os
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     total = len(task_ids)
     results: dict[int, dict] = {}
+
+    # user-sim 走 mimo（litellm 读 os.environ）；agent 走本地引擎（OpenAI client 直连不读 env）
+    if not user_api_key:
+        user_api_key = _os.environ.get("MIMO_KEY")
+    if user_api_base and user_api_key:
+        _os.environ["OPENAI_API_BASE"] = user_api_base
+        _os.environ["OPENAI_API_KEY"] = user_api_key
+    elif user_api_base:
+        yield (f"⚠️ MIMO_KEY 未设置，user-sim 退回本地引擎。", [], {})
+
     yield _conc_snapshot(task_ids, results, total, concurrency)  # 初始：全部运行中
 
     with ThreadPoolExecutor(max_workers=max(1, int(concurrency))) as ex:
@@ -480,6 +495,7 @@ def run_concurrent_streaming(
                 domain=domain, split=split,
                 engine_url=engine_url, model=model,
                 api_key=api_key, max_steps=max_steps,
+                user_model=user_model,
             ): tid
             for tid in task_ids
         }
