@@ -80,6 +80,25 @@ _SCENARIO_GUIDE = (
     "**流程**：① 🛠 选档位 + 设显存上限 → ▶起引擎 → ✅就绪 → ② 本页选场景 + 调参 → 🚀 → ③ 右侧实时看负载，完成后看本页结果。"
 )
 
+# ---- 高并发场景（F5）专用内容 ----
+_F5_SCENARIO_DESC = (
+    "### 场景：高并发请求（多 session 抢 HBM → 抢占）\n"
+    "N 个 agent session 同时跑在一个引擎上，共享 HBM。每个 session 因多轮对话持续累积 KV。"
+    "**HBM 一满，vLLM 原生调度随机/LIFO 抢占某个请求**（V1 recompute = 被踢的 KV 清零重算），"
+    "不分忙闲 → 活跃 session 被误伤，延迟尖刺/超时/失败。\n\n"
+    "- **benchmark**：τ-bench retail 多 session 并发（每 session 多轮 tool-calling）。\n"
+    "- **现实意义**：多用户同时使用 agent 客服 / 多任务并行推理。\n"
+    "- **主要问题**：抢占风暴、KV 命中率被重算打掉、活跃 session 延迟飙升。\n"
+    "- **对应功能**：F5 动态资源回收（核心）+ F1 C8 / F4 LMCache（助攻，增加容量）。"
+)
+_F5_STRATEGY_DESC = (
+    "### 三种策略\n"
+    "| 策略 | 引擎 | 做了什么 | 预期 |\n|---|---|---|---|\n"
+    "| **baseline (T0)** | prefix 关，FCFS | 裸 vllm，满 HBM → 随机抢占重算 | 抢占风暴，KV 命中低 |\n"
+    "| **vllm 原生 (T1)** | prefix on + priority flag | prefix 帮共享前缀；priority flag 同优先级≈FCFS | 抢占未消除 |\n"
+    "| **我们 (T2)** | +priority + 准入 + combined + think-time | 准入闸门（KV 不溢出→抢占→0）+ 会话感知 priority（保护活跃）| 抢占→0，KV 命中↑ |\n"
+)
+
 
 # ---- Qwen-Agent 消息工具 ----
 
@@ -772,6 +791,62 @@ def build_app(
             return f"### ❌ 出错\n```\n{s['error']}```"
         return f"状态：{st}"
 
+    # ---- 高并发 F5 专用 runner（策略 → 起引擎 → 并发 τ-bench → 功能数据 + 对话）----
+    def run_f5(strategy, extras, conc, maxsteps):
+        if "baseline" in strategy:
+            eng_feats, memutil, maxmlen = [], 0.9, 32768
+        elif "原生" in strategy:
+            eng_feats, memutil, maxmlen = ["prefix-cache"], 0.9, 32768
+        else:
+            eng_feats = ["prefix-cache", "priority"]
+            if extras:
+                if any("C8" in e for e in extras):
+                    eng_feats.append("c8")
+                if any("LMCache" in e for e in extras):
+                    eng_feats.append("lmcache")
+            memutil, maxmlen = 0.27, 16384
+        engine_mgr.gpu_mem_util = memutil
+        engine_mgr.max_model_len = maxmlen
+        for s in engine_mgr.start(eng_feats):
+            yield s, [], "_起引擎中…_", []
+        if not engine_mgr.is_alive():
+            return
+        from agent_mem.demo.monitor import scrape_snapshot
+        m0 = scrape_snapshot(engine_url) or {}
+        preempt0 = m0.get("vllm:num_preemptions_total", 0)
+        c = max(1, int(conc))
+        convo_store.clear()
+        yield f"▶ 运行 {c} 并发 session…", [], "_running…_", []
+        last_rows, last_res = [], {}
+        try:
+            for md, rows, res in tau_bench_ui.run_concurrent_streaming(
+                domain="retail", split="test", task_ids=list(range(min(c, 8))),
+                concurrency=c, convo_store=convo_store, engine_url=engine_url,
+                model=model, api_key=os.environ.get("OPENAI_API_KEY", "EMPTY"),
+                max_steps=int(maxsteps),
+            ):
+                yield md, rows, "_running…_", []
+                last_rows, last_res = rows, res
+        except Exception as e:  # noqa: BLE001
+            yield f"❌ 运行失败: {e}", [], "", []
+            return
+        m1 = scrape_snapshot(engine_url) or {}
+        preemptions = (m1.get("vllm:num_preemptions_total", 0) or 0) - (preempt0 or 0)
+        qh = m1.get("vllm:prefix_cache_queries_total")
+        kv_hit = 0.0 if (not qh or qh <= 0) else (m1.get("vllm:prefix_cache_hits_total", 0) or 0) / qh
+        tasks = list(last_res.values())
+        total_tokens = sum(int(t.get("prompt_tokens", 0) or 0) for t in tasks)
+        success = sum(1 for t in tasks if t.get("success"))
+        feat_md = (
+            f"### 🔧 功能数据\n| 指标 | 值 |\n|---|---|\n"
+            f"| **抢占次数** | **{preemptions}** |\n"
+            f"| **KV 命中率** | **{kv_hit:.1%}** |\n"
+            f"| 累计 prompt tokens | {total_tokens} |\n"
+            f"| 成功/总会话 | {success}/{len(tasks)} |"
+        )
+        rep = convo_store.get(0, []) if convo_store else []
+        yield f"✅ 完成（{success}/{len(tasks)} 成功）", last_rows, feat_md, rep
+
     # ---- 布局 ----
     with gr.Blocks(title="agent-mem 优化对比演示", theme=gr.themes.Soft()) as demo:
         gr.Markdown(
@@ -949,6 +1024,35 @@ def build_app(
                         bench_progress = gr.Markdown(
                             "选场景 + 调参 → 🚀（需先在 🛠 起匹配引擎档位）。进度/结果在此，实时负载见右侧。"
                         )
+                    with gr.Tab("🧪 高并发·F5"):
+                        gr.Markdown(_F5_SCENARIO_DESC)
+                        gr.Markdown(_F5_STRATEGY_DESC)
+                        f5_strategy = gr.Radio(
+                            ["baseline (T0)", "vllm 原生 (T1)", "我们 (T2)"],
+                            value="我们 (T2)", label="选择策略（决定引擎 flags + 显存参数）",
+                        )
+                        f5_features = gr.CheckboxGroup(
+                            ["F5 准入+combined priority", "think-time 用户频率仿真",
+                             "C8(F1) 显存", "LMCache(F4) 分层"],
+                            value=["F5 准入+combined priority", "think-time 用户频率仿真"],
+                            label="我们的功能（仅 T2 生效，多选）",
+                        )
+                        with gr.Row():
+                            f5_conc = gr.Number(
+                                value=4, minimum=1, maximum=8, label="并发 session", scale=1,
+                            )
+                            f5_steps = gr.Number(
+                                value=10, minimum=1, maximum=30, label="max_steps", scale=1,
+                            )
+                            f5_run_btn = gr.Button("▶ 启动引擎 + 运行", variant="primary", scale=1)
+                        f5_status = gr.Markdown()
+                        f5_table = gr.DataFrame(
+                            headers=["task_id", "状态", "reward", "步数", "延迟ms"],
+                            label="会话状态（实时刷新）", interactive=False,
+                        )
+                        f5_feature_data = gr.Markdown("_功能数据（抢占/KV命中/tokens）运行后显示_")
+                        with gr.Accordion("💬 代表性会话对话（task_id=0）", open=False):
+                            f5_chatbot = gr.Chatbot(type="messages", height=360)
                     with gr.Tab("⚙️ 优化对比"):
                         gr.Markdown(
                             "**实时继承**前端并发 benchmark 的结果（不读历史 logs）。"
@@ -1036,6 +1140,12 @@ def build_app(
             return "⏹ 引擎已停止。"
 
         eng_stop_btn.click(_stop_engine, None, [engine_status_md])
+
+        # 事件：高并发 F5（策略 → 起引擎 → 并发 bench → 功能数据 + 对话）
+        f5_run_btn.click(
+            run_f5, [f5_strategy, f5_features, f5_conc, f5_steps],
+            [f5_status, f5_table, f5_feature_data, f5_chatbot], api_name="f5_run",
+        )
 
         # 事件：清空优化对比
         clear_compare.click(
