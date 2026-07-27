@@ -29,6 +29,19 @@ def test_build_app_constructs_without_engine():
     assert "LongBench 2WikiMQA agent 对话（tool-calling）" in labels
     assert labels.count("F2 待压缩冷历史（canonical preview）") == 2
     assert labels.count("F3 外置后的 synopsis/reference") == 2
+    context_components = [
+        component
+        for component in demo.config["components"]
+        if (component.get("props") or {}).get("label")
+        in {
+            "F2 待压缩冷历史（canonical preview）",
+            "F2 压缩后冷历史（发送副本）",
+            "F3 待结构化存储的工具数据",
+            "F3 外置后的 synopsis/reference",
+        }
+    ]
+    assert len(context_components) == 8
+    assert all(component["type"] == "html" for component in context_components)
     assert any(
         dependency.get("api_name") == "longbench_task"
         and len(dependency.get("inputs") or []) == 8

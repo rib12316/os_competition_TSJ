@@ -113,18 +113,39 @@ def test_tau_context_view_exposes_prompt_f2_and_f3_fields():
     ctx.emit("f2.history_ready", {
         "phase": "ready",
         "action": "compress",
-        "cold_before": {"tokens": 9000, "messages": []},
+        "cold_before": {
+            "tokens": 9000,
+            "messages": [{
+                "role": "assistant",
+                "content": {"text": "long original history", "chars": 21, "truncated": False},
+            }],
+        },
     })
     ctx.emit("f2.compress_finished", {
         "phase": "compressed",
-        "cold_after": {"tokens": 5000, "compressed_text": {"text": "short"}},
+        "cold_after": {
+            "tokens": 5000,
+            "messages": [{
+                "role": "system",
+                "content": {"text": "short history", "chars": 13, "truncated": False},
+            }],
+            "compressed_text": {"text": "short history"},
+        },
     })
     ctx.emit("f3.tool_result_externalized", {
         "operation_id": "tau-0:1:1",
         "phase": "externalized",
         "tool_name": "retrieve_documents",
-        "original": {"tokens": 9000},
-        "externalized": {"reference_tokens": 200},
+        "original": {
+            "tokens": 9000,
+            "preview": {"text": "large tool result", "chars": 17, "truncated": False},
+        },
+        "externalized": {
+            "result_id": "result-1234567890",
+            "content_type": "json",
+            "reference_tokens": 200,
+            "reference": {"text": "short reference", "chars": 15, "truncated": False},
+        },
     })
     ctx.emit("prompt.completed", {
         "original_prompt_tokens": 10000,
@@ -140,7 +161,8 @@ def test_tau_context_view_exposes_prompt_f2_and_f3_fields():
     )
     assert "10,000" not in prompt  # Markdown uses plain integer formatting.
     assert "10000" in prompt and "1500" in prompt
-    assert before["tokens"] == 9000
-    assert after["tokens"] == 5000
-    assert f3_before["tool_name"] == "retrieve_documents"
-    assert f3_after["reference_tokens"] == 200
+    assert "long original history" in before and "9,000 tokens" in before
+    assert "short history" in after and "5,000 tokens" in after
+    assert 'class="ctx-del"' in after and 'class="ctx-ins"' in after
+    assert "retrieve_documents" in f3_before and "9,000 tokens" in f3_before
+    assert "short reference" in f3_after and "200 tokens" in f3_after

@@ -33,6 +33,11 @@ from qwen_agent.agents import Assistant
 from agent_mem.config import load_config
 from agent_mem.context_telemetry import ContextEventBuffer
 from agent_mem.demo import bench_runner, longbench_ui, tau_bench_ui
+from agent_mem.demo.context_compare import (
+    render_f2_panels,
+    render_f3_panels,
+    waiting_panel,
+)
 from agent_mem.demo.engine_control import EngineManager
 from agent_mem.demo.monitor import (
     HistoryConfig,
@@ -406,7 +411,7 @@ def _tau_context_view(
     session_id: str,
     mode: str,
     middleware_names: list[str],
-) -> tuple[str, dict, dict, dict, dict]:
+) -> tuple[str, str, str, str, str]:
     """Render one stable Prompt/F2/F3 view from the method-layer snapshot."""
     snapshot = buffer.snapshot(session_id)
     events = buffer.events(session_id=session_id)
@@ -439,90 +444,14 @@ def _tau_context_view(
         f"| saved | {latest_prompt.get('saved_tokens', '—')} | {cumulative_saved} |"
     )
 
-    f2 = snapshot.get("f2") or {}
-    f2_enabled = "compress" in middleware_names
-    f2_before = ({
-        **f2["cold_before"],
-        "decision": {
-            "phase": f2.get("phase"),
-            "method": f2.get("method"),
-            "tool_aware": f2.get("tool_aware"),
-            "action": f2.get("action"),
-            "reason": f2.get("reason"),
-            "assistant_retention_rate": f2.get("assistant_rate"),
-            "tool_result_retention_rate": f2.get("tool_result_rate"),
-            "trigger_tokens": f2.get("trigger_tokens"),
-            "recompress_delta_tokens": f2.get("recompress_delta_tokens"),
-        },
-    } if f2.get("cold_before") else {
-        "available": False,
-        "enabled": f2_enabled,
-        "phase": f2.get("phase") or "waiting",
-        "note": (
-            "Waiting for the first model request."
-            if f2_enabled else "F2 is disabled in this mode."
-        ),
-    })
-    f2_after = ({
-        **f2["cold_after"],
-        "compression_metrics": {
-            "origin_tokens": f2.get("origin_tokens"),
-            "compressed_tokens": f2.get("compressed_tokens"),
-            "saved_tokens": f2.get("saved_tokens"),
-            "ratio": f2.get("ratio"),
-            "compress_ms": f2.get("compress_ms"),
-        },
-    } if f2.get("cold_after") else {
-        "available": False,
-        "enabled": f2_enabled,
-        "phase": f2.get("phase") or "waiting",
-        "action": f2.get("action"),
-        "reason": f2.get("reason"),
-        "system_prompt_compacted": f2.get("system_prompt_compacted"),
-        "tool_descriptions_replaced": f2.get("tool_descriptions_replaced"),
-        "note": (
-            "Cold history has not been dynamically compressed in this step."
-            if f2_enabled else "F2 is disabled in this mode."
-        ),
-    })
-
-    f3_state = snapshot.get("f3") or {}
-    latest_f3 = f3_state.get("latest") or {}
-    f3_enabled = "lazyload" in middleware_names
-    f3_before = (
-        {
-            key: latest_f3.get(key)
-            for key in (
-                "phase",
-                "operation_id",
-                "tool_call_id",
-                "tool_name",
-                "arguments",
-                "threshold_tokens",
-                "original",
-            )
-        }
-        if latest_f3 else {
-            "available": False,
-            "enabled": f3_enabled,
-            "note": (
-                "Waiting for a business tool result."
-                if f3_enabled else "F3 is disabled in this mode."
-            ),
-        }
+    f2_before, f2_after = render_f2_panels(
+        snapshot.get("f2") or {},
+        enabled="compress" in middleware_names,
     )
-    f3_after = latest_f3.get("externalized") or {
-        "available": False,
-        "enabled": f3_enabled,
-        "phase": latest_f3.get("phase"),
-        "action": latest_f3.get("event"),
-        "reason": latest_f3.get("reason"),
-        "fetches": f3_state.get("fetches") or [],
-        "note": (
-            "Tool result was not externalized; check phase/reason and the 4k threshold."
-            if f3_enabled else "F3 is disabled in this mode."
-        ),
-    }
+    f3_before, f3_after = render_f3_panels(
+        snapshot.get("f3") or {},
+        enabled="lazyload" in middleware_names,
+    )
     return prompt_md, f2_before, f2_after, f3_before, f3_after
 
 
@@ -574,34 +503,26 @@ def _build_context_outputs(gr: Any, benchmark_name: str) -> tuple[Any, Any, Any,
             "等待任务开始：Prompt paired token、F2 冷历史和 F3 工具结果会在每一步刷新。"
         )
         with gr.Row():
-            f2_before = gr.JSON(
+            f2_before = gr.HTML(
                 label="F2 待压缩冷历史（canonical preview）",
-                value={"phase": "waiting"},
-                height=300,
-                max_height=360,
-                scale=1,
+                value=waiting_panel("F2 待压缩冷历史"),
+                padding=False,
             )
-            f2_after = gr.JSON(
+            f2_after = gr.HTML(
                 label="F2 压缩后冷历史（发送副本）",
-                value={"phase": "waiting"},
-                height=300,
-                max_height=360,
-                scale=1,
+                value=waiting_panel("F2 实际发送的冷历史副本"),
+                padding=False,
             )
         with gr.Row():
-            f3_before = gr.JSON(
+            f3_before = gr.HTML(
                 label="F3 待结构化存储的工具数据",
-                value={"phase": "waiting"},
-                height=300,
-                max_height=360,
-                scale=1,
+                value=waiting_panel("F3 业务工具原始结果"),
+                padding=False,
             )
-            f3_after = gr.JSON(
+            f3_after = gr.HTML(
                 label="F3 外置后的 synopsis/reference",
-                value={"phase": "waiting"},
-                height=300,
-                max_height=360,
-                scale=1,
+                value=waiting_panel("F3 外置后的 synopsis / reference"),
+                padding=False,
             )
     return prompt_view, f2_before, f2_after, f3_before, f3_after
 
