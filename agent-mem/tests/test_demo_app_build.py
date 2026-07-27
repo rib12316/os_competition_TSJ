@@ -21,14 +21,23 @@ def test_build_app_constructs_without_engine():
     )
     assert isinstance(demo, gr.Blocks)
     assert hasattr(demo, "_agent_mem_monitor")
+    tab_labels = {
+        str((component.get("props") or {}).get("label") or "")
+        for component in demo.config["components"]
+        if component.get("type") == "tabitem"
+    }
+    assert "上下文优化任务" in tab_labels
+    assert "🎯 τ-bench 任务" not in tab_labels
+    assert "LongBench 任务" not in tab_labels
     labels = [
         str((component.get("props") or {}).get("label") or "")
         for component in demo.config["components"]
     ]
     assert "LongBench data zip" in labels
-    assert "LongBench 2WikiMQA agent 对话（tool-calling）" in labels
-    assert labels.count("F2 待压缩冷历史（canonical preview）") == 2
-    assert labels.count("F3 外置后的 synopsis/reference") == 2
+    assert "上下文优化 Agent 对话（自动路由）" in labels
+    assert "baseline 对照场景" in labels
+    assert labels.count("F2 待压缩冷历史（canonical preview）") == 1
+    assert labels.count("F3 外置后的 synopsis/reference") == 1
     context_components = [
         component
         for component in demo.config["components"]
@@ -40,11 +49,11 @@ def test_build_app_constructs_without_engine():
             "F3 外置后的 synopsis/reference",
         }
     ]
-    assert len(context_components) == 8
+    assert len(context_components) == 4
     assert all(component["type"] == "html" for component in context_components)
     assert any(
-        dependency.get("api_name") == "longbench_task"
-        and len(dependency.get("inputs") or []) == 8
+        dependency.get("api_name") == "context_task"
+        and len(dependency.get("inputs") or []) == 12
         and len(dependency.get("outputs") or []) == 7
         for dependency in demo.config["dependencies"]
     )

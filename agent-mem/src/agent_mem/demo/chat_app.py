@@ -455,45 +455,64 @@ def _tau_context_view(
     return prompt_md, f2_before, f2_after, f3_before, f3_after
 
 
-def _build_context_controls(gr: Any) -> tuple[Any, Any, Any, Any, Any]:
-    """Build the shared F2/F3 controls used by tau-bench and LongBench."""
+def _context_workload(mode: str, baseline_workload: str = "tau-bench") -> str:
+    """Route one context mode to the workload that can visibly exercise it."""
+    if mode == "F2":
+        return "tau-bench"
+    if mode in {"F3", "F2+F3"}:
+        return "longbench"
+    if mode == "baseline" and baseline_workload in {"tau-bench", "longbench"}:
+        return baseline_workload
+    raise ValueError(f"无法路由上下文模式 {mode!r} / baseline workload {baseline_workload!r}")
+
+
+def _build_context_controls(gr: Any) -> tuple[Any, Any, Any, Any, Any, Any]:
+    """Build one routed F2/F3 mode selector and its optional F2 controls."""
     context_mode = gr.Radio(
         choices=list(_TAU_CONTEXT_PRESETS),
-        value="F2+F3",
-        label="上下文模式（Agent middleware，不重启引擎）",
-        info="F2=Prompt 压缩，F3=工具数据 lazy-load，组合顺序固定为 [lazyload, compress]",
+        value="F2",
+        label="上下文模式（自动选择对应 benchmark，不重启引擎）",
+        info="F2=τ-bench；F3/F2+F3=LongBench；baseline 可选择对照 workload",
     )
-    f2_trigger = gr.Number(
-        value=2000,
-        minimum=500,
-        maximum=8000,
-        step=500,
-        label="F2 演示压缩阈值（仅当前前端任务；正式配置仍为 8000）",
+    with gr.Group(visible=True) as f2_group:
+        f2_trigger = gr.Number(
+            value=2000,
+            minimum=500,
+            maximum=8000,
+            step=500,
+            label="F2 演示压缩阈值（仅当前前端任务；正式配置仍为 8000）",
+        )
+        f2_method = gr.Radio(
+            choices=["llmlingua2", "longllmlingua"],
+            value="llmlingua2",
+            label="F2 压缩方法",
+            info=(
+                "llmlingua2：tool-aware 结构保护、较快；"
+                "longllmlingua：GPT-2 question-aware 实验档、压缩比可能更高但更慢且不做结构保护"
+            ),
+        )
+        f2_recompress_delta = gr.Number(
+            value=1000,
+            minimum=250,
+            maximum=4000,
+            step=250,
+            label="F2 演示重压新增量（首次压缩后新增多少 token 再压；正式配置为 4000）",
+        )
+        f2_retention = gr.Slider(
+            minimum=0.2,
+            maximum=0.75,
+            value=0.4,
+            step=0.05,
+            label="F2 演示正文保留率（0.40 ≈ 目标压掉 60%；仅作用于可压正文）",
+        )
+    return (
+        context_mode,
+        f2_group,
+        f2_trigger,
+        f2_method,
+        f2_recompress_delta,
+        f2_retention,
     )
-    f2_method = gr.Radio(
-        choices=["llmlingua2", "longllmlingua"],
-        value="llmlingua2",
-        label="F2 压缩方法",
-        info=(
-            "llmlingua2：tool-aware 结构保护、较快；"
-            "longllmlingua：GPT-2 question-aware 实验档、压缩比可能更高但更慢且不做结构保护"
-        ),
-    )
-    f2_recompress_delta = gr.Number(
-        value=1000,
-        minimum=250,
-        maximum=4000,
-        step=250,
-        label="F2 演示重压新增量（首次压缩后新增多少 token 再压；正式配置为 4000）",
-    )
-    f2_retention = gr.Slider(
-        minimum=0.2,
-        maximum=0.75,
-        value=0.4,
-        step=0.05,
-        label="F2 演示正文保留率（0.40 ≈ 目标压掉 60%；仅作用于可压正文）",
-    )
-    return context_mode, f2_trigger, f2_method, f2_recompress_delta, f2_retention
 
 
 def _build_context_outputs(gr: Any, benchmark_name: str) -> tuple[Any, Any, Any, Any, Any]:
@@ -750,6 +769,46 @@ def build_app(
             )
         finally:
             longbench_run_lock.release()
+
+    def run_context_task(
+        context_mode,
+        baseline_workload,
+        tau_domain,
+        tau_task_id,
+        tau_max_steps,
+        longbench_data_zip,
+        longbench_task_id,
+        longbench_max_steps,
+        f2_method,
+        f2_trigger_tokens,
+        f2_recompress_delta_tokens,
+        f2_retention_rate,
+    ):
+        """Route one frontend action to the workload selected by context mode."""
+        mode = str(context_mode)
+        workload = _context_workload(mode, str(baseline_workload))
+        if workload == "tau-bench":
+            yield from run_tau(
+                tau_domain,
+                tau_task_id,
+                tau_max_steps,
+                mode,
+                f2_method,
+                f2_trigger_tokens,
+                f2_recompress_delta_tokens,
+                f2_retention_rate,
+            )
+            return
+        yield from run_longbench(
+            longbench_data_zip,
+            longbench_task_id,
+            longbench_max_steps,
+            mode,
+            f2_method,
+            f2_trigger_tokens,
+            f2_recompress_delta_tokens,
+            f2_retention_rate,
+        )
 
     # ---- 并发 benchmark（流式：会话表 + 成功率；跑完出系统性能最终结果）----
     def run_conc(domain, ntasks, conc, steps):
@@ -1064,85 +1123,80 @@ def build_app(
                         with gr.Row():
                             send_btn = gr.Button("发送", variant="primary")
                             clear_btn = gr.Button("清空")
-                    with gr.Tab("🎯 τ-bench 任务"):
+                    with gr.Tab("上下文优化任务"):
                         gr.Markdown(
-                            "选 **domain + task_id** 运行真实 τ-bench 客服任务。agent 多轮调工具解任务，"
-                            "逐步流式刷对话；每步打本地引擎，**右侧指标实时变化**。"
-                            "（retail 115 个任务；Agent 走本地引擎，USER simulator 默认走 MIMO）"
+                            "同一入口演示 F2/F3：选择 **F2** 自动运行 τ-bench，选择 **F3** 或 "
+                            "**F2+F3** 自动运行 LongBench 2WikiMQA。"
                         )
-                        gr.Markdown(
-                            f"USER simulator：`{tau_user_sim['model']}`　"
-                            f"API：`{tau_user_sim['api_base']}`　"
-                            f"key：`{tau_user_sim['api_key_env']}` "
-                            f"{'已设置' if tau_user_sim['api_key'] else '未设置'}"
-                        )
-                        with gr.Row():
-                            tau_domain = gr.Dropdown(
-                                ["retail", "airline"], value="retail", label="domain", scale=1
-                            )
-                            tau_taskid = gr.Number(value=0, minimum=0, label="task_id", scale=1)
-                            tau_maxsteps = gr.Number(
-                                value=20, minimum=1, maximum=40, label="max_steps", scale=1
-                            )
-                            tau_run = gr.Button("▶ 运行任务", variant="primary", scale=1)
                         (
-                            tau_context_mode,
-                            tau_f2_trigger,
-                            tau_f2_method,
-                            tau_f2_recompress_delta,
-                            tau_f2_retention,
+                            context_mode,
+                            f2_options_group,
+                            context_f2_trigger,
+                            context_f2_method,
+                            context_f2_recompress_delta,
+                            context_f2_retention,
                         ) = _build_context_controls(gr)
-                        tau_chatbot = gr.Chatbot(
+                        baseline_workload = gr.Radio(
+                            choices=[
+                                ("F2 对照 · τ-bench", "tau-bench"),
+                                ("F3 对照 · LongBench", "longbench"),
+                            ],
+                            value="tau-bench",
+                            label="baseline 对照场景",
+                            visible=False,
+                        )
+                        context_route = gr.Markdown(
+                            "当前 workload：**τ-bench retail**（F2 多轮冷历史压缩场景）"
+                        )
+                        with gr.Group(visible=True) as tau_inputs_group:
+                            gr.Markdown(
+                                f"USER simulator：`{tau_user_sim['model']}`　"
+                                f"key：`{tau_user_sim['api_key_env']}` "
+                                f"{'已设置' if tau_user_sim['api_key'] else '未设置'}"
+                            )
+                            with gr.Row():
+                                context_tau_domain = gr.Dropdown(
+                                    ["retail", "airline"], value="retail", label="domain", scale=1
+                                )
+                                context_tau_taskid = gr.Number(
+                                    value=0, minimum=0, step=1, label="τ-bench task_id", scale=1
+                                )
+                                context_tau_maxsteps = gr.Number(
+                                    value=20, minimum=1, maximum=40, step=1,
+                                    label="τ-bench max_steps", scale=1,
+                                )
+                        with gr.Group(visible=False) as longbench_inputs_group:
+                            with gr.Row():
+                                context_longbench_data_zip = gr.Textbox(
+                                    value=(
+                                        str(_DEFAULT_LONGBENCH_ZIP)
+                                        if _DEFAULT_LONGBENCH_ZIP.is_file() else ""
+                                    ),
+                                    label="LongBench data zip",
+                                    placeholder="包含 data/2wikimqa.jsonl 的 zip 路径",
+                                    scale=3,
+                                )
+                                context_longbench_taskid = gr.Number(
+                                    value=0, minimum=0, step=1,
+                                    label="LongBench task_id", scale=1,
+                                )
+                                context_longbench_maxsteps = gr.Number(
+                                    value=8, minimum=1, maximum=20, step=1,
+                                    label="LongBench max_steps", scale=1,
+                                )
+                        context_run = gr.Button("▶ 运行当前场景", variant="primary")
+                        context_chatbot = gr.Chatbot(
                             type="messages", height=460,
-                            label="τ-bench agent 对话（tool-calling）",
+                            label="上下文优化 Agent 对话（自动路由）",
                         )
-                        tau_status = gr.Markdown()
+                        context_status = gr.Markdown()
                         (
-                            tau_prompt_view,
-                            tau_f2_before,
-                            tau_f2_after,
-                            tau_f3_before,
-                            tau_f3_after,
-                        ) = _build_context_outputs(gr, "tau-bench")
-                    with gr.Tab("LongBench 任务"):
-                        gr.Markdown(
-                            "运行 LongBench 的 **2WikiMultihopQA** 单题 Agent 流程。长 context 先作为 "
-                            "`retrieve_documents` 工具结果进入同一 F2/F3 middleware；对话、Prompt token、"
-                            "压缩决策、外置/fetch 和右侧引擎指标均逐步刷新。"
-                        )
-                        with gr.Row():
-                            longbench_data_zip = gr.Textbox(
-                                value=str(_DEFAULT_LONGBENCH_ZIP) if _DEFAULT_LONGBENCH_ZIP.is_file() else "",
-                                label="LongBench data zip",
-                                placeholder="包含 data/2wikimqa.jsonl 的 zip 路径",
-                                scale=3,
-                            )
-                            longbench_taskid = gr.Number(
-                                value=0, minimum=0, step=1, label="task_id", scale=1,
-                            )
-                            longbench_maxsteps = gr.Number(
-                                value=8, minimum=1, maximum=20, step=1, label="max_steps", scale=1,
-                            )
-                            longbench_run = gr.Button("▶ 运行任务", variant="primary", scale=1)
-                        (
-                            longbench_context_mode,
-                            longbench_f2_trigger,
-                            longbench_f2_method,
-                            longbench_f2_recompress_delta,
-                            longbench_f2_retention,
-                        ) = _build_context_controls(gr)
-                        longbench_chatbot = gr.Chatbot(
-                            type="messages", height=460,
-                            label="LongBench 2WikiMQA agent 对话（tool-calling）",
-                        )
-                        longbench_status = gr.Markdown()
-                        (
-                            longbench_prompt_view,
-                            longbench_f2_before,
-                            longbench_f2_after,
-                            longbench_f3_before,
-                            longbench_f3_after,
-                        ) = _build_context_outputs(gr, "LongBench")
+                            context_prompt_view,
+                            context_f2_before,
+                            context_f2_after,
+                            context_f3_before,
+                            context_f3_after,
+                        ) = _build_context_outputs(gr, "自动路由")
                     with gr.Tab("📊 统一 Benchmark"):
                         gr.Markdown(_SCENARIO_GUIDE)
                         scenario_dd = gr.Dropdown(
@@ -1234,53 +1288,74 @@ def build_app(
             a.then(lambda: "", None, [input_box])
         clear_btn.click(lambda: [], None, [chatbot])
 
-        # 事件：τ-bench
-        tau_run.click(
-            run_tau,
-            [
-                tau_domain,
-                tau_taskid,
-                tau_maxsteps,
-                tau_context_mode,
-                tau_f2_method,
-                tau_f2_trigger,
-                tau_f2_recompress_delta,
-                tau_f2_retention,
-            ],
-            [
-                tau_chatbot,
-                tau_status,
-                tau_prompt_view,
-                tau_f2_before,
-                tau_f2_after,
-                tau_f3_before,
-                tau_f3_after,
-            ],
-        )
+        # 事件：上下文模式自动路由到 τ-bench / LongBench
+        def _context_mode_updates(mode, baseline_target):
+            workload = _context_workload(str(mode), str(baseline_target))
+            is_tau = workload == "tau-bench"
+            f2_visible = str(mode) in {"F2", "F2+F3"}
+            route = (
+                "当前 workload：**τ-bench retail**（F2 多轮冷历史压缩场景）"
+                if is_tau
+                else "当前 workload：**LongBench 2WikiMQA**（F3 大工具结果外置场景）"
+            )
+            return (
+                gr.update(visible=is_tau),
+                gr.update(visible=not is_tau),
+                gr.update(visible=str(mode) == "baseline"),
+                gr.update(visible=f2_visible),
+                route,
+            )
 
-        # 事件：LongBench 2WikiMQA（与 tau-bench 复用同一 F2/F3 展示契约）
-        longbench_run.click(
-            run_longbench,
+        context_mode.change(
+            _context_mode_updates,
+            [context_mode, baseline_workload],
             [
-                longbench_data_zip,
-                longbench_taskid,
-                longbench_maxsteps,
-                longbench_context_mode,
-                longbench_f2_method,
-                longbench_f2_trigger,
-                longbench_f2_recompress_delta,
-                longbench_f2_retention,
+                tau_inputs_group,
+                longbench_inputs_group,
+                baseline_workload,
+                f2_options_group,
+                context_route,
+            ],
+            queue=False,
+        )
+        baseline_workload.change(
+            _context_mode_updates,
+            [context_mode, baseline_workload],
+            [
+                tau_inputs_group,
+                longbench_inputs_group,
+                baseline_workload,
+                f2_options_group,
+                context_route,
+            ],
+            queue=False,
+        )
+        context_run.click(
+            run_context_task,
+            [
+                context_mode,
+                baseline_workload,
+                context_tau_domain,
+                context_tau_taskid,
+                context_tau_maxsteps,
+                context_longbench_data_zip,
+                context_longbench_taskid,
+                context_longbench_maxsteps,
+                context_f2_method,
+                context_f2_trigger,
+                context_f2_recompress_delta,
+                context_f2_retention,
             ],
             [
-                longbench_chatbot,
-                longbench_status,
-                longbench_prompt_view,
-                longbench_f2_before,
-                longbench_f2_after,
-                longbench_f3_before,
-                longbench_f3_after,
+                context_chatbot,
+                context_status,
+                context_prompt_view,
+                context_f2_before,
+                context_f2_after,
+                context_f3_before,
+                context_f3_after,
             ],
-            api_name="longbench_task",
+            api_name="context_task",
         )
 
         # 事件：统一 benchmark（后台 run_study → Timer 轮询进度/结果）

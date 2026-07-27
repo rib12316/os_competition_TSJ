@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent_mem.context_telemetry import ContextEventBuffer
 from agent_mem.demo.chat_app import (
+    _context_workload,
     _longbench_context_stack,
     _tau_context_stack,
     _tau_context_view,
@@ -23,6 +24,14 @@ def test_tau_context_modes_build_expected_middleware_order():
     for mode, names in expected.items():
         stack = _tau_context_stack(mode, "Qwen2.5-7B-Instruct")
         assert stack.names == names
+
+
+def test_context_mode_routes_to_workload_that_exercises_feature():
+    assert _context_workload("F2") == "tau-bench"
+    assert _context_workload("F3") == "longbench"
+    assert _context_workload("F2+F3") == "longbench"
+    assert _context_workload("baseline", "tau-bench") == "tau-bench"
+    assert _context_workload("baseline", "longbench") == "longbench"
 
 
 def test_longbench_context_modes_keep_order_without_retail_policy():
