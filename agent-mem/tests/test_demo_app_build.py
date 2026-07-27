@@ -32,8 +32,14 @@ def test_overview_html_has_all_features_and_seams():
 
 
 def test_engine_control_has_v1_buttons():
-    """v1 改造：引擎按钮行含 C8(F1) / LMCache(F4) / priority(F5) / 全开 档位（CONFIG_FLAGS）。"""
-    from agent_mem.demo.engine_control import CONFIG_FLAGS
+    """v1 改造：引擎功能多选组合（FEATURE_FLAGS + flags_for）。"""
+    from agent_mem.demo.engine_control import FEATURE_FLAGS, flags_for
 
-    for cfg in ("baseline", "prefix-cache", "c8", "lmcache", "priority", "all-engine"):
-        assert cfg in CONFIG_FLAGS, f"缺引擎档位 {cfg}"
+    for f in ("c8", "lmcache", "priority"):
+        assert f in FEATURE_FLAGS, f"缺引擎功能 {f}"
+    # 多选组合：c8+priority → 含两套 flag
+    both = flags_for(["c8", "priority"])
+    assert "--quantization" in both and "--scheduling-policy" in both
+    # 不选 prefix-cache = baseline → --no-enable-prefix-caching；选了 → 不带
+    assert "--no-enable-prefix-caching" in flags_for([])
+    assert "--no-enable-prefix-caching" not in flags_for(["prefix-cache"])

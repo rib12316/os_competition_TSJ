@@ -33,7 +33,7 @@ from qwen_agent.agents import Assistant
 from agent_mem.config import load_config
 from agent_mem.context_telemetry import ContextEventBuffer
 from agent_mem.demo import bench_runner, tau_bench_ui
-from agent_mem.demo.engine_control import CONFIG_FLAGS, PENDING_CONFIGS, EngineManager
+from agent_mem.demo.engine_control import EngineManager
 from agent_mem.demo.monitor import (
     HistoryConfig,
     LiveMonitor,
@@ -721,7 +721,7 @@ def build_app(
                 f"⚠️ vLLM 未在该地址服务 → **KV / TTFT / 延迟 / 吞吐 / 队列 暂不可用**。\n\n"
                 f"启动 vLLM 后本面板**每 2s 自动恢复**（无需刷新页面）。"
             )
-            return status_md, _live_figure(series, history), _history_figure(history)
+            return status_md, _live_figure(series, history)
 
         status_md = (
             f"### 🟢 引擎在线：`{engine_url}`\n"
@@ -736,7 +736,7 @@ def build_app(
             f"| 在跑/等待 | {_fmt(latest.running if latest else None, '', 0)} / "
             f"{_fmt(latest.waiting if latest else None, '', 0)} |\n"
         )
-        return status_md, _live_figure(series, history), _history_figure(history)
+        return status_md, _live_figure(series, history)
 
     # ---- 统一 benchmark（后台 run_study；worker 改 bench_h，Timer 读）----
     bench_h = bench_runner.BenchHandle()
@@ -786,30 +786,37 @@ def build_app(
         run_store = gr.State([])  # 累积每次并发 benchmark 的结果（{label, ...metrics}）
         last_metrics = gr.State(None)  # 最近一次并发 benchmark 的最终指标（供捕获）
         # 引擎档位控制：点按钮直接（重）起引擎 + 开对应功能；config 自动作 bench 标签
-        with gr.Accordion("🛠 引擎控制（按档位起引擎，无需手敲命令）", open=True):
+        with gr.Accordion("🛠 引擎控制（多选功能 → 一键启动）", open=True):
+            gr.Markdown(
+                "勾选要开的引擎功能（**多选自由组合**）→ 点 **▶ 启动引擎**。"
+                "不勾 `prefix-cache` = baseline（prefix 关）。显存上限/max_len 选 `priority` 时自动设 0.27/16384（可手改）。"
+            )
+            eng_features = gr.CheckboxGroup(
+                choices=[
+                    ("prefix-cache（默认开）", "prefix-cache"),
+                    ("C8 int8 KV (F1)", "c8"),
+                    ("LMCache 分层 (F4)", "lmcache"),
+                    ("priority 调度 (F5)", "priority"),
+                ],
+                value=["prefix-cache"], label="引擎功能（多选组合）",
+            )
             with gr.Row():
-                eng_btn_baseline = gr.Button("baseline", scale=1)
-                eng_btn_prefix = gr.Button("+prefix-cache", scale=1)
-                eng_btn_c8 = gr.Button("+C8(F1)", scale=1)
-                eng_btn_lmcache = gr.Button("+LMCache(F4)", scale=1)
-                eng_btn_priority = gr.Button("+priority(F5)", scale=1)
-                eng_btn_all = gr.Button("全开", scale=1)
-                eng_btn_stop = gr.Button("⏹ 停止引擎", scale=1)
+                eng_start_btn = gr.Button("▶ 启动引擎", variant="primary", scale=1)
+                eng_stop_btn = gr.Button("⏹ 停止", variant="stop", scale=1)
             with gr.Row():
                 with gr.Column(scale=1):
                     eng_memutil = gr.Number(
-                        value=0.9, label="显存上限（F5 制压调 0.27）",
+                        value=0.9, label="显存上限（选 priority 自动 0.27；可改）",
                         minimum=0.1, maximum=0.95, step=0.01,
                     )
                 with gr.Column(scale=1):
                     eng_maxmlen = gr.Number(
-                        value=32768, label="max_model_len（F5 制压调 16384）",
+                        value=32768, label="max_model_len（选 priority 自动 16384；可改）",
                         minimum=2048, step=1024,
                     )
                 with gr.Column(scale=2):
                     engine_status_md = gr.Markdown(
-                        f"当前档位：**{engine_mgr.config or '未起'}**　引擎：`{engine_url}`"
-                        "（点按钮起/换档；激活档标 🟢，换档重启 ~1-2min）"
+                        f"引擎：`{engine_url}`（未起）。勾选功能 → ▶启动 → 状态在此流式刷新。"
                     )
         with gr.Row():
             with gr.Column(scale=3):
@@ -957,7 +964,6 @@ def build_app(
             with gr.Column(scale=2):
                 status_md = gr.Markdown()
                 live_plot = gr.Plot(label="实时监控（窗口=%.0fs）" % WINDOW_S)
-                history_plot = gr.Plot(label="历史 before/after（中位数）")
 
         gr.Markdown(
             f"_历史来源：`{history_dir}`（{n_runs} runs）。"
@@ -1007,38 +1013,29 @@ def build_app(
         bench_timer = gr.Timer(value=2.0)
         bench_timer.tick(poll_unified, None, [bench_progress])
 
-        # 事件：引擎档位按钮（起/换引擎 → 流式状态 + 激活档标 🟢）
-        _eng_cfgs = ("baseline", "prefix-cache", "c8", "lmcache", "priority", "all-engine")
-        _eng_labels0 = {"baseline": "baseline（prefix关）", "prefix-cache": "+prefix-cache",
-                        "c8": "+C8(F1)", "lmcache": "+LMCache(F4)",
-                        "priority": "+priority(F5)", "all-engine": "全开"}
+        # 事件：引擎（多选功能 → 一键启动；选 priority 自动设 0.27/16384）
+        def _preset_params(features):
+            return (0.27, 16384) if (features and "priority" in features) else (0.9, 32768)
 
-        def _eng_labels(active):
-            return [f"🟢 {_eng_labels0[c]}" if c == active else _eng_labels0[c] for c in _eng_cfgs]
+        eng_features.change(
+            lambda fs: _preset_params(fs), [eng_features], [eng_memutil, eng_maxmlen],
+        )
 
-        _eng_outs = [engine_status_md, eng_btn_baseline, eng_btn_prefix, eng_btn_c8,
-                     eng_btn_lmcache, eng_btn_priority, eng_btn_all]
+        def _start_engine(features, memutil, maxmlen):
+            engine_mgr.gpu_mem_util = float(memutil) if memutil else 0.9
+            engine_mgr.max_model_len = int(maxmlen) if maxmlen else 32768
+            for status in engine_mgr.start(list(features or [])):
+                yield status
 
-        def _starter(cfg: str):
-            def _h(memutil, maxmlen):
-                engine_mgr.gpu_mem_util = float(memutil) if memutil else 0.9
-                engine_mgr.max_model_len = int(maxmlen) if maxmlen else 32768
-                for status in engine_mgr.start(cfg):
-                    yield status, *_eng_labels(engine_mgr.config)
-            return _h
-
-        for _btn, _cfg in (
-            (eng_btn_baseline, "baseline"), (eng_btn_prefix, "prefix-cache"),
-            (eng_btn_c8, "c8"), (eng_btn_lmcache, "lmcache"),
-            (eng_btn_priority, "priority"), (eng_btn_all, "all-engine"),
-        ):
-            _btn.click(_starter(_cfg), [eng_memutil, eng_maxmlen], _eng_outs)
+        eng_start_btn.click(
+            _start_engine, [eng_features, eng_memutil, eng_maxmlen], [engine_status_md],
+        )
 
         def _stop_engine():
             engine_mgr.stop()
-            return "⏹ 引擎已停止", *_eng_labels(None)
+            return "⏹ 引擎已停止。"
 
-        eng_btn_stop.click(_stop_engine, None, _eng_outs)
+        eng_stop_btn.click(_stop_engine, None, [engine_status_md])
 
         # 事件：清空优化对比
         clear_compare.click(
@@ -1048,9 +1045,9 @@ def build_app(
         # 事件：会话对话查看已移除（统一 benchmark 改为后台 run_study 落盘，结果见本页 + 右侧历史）
 
         # 事件：监控刷新（共享，与对话/任务解耦）
-        timer = gr.Timer(value=2.0)
-        timer.tick(refresh, None, [status_md, live_plot, history_plot])
-        demo.load(refresh, None, [status_md, live_plot, history_plot])
+        timer = gr.Timer(value=3.0)
+        timer.tick(refresh, None, [status_md, live_plot])
+        demo.load(refresh, None, [status_md, live_plot])
 
         demo._agent_mem_monitor = monitor  # type: ignore[attr-defined]
     return demo

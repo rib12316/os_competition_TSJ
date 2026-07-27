@@ -25,36 +25,30 @@ from collections.abc import Iterator
 
 import httpx
 
-# 档位 → 额外 vLLM CLI flag（v1：全部档可起，含 F1 C8 / F4 LMCache / F5 priority）
-# ⚠️ vLLM V1 prefix cache 默认开！要隔离 LMCache 必须 --no-enable-prefix-caching，否则
-#    "lmcache" 实际 = prefix+lmcache（KV命中率是 prefix 的，非 LMCache），且与 all-engine 同义。
-CONFIG_FLAGS: dict[str, list[str]] = {
-    "baseline": ["--no-enable-prefix-caching"],
-    "prefix-cache": [],  # prefix 默认开
-    "lmcache": [  # 隔离 LMCache：prefix 关 + LMCache（其收益看 HBM/external hit，非 prefix 命中率）
-        "--no-enable-prefix-caching",
-        "--kv-transfer-config",
-        '{"kv_connector":"LMCacheAscendConnector","kv_role":"kv_both"}',
-    ],
-    "c8": [  # F1：C8 int8 KV（⚠️ 需模型先 annotate + post-RoPE 校准；FULL decode 死锁故 FULL_DECODE_ONLY）
+# 功能 → vLLM flag（前端多选组合；prefix-cache 默认开，不选它 = baseline 关前缀）
+FEATURE_FLAGS: dict[str, list[str]] = {
+    "c8": [  # F1：C8 int8 KV（需模型先 annotate+校准；FULL decode 死锁故 FULL_DECODE_ONLY）
         "--quantization", "ascend",
         "--compilation-config", '{"cudagraph_mode":"FULL_DECODE_ONLY"}',
+    ],
+    "lmcache": [  # F4：LMCache 分层
+        "--kv-transfer-config", '{"kv_connector":"LMCacheAscendConnector","kv_role":"kv_both"}',
     ],
     "priority": ["--scheduling-policy", "priority"],  # F5 引擎层 flag（真增益靠应用层准入控制）
-    "all-engine": [  # 全栈：prefix + LMCache + C8 + priority
-        "--kv-transfer-config", '{"kv_connector":"LMCacheAscendConnector","kv_role":"kv_both"}',
-        "--quantization", "ascend",
-        "--compilation-config", '{"cudagraph_mode":"FULL_DECODE_ONLY"}',
-        "--scheduling-policy", "priority",
-    ],
 }
-# v1：全部档可起（C8 需模型预 annotate + 校准，见 docs/F1-c8-injection.md）
-PENDING_CONFIGS: () = ()
-
 # 所有档共用的基础 flag（mem-util / max-model-len 由 EngineManager 注入）
-BASE_FLAGS = [
-    "--enable-auto-tool-choice", "--tool-call-parser", "hermes",
-]
+BASE_FLAGS = ["--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
+
+
+def flags_for(features: list[str]) -> list[str]:
+    """多选功能 → 合并 vLLM flag。prefix-cache 默认开；不选它 = baseline（--no-enable-prefix-caching）。"""
+    flags: list[str] = []
+    if "prefix-cache" not in features:
+        flags.append("--no-enable-prefix-caching")
+    for f in ("c8", "lmcache", "priority"):
+        if f in features:
+            flags.extend(FEATURE_FLAGS[f])
+    return flags
 
 
 class EngineManager:
@@ -97,7 +91,7 @@ class EngineManager:
         except Exception:  # noqa: BLE001
             return False
 
-    def _cmd(self, config: str) -> list[str]:
+    def _cmd(self, features: list[str]) -> list[str]:
         return [
             self.python_exe, "-m", "vllm.entrypoints.openai.api_server",
             "--model", self.model_path,
@@ -106,10 +100,10 @@ class EngineManager:
             "--gpu-memory-utilization", str(self.gpu_mem_util),
             "--max-model-len", str(self.max_model_len),
             *BASE_FLAGS,
-            *CONFIG_FLAGS.get(config, []),
+            *flags_for(features),
         ]
 
-    def _engine_env(self, config: str = "") -> dict:
+    def _engine_env(self, features: list[str] | None = None) -> dict:
         """引擎子进程 env：CANN python 目录补进 PYTHONPATH（修丢 acl 坑）+ C8 patch（F1）。"""
         env = os.environ.copy()
         cann = _cann_python_paths()
@@ -117,7 +111,7 @@ class EngineManager:
             pp = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = os.pathsep.join(cann) + (os.pathsep + pp if pp else "")
         # F1 C8：Qwen2（Qwen2.5）需 sitecustomize 给 load_weights 打补丁才能加载 KV scale
-        if config in ("c8", "all-engine"):
+        if features and "c8" in features:
             env["QWEN2_C8_PATCH"] = "1"
             patch_dir = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "kv", "c8patch"
@@ -157,29 +151,22 @@ class EngineManager:
                 pass
         time.sleep(4)  # 等 NPU HBM 释放，给下一档腾地方
 
-    def start(self, config: str, *, timeout: float = 300.0) -> Iterator[str]:
-        """按档位起引擎，生成器逐步 yield 状态文本（供 Gradio 流式显示）。
+    def start(self, features: list[str], *, timeout: float = 300.0) -> Iterator[str]:
+        """按多选功能起引擎，生成器逐步 yield 状态文本（供 Gradio 流式显示加载过程）。
 
-        停旧 + 释放端口 → 起新（setsid 进程组）→ 轮询 ``/health``。就绪设 ``self.config``。
+        停旧 + 释放端口 → 起新（setsid 进程组）→ 轮询 ``/health``。就绪设 ``self.config`` 为标签。
+        ``features`` ∈ {"prefix-cache","c8","lmcache","priority"}；空 = baseline(prefix关)。
         """
-        if config in PENDING_CONFIGS:
-            yield f"⏳ {config} 需合并对应功能分支才能真起（C8 补丁 / lingua venv）。"
-            return
-        if config not in CONFIG_FLAGS:
-            yield f"❌ 未知档位 {config!r}"
-            return
-
+        label = "+".join(features) if features else "baseline（prefix关）"
         yield f"⏹ 停止旧引擎（{self.config or '外部'}）…"
         self.stop()
         self._free_port()
-        yield f"▶ 启动 [{config}] 引擎（加载权重 ~1-2min，日志 → {self.log_file}）…"
+        yield f"▶ 启动 [{label}] 引擎（加载权重 ~1-2min，日志 → {self.log_file}）…"
 
-        cmd = self._cmd(config)
+        cmd = self._cmd(features)
         log_fh = open(self.log_file, "ab")  # noqa: SIM115
-        # 引擎 env：确保 CANN python 目录在 PYTHONPATH（acl/tbe 等模块），否则 EngineCore
-        # 子进程 ModuleNotFoundError: acl（demo 若用 PYTHONPATH=src 覆盖会丢 CANN 路径）
         self.proc = subprocess.Popen(
-            cmd, stdout=log_fh, stderr=subprocess.STDOUT, env=self._engine_env(config),
+            cmd, stdout=log_fh, stderr=subprocess.STDOUT, env=self._engine_env(features),
             start_new_session=True,  # setsid → 新进程组，便于 os.killpg 整组杀
         )
         deadline = time.monotonic() + timeout
@@ -190,12 +177,12 @@ class EngineManager:
                 yield f"❌ 引擎进程退出。日志末尾：\n{tail}"
                 return
             if self.health(timeout=3.0):
-                self.config = config
-                yield f"✅ [{config}] 引擎就绪（PID {self.proc.pid}，{self.base_url}）。后续 bench 自动用此档为标签。"
+                self.config = label
+                yield f"✅ [{label}] 引擎就绪（PID {self.proc.pid}，{self.base_url}）。"
                 return
             time.sleep(4)
         self.config = None
-        yield f"❌ [{config}] {timeout:.0f}s 未就绪（超时）。"
+        yield f"❌ [{label}] {timeout:.0f}s 未就绪（超时）。"
 
 
 def _detect_venv_python() -> str:
