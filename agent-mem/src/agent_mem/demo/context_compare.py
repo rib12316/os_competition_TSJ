@@ -258,6 +258,26 @@ def _compression_alignment(before: str, after: str) -> tuple[set[int], set[int]]
     for block in matcher.get_matching_blocks():
         matched_before.update(range(block.a, block.a + block.size))
         matched_after.update(range(block.b, block.b + block.size))
+
+    # Compression can move or collapse message boundaries. Exact unique phrases remain
+    # retained even when a global monotonic diff chooses a different repeated anchor.
+    ngram_size = 4
+    before_ngrams: dict[tuple[str, ...], list[int]] = {}
+    after_ngrams: dict[tuple[str, ...], list[int]] = {}
+    for index in range(max(0, len(before_keys) - ngram_size + 1)):
+        key = tuple(before_keys[index:index + ngram_size])
+        before_ngrams.setdefault(key, []).append(index)
+    for index in range(max(0, len(after_keys) - ngram_size + 1)):
+        key = tuple(after_keys[index:index + ngram_size])
+        after_ngrams.setdefault(key, []).append(index)
+    for key, before_starts in before_ngrams.items():
+        after_starts = after_ngrams.get(key) or []
+        if len(before_starts) != 1 or len(after_starts) != 1:
+            continue
+        before_start = before_starts[0]
+        after_start = after_starts[0]
+        matched_before.update(range(before_start, before_start + ngram_size))
+        matched_after.update(range(after_start, after_start + ngram_size))
     return matched_before, matched_after
 
 

@@ -115,6 +115,39 @@ def test_f2_alignment_does_not_pair_unrelated_words_after_line_drift():
     assert "匹配保留" in after and "新增/改写" in after
 
 
+def test_f2_alignment_keeps_exact_unique_sentence_when_blocks_move():
+    opening = "Hello Yusuf, I can help discuss the exchange for your delivered order today."
+    exact = (
+        "The order details for #W2378156 show that it was delivered on March 15th. "
+        "You received the following items:"
+    )
+    f2 = {
+        "action": "compress",
+        "cold_before": {
+            "tokens": 80,
+            "messages": [{
+                "role": "assistant",
+                "content": _content(f"{opening}\nMechanical Keyboard details.\n{exact}"),
+            }],
+        },
+        "cold_after": {
+            "tokens": 35,
+            "messages": [{
+                "role": "system",
+                "content": _content(f"[compressed history]\n{exact}\n{opening}"),
+            }],
+            "compressed_text": _content(f"{exact}\n{opening}"),
+        },
+    }
+
+    _, after = render_f2_panels(f2, enabled=True)
+    diff_tracks = after.split('<div class="ctx-diff-grid">', 1)[1]
+
+    assert diff_tracks.count(exact) >= 2
+    assert '<span class="ctx-del">The</span> order details' not in diff_tracks
+    assert '<span class="ctx-ins">The</span> order details' not in diff_tracks
+
+
 def test_f3_panels_show_reference_savings_fetch_and_escape_content():
     raw = '{"documents":[{"title":"Unsafe <script>alert(1)</script>","text":"evidence"}]}'
     reference = '{"_agent_mem":"external_tool_result","result_id":"abcdef1234567890"}'
