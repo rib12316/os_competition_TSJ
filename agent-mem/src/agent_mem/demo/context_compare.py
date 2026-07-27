@@ -6,12 +6,22 @@ import difflib
 import html
 import json
 import re
+from collections import Counter
 from typing import Any
 
 _CONTENT_LIMIT = 8_000
 _RAW_LIMIT = 16_000
 _DIFF_LIMIT = 7_000
 _TOKEN_RE = re.compile(r"\s+|\w+|[^\w\s]", re.UNICODE)
+_LEX_RE = re.compile(
+    r"[\u3400-\u4dbf\u4e00-\u9fff]|[^\W_]+|_|[^\w\s]",
+    re.UNICODE,
+)
+_ALIGNMENT_JUNK = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
+    "is", "it", "of", "on", "or", "that", "the", "this", "to", "was", "with",
+    ",", ".", ":", ";", "!", "?", "-", "_", "(", ")", "[", "]", "{", "}",
+}
 
 _STYLE = """
 <style>
@@ -47,11 +57,16 @@ _STYLE = """
   white-space:pre-wrap;word-break:break-word;font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}
 .ctx-state{display:inline-block;border-radius:999px;padding:2px 7px;background:#fff8c5;
   color:#7d4e00;border:1px solid #d4a72c;font-size:11px;font-weight:700}
+.ctx-diff-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.ctx-diff-track{min-width:0}.ctx-diff-track b{display:block;font-size:11px;margin:0 0 5px;color:#57606a}
+.ctx-align-summary{font-size:11px;color:#57606a;font-weight:400}
 @media(max-width:700px){.ctx-head{flex-direction:column}.ctx-metrics{grid-template-columns:1fr}
-  .ctx-metric{border-right:0;border-bottom:1px solid #d8dee4}.ctx-metric:last-child{border-bottom:0}}
+  .ctx-metric{border-right:0;border-bottom:1px solid #d8dee4}.ctx-metric:last-child{border-bottom:0}
+  .ctx-diff-grid{grid-template-columns:1fr}}
 @media(prefers-color-scheme:dark){.ctx-pane{background:#171717;color:#f0f0f0;border-color:#454545}
   .ctx-head,.ctx-section,.ctx-raw{background:#222;border-color:#454545}.ctx-head{border-color:#454545}
-  .ctx-kicker,.ctx-meta,.ctx-metric span,.ctx-legend,.ctx-raw summary{color:#b6b6b6}
+  .ctx-kicker,.ctx-meta,.ctx-metric span,.ctx-legend,.ctx-raw summary,.ctx-diff-track b,
+  .ctx-align-summary{color:#b6b6b6}
   .ctx-token{color:#9ecbff;background:#12324a;border-color:#245b82}.ctx-metrics,.ctx-meta,
   .ctx-metric,.ctx-section,.ctx-raw{border-color:#454545}.ctx-content,.ctx-diff{background:#151515;
   color:#ededed;border-color:#454545}.ctx-content.ctx-empty{color:#aaa}.ctx-del{background:#4a1d20;color:#ffb3b8}
@@ -130,6 +145,28 @@ def _messages_text(preview: dict[str, Any] | None) -> tuple[str, bool]:
     return text, truncated or bounded
 
 
+def _messages_payload_text(
+    preview: dict[str, Any] | None,
+    *,
+    strip_compressed_prefix: bool = False,
+) -> str:
+    """Flatten only user/model/tool payloads, excluding UI-only role/index headings."""
+    if not preview:
+        return ""
+    blocks: list[str] = []
+    for message in preview.get("messages") or []:
+        content, _ = _preview_text(message.get("content"))
+        if content:
+            if strip_compressed_prefix and content.startswith("[compressed history]\n"):
+                content = content.removeprefix("[compressed history]\n")
+            blocks.append(_pretty_text(content))
+        for tool_call in message.get("tool_calls") or []:
+            arguments, _ = _preview_text(tool_call.get("arguments"))
+            if arguments:
+                blocks.append(_pretty_text(arguments))
+    return _bounded("\n\n".join(blocks), _DIFF_LIMIT)[0]
+
+
 def _fmt_tokens(value: Any) -> str:
     return f"{value:,}" if isinstance(value, int) else "--"
 
@@ -188,6 +225,92 @@ def _diff_html(before: str, after: str) -> str:
     return f'<pre class="ctx-diff">{"".join(pieces)}</pre>'
 
 
+def _lex_units(text: str) -> tuple[list[tuple[str, str]], str]:
+    """Split lexical tokens while retaining their leading whitespace for rendering."""
+    units: list[tuple[str, str]] = []
+    cursor = 0
+    for match in _LEX_RE.finditer(text):
+        units.append((text[cursor:match.start()], match.group(0)))
+        cursor = match.end()
+    return units, text[cursor:]
+
+
+def _compression_alignment(before: str, after: str) -> tuple[set[int], set[int]]:
+    """Align stable lexical anchors without letting whitespace/common repeats drive matches."""
+    before_units, _ = _lex_units(before)
+    after_units, _ = _lex_units(after)
+    before_keys = [token.casefold() for _, token in before_units]
+    after_keys = [token.casefold() for _, token in after_units]
+    frequencies = Counter([*before_keys, *after_keys])
+    popularity_cutoff = max(3, min(len(before_keys), len(after_keys)) // 50)
+
+    def is_junk(token: str) -> bool:
+        return token in _ALIGNMENT_JUNK or frequencies[token] > popularity_cutoff
+
+    matcher = difflib.SequenceMatcher(
+        is_junk,
+        before_keys,
+        after_keys,
+        autojunk=True,
+    )
+    matched_before: set[int] = set()
+    matched_after: set[int] = set()
+    for block in matcher.get_matching_blocks():
+        matched_before.update(range(block.a, block.a + block.size))
+        matched_after.update(range(block.b, block.b + block.size))
+    return matched_before, matched_after
+
+
+def _render_alignment_track(
+    text: str,
+    matched: set[int],
+    *,
+    changed_class: str,
+) -> str:
+    units, tail = _lex_units(text)
+    pieces: list[str] = []
+    for index, (prefix, token) in enumerate(units):
+        pieces.append(_safe(prefix))
+        escaped = _safe(token)
+        pieces.append(
+            escaped
+            if index in matched
+            else f'<span class="{changed_class}">{escaped}</span>'
+        )
+    pieces.append(_safe(tail))
+    return "".join(pieces)
+
+
+def _is_word_token(token: str) -> bool:
+    return bool(token) and (token[0].isalnum() or token[0] == "_")
+
+
+def _compression_diff_html(before: str, after: str) -> str:
+    """Render two non-ambiguous F2 tracks instead of pairing unrelated replacements."""
+    before, _ = _bounded(before, _DIFF_LIMIT)
+    after, _ = _bounded(after, _DIFF_LIMIT)
+    if not before and not after:
+        return '<pre class="ctx-diff">等待可比较内容</pre>'
+    matched_before, matched_after = _compression_alignment(before, after)
+    before_units, _ = _lex_units(before)
+    after_units, _ = _lex_units(after)
+    before_words = {i for i, (_, token) in enumerate(before_units) if _is_word_token(token)}
+    after_words = {i for i, (_, token) in enumerate(after_units) if _is_word_token(token)}
+    retained = len(before_words & matched_before)
+    removed = len(before_words - matched_before)
+    added = len(after_words - matched_after)
+    summary = f"匹配保留 {retained} · 删除 {removed} · 新增/改写 {added} 个词"
+    return (
+        f'<div class="ctx-align-summary">{summary}</div>'
+        '<div class="ctx-diff-grid">'
+        '<div class="ctx-diff-track"><b>原文保留 / 删除</b>'
+        f'<pre class="ctx-diff">{_render_alignment_track(before, matched_before, changed_class="ctx-del")}</pre></div>'
+        '<div class="ctx-diff-track"><b>压缩后保留 / 新增或改写</b>'
+        f'<pre class="ctx-diff">{_render_alignment_track(after, matched_after, changed_class="ctx-ins")}</pre></div>'
+        "</div>"
+    )
+
+
 def _raw_details(payload: Any) -> str:
     raw = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
     raw, truncated = _bounded(raw, _RAW_LIMIT)
@@ -215,16 +338,22 @@ def render_f2_panels(f2: dict[str, Any], *, enabled: bool) -> tuple[str, str]:
     after_preview = f2.get("cold_after") or {}
     before_text, before_truncated = _messages_text(before_preview)
     after_text, after_truncated = _messages_text(after_preview)
+    before_diff_text = _messages_payload_text(before_preview)
+    after_diff_text = _messages_payload_text(after_preview, strip_compressed_prefix=True)
     if not after_text and after_preview.get("compressed_text"):
         after_text, compressed_truncated = _preview_text(after_preview.get("compressed_text"))
         after_text, bounded_after = _bounded(_pretty_text(after_text))
         after_truncated = after_truncated or compressed_truncated or bounded_after
+    compressed_diff_text, _ = _preview_text(after_preview.get("compressed_text"))
+    if compressed_diff_text and not after_diff_text:
+        after_diff_text = _bounded(_pretty_text(compressed_diff_text), _DIFF_LIMIT)[0]
     action = f2.get("action")
     reason = f2.get("reason")
     before_tokens = before_preview.get("tokens") if before_preview else None
     after_tokens = after_preview.get("tokens") if after_preview else None
     if enabled and action == "skip" and before_preview and not after_preview:
         after_text = before_text
+        after_diff_text = before_diff_text
         after_tokens = before_tokens
     state = _state_text(action, reason) if enabled else "F2 未启用"
     before_note = "内容为有界 preview；token 对应完整冷历史" if before_truncated else "token 对应完整冷历史"
@@ -259,9 +388,12 @@ def render_f2_panels(f2: dict[str, Any], *, enabled: bool) -> tuple[str, str]:
         + _metrics_html(before_tokens, after_tokens)
         + f'<div class="ctx-meta">method={_safe(method)} · {_safe(after_note + compressor_tokens)}</div>'
         + f'<pre class="ctx-content{(" ctx-empty" if not after_preview and action != "skip" else "")}">{_safe(after_text)}</pre>'
-        + '<div class="ctx-section"><div class="ctx-section-title"><span>与左侧原文的词级差异</span>'
-        + '<span class="ctx-legend"><span class="ctx-del">删除</span> · <span class="ctx-ins">新增</span> · 无底色=保留</span></div>'
-        + _diff_html(before_text if before_preview else "", after_text if after_preview or action == "skip" else "")
+        + '<div class="ctx-section"><div class="ctx-section-title"><span>原文保留与压缩后改写</span>'
+        + '<span class="ctx-legend"><span class="ctx-del">原文删除</span> · <span class="ctx-ins">新增/改写</span> · 无底色=匹配保留</span></div>'
+        + _compression_diff_html(
+            before_diff_text if before_preview else "",
+            after_diff_text if after_preview or action == "skip" else "",
+        )
         + "</div>"
         + _raw_details(after_preview or {"action": action, "reason": reason})
         + "</div>"

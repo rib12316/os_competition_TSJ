@@ -71,6 +71,50 @@ def test_f2_skip_renders_identical_sent_copy():
     assert "0 · 0.00%" in after
 
 
+def test_f2_alignment_does_not_pair_unrelated_words_after_line_drift():
+    f2 = {
+        "action": "compress",
+        "reason": "first_compression",
+        "cold_before": {
+            "tokens": 60,
+            "messages": [{
+                "role": "assistant",
+                "content": _content(
+                    "Shared opening sentence.\nMechanical Keyboard details and repeated repeated text."
+                ),
+            }],
+        },
+        "cold_after": {
+            "tokens": 20,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": _content(
+                        "[compressed history]\nShared opening sentence.\nNext Steps are concise."
+                    ),
+                },
+                {
+                    "role": "assistant",
+                    "content": _content("New cold fact appended verbatim."),
+                },
+            ],
+            "compressed_text": _content("Shared opening sentence.\nNext Steps are concise."),
+        },
+    }
+
+    _, after = render_f2_panels(f2, enabled=True)
+
+    assert "原文保留 / 删除" in after
+    assert "压缩后保留 / 新增或改写" in after
+    assert '<span class="ctx-del">Mechanical</span>' in after
+    assert '<span class="ctx-del">Keyboard</span>' in after
+    assert '<span class="ctx-ins">Next</span>' in after
+    assert '<span class="ctx-ins">Steps</span>' in after
+    assert "New cold fact appended verbatim" in after
+    assert 'ctx-del">Mechanical</span><span class="ctx-ins">Next' not in after
+    assert "匹配保留" in after and "新增/改写" in after
+
+
 def test_f3_panels_show_reference_savings_fetch_and_escape_content():
     raw = '{"documents":[{"title":"Unsafe <script>alert(1)</script>","text":"evidence"}]}'
     reference = '{"_agent_mem":"external_tool_result","result_id":"abcdef1234567890"}'
