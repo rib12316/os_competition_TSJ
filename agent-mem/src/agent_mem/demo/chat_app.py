@@ -804,7 +804,9 @@ def build_app(
             if extras:
                 if any("C8" in e for e in extras):
                     eng_feats.append("c8")
-                if any("LMCache" in e for e in extras):
+                if any("SimpleCPU" in e or "无损" in e for e in extras):
+                    eng_feats.append("simple-offload")
+                elif any("LMCache" in e for e in extras):
                     eng_feats.append("lmcache")
             memutil, maxmlen = 0.27, 16384
             if "progress" in priority_radio:
@@ -1054,8 +1056,8 @@ def build_app(
                             label="用户活跃度仿真 think-time（2活跃[1-3s] / 2偶尔[8-15s] / 2闲置[30-60s]）",
                         )
                         f5_extras = gr.CheckboxGroup(
-                            ["C8(F1) 显存量化", "LMCache(F4) 分层"],
-                            value=[], label="附加引擎功能（多选）",
+                            ["F5 无损 offload (SimpleCPU)", "C8(F1) 显存量化", "LMCache(F4) 分层"],
+                            value=["F5 无损 offload (SimpleCPU)"], label="附加引擎功能（多选；offload 类互斥）",
                         )
                         with gr.Row():
                             f5_conc = gr.Number(

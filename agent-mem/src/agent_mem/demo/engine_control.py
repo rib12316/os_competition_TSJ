@@ -31,8 +31,13 @@ FEATURE_FLAGS: dict[str, list[str]] = {
         "--quantization", "ascend",
         "--compilation-config", '{"cudagraph_mode":"FULL_DECODE_ONLY"}',
     ],
-    "lmcache": [  # F4：LMCache 分层
+    "lmcache": [  # F4：LMCache 分层（社区插件，三级 NPU/CPU/Disk）
         "--kv-transfer-config", '{"kv_connector":"LMCacheAscendConnector","kv_role":"kv_both"}',
+    ],
+    "simple-offload": [  # F5-Phase2：SimpleCPUOffload（vLLM 自带，单级 lazy HBM↔CPU）
+        "--kv-transfer-config",
+        '{"kv_connector":"SimpleCPUOffloadConnector","kv_role":"kv_both",'
+        '"kv_connector_extra_config":{"cpu_bytes_to_use":4294967296,"lazy_offload":true}}',
     ],
     "priority": ["--scheduling-policy", "priority"],  # F5 引擎层 flag（真增益靠应用层准入控制）
 }
@@ -45,7 +50,7 @@ def flags_for(features: list[str]) -> list[str]:
     flags: list[str] = []
     if "prefix-cache" not in features:
         flags.append("--no-enable-prefix-caching")
-    for f in ("c8", "lmcache", "priority"):
+    for f in ("c8", "lmcache", "simple-offload", "priority"):
         if f in features:
             flags.extend(FEATURE_FLAGS[f])
     return flags
