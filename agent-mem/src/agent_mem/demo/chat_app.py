@@ -792,12 +792,14 @@ def build_app(
         return f"状态：{st}"
 
     # ---- 高并发 F5 专用 runner（策略 → 起引擎 → 并发 τ-bench → 功能数据 + 对话）----
-    def run_f5(strategy, extras, conc, maxsteps):
+    def run_f5(strategy, priority_radio, thinktime, extras, conc, maxsteps):
         if "baseline" in strategy:
             eng_feats, memutil, maxmlen = [], 0.27, 16384
+            prio_strat, think_profs = "fcfs", None
         elif "原生" in strategy:
             eng_feats, memutil, maxmlen = ["prefix-cache"], 0.27, 16384
-        else:
+            prio_strat, think_profs = "fcfs", None
+        else:  # T2 我们
             eng_feats = ["prefix-cache", "priority"]
             if extras:
                 if any("C8" in e for e in extras):
@@ -805,6 +807,13 @@ def build_app(
                 if any("LMCache" in e for e in extras):
                     eng_feats.append("lmcache")
             memutil, maxmlen = 0.27, 16384
+            if "progress" in priority_radio:
+                prio_strat = "progress"
+            elif "combined" in priority_radio:
+                prio_strat = "combined"
+            else:
+                prio_strat = "fcfs"
+            think_profs = [(1, 3), (8, 15), (30, 60)] if thinktime else None
         engine_mgr.gpu_mem_util = memutil
         engine_mgr.max_model_len = maxmlen
         for s in engine_mgr.start(eng_feats):
@@ -824,6 +833,7 @@ def build_app(
                 concurrency=c, convo_store=convo_store, engine_url=engine_url,
                 model=model, api_key=os.environ.get("OPENAI_API_KEY", "EMPTY"),
                 max_steps=int(maxsteps),
+                priority_strategy=prio_strat, think_time_profiles=think_profs,
             ):
                 yield md, rows, "_running…_", []
                 last_rows, last_res = rows, res
@@ -1034,14 +1044,18 @@ def build_app(
                             value="我们 (T2): prefix ON + priority + 准入 + combined",
                             label="选择策略（三档均用 0.27/16384 制压，才能对比抢占差异）",
                         )
-                        f5_features = gr.CheckboxGroup(
-                            ["F5 准入控制 + combined priority", "C8(F1) 显存量化", "LMCache(F4) 分层"],
-                            value=["F5 准入控制 + combined priority"],
-                            label="我们的优化功能（仅 T2 生效，多选）",
+                        gr.Markdown("**F5 优先级策略**（仅 T2 生效，决定怎么保护/抢占 session）")
+                        f5_priority = gr.Radio(
+                            ["FCFS（无 priority）", "progress（步数优先 SRTF）", "combined（recency + progress）"],
+                            value="combined（recency + progress）", label="优先级策略",
                         )
-                        gr.Markdown(
-                            "_注：think-time 用户频率仿真是 benchmark 扩展参数（非优化功能），"
-                            "在 📊 统一 Benchmark 的 unified-tau-freq preset 里配。_"
+                        f5_thinktime = gr.Checkbox(
+                            value=True,
+                            label="用户活跃度仿真 think-time（2活跃[1-3s] / 2偶尔[8-15s] / 2闲置[30-60s]）",
+                        )
+                        f5_extras = gr.CheckboxGroup(
+                            ["C8(F1) 显存量化", "LMCache(F4) 分层"],
+                            value=[], label="附加引擎功能（多选）",
                         )
                         with gr.Row():
                             f5_conc = gr.Number(
@@ -1149,7 +1163,7 @@ def build_app(
 
         # 事件：高并发 F5（策略 → 起引擎 → 并发 bench → 功能数据 + 对话）
         f5_run_btn.click(
-            run_f5, [f5_strategy, f5_features, f5_conc, f5_steps],
+            run_f5, [f5_strategy, f5_priority, f5_thinktime, f5_extras, f5_conc, f5_steps],
             [f5_status, f5_table, f5_feature_data, f5_chatbot], api_name="f5_run",
         )
 

@@ -375,6 +375,8 @@ def run_task_into_convo(
     api_key: str = "EMPTY",
     max_steps: int = 10,
     user_model: str = "mimo-v2.5-pro",
+    priority_strategy: str = "combined",
+    think_time_profiles: list | None = None,
 ):
     """跑一个 τ-bench 任务，每步把当前对话（气泡）写入 ``convo_store[tid]``，返回 TaskRunResult。
 
@@ -413,8 +415,26 @@ def run_task_into_convo(
         reward = 0.0
         steps = 0
         ttfts: list[float] = []
+        import random
+        think_range = think_time_profiles[tid % len(think_time_profiles)] if think_time_profiles else None
+        last_turn_t: float | None = None
+        ewma_gap = 0.0
         for step in range(1, max_steps + 1):
             steps = step
+            # think-time 用户频率仿真（step>1 时注入 inter-turn 延迟，模拟异质用户活跃度）
+            if step > 1 and think_range:
+                time.sleep(random.uniform(*think_range))
+            # F5 优先级策略（透传给 vLLM 调度器 via extra_body；值越大越先被抢占）
+            now = time.monotonic()
+            if priority_strategy == "progress":
+                extra_body["priority"] = max(0, round((1 - step / max(max_steps, 1)) * 100))
+            elif priority_strategy == "combined":
+                if last_turn_t is not None:
+                    gap = max(0.0, now - last_turn_t)
+                    ewma_gap = 0.7 * ewma_gap + 0.3 * gap
+                extra_body["priority"] = min(70, int(ewma_gap * 3.5)) + max(0, 30 - int(step * 1.2))
+            # fcfs: 不设 priority（vLLM 用默认 FCFS）
+            last_turn_t = now
             nm, ttft, _prompt_tokens = stream_chat_with_ttft(
                 client, model=model, messages=messages, tools=env.tools_info,
                 temperature=0.0, max_tokens=512, extra_body=extra_body,
@@ -464,6 +484,8 @@ def run_concurrent_streaming(
     user_model: str = "mimo-v2.5-pro",
     user_api_base: str = "https://token-plan-cn.xiaomimimo.com/v1",
     user_api_key: str | None = None,
+    priority_strategy: str = "combined",
+    think_time_profiles: list | None = None,
 ) -> Iterator[tuple[str, list[list], dict]]:
     """并发跑多个 τ-bench 会话，每完成一个 yield ``(进度 Markdown, 会话状态表, per-task results)``。
 
@@ -496,6 +518,8 @@ def run_concurrent_streaming(
                 engine_url=engine_url, model=model,
                 api_key=api_key, max_steps=max_steps,
                 user_model=user_model,
+                priority_strategy=priority_strategy,
+                think_time_profiles=think_time_profiles,
             ): tid
             for tid in task_ids
         }
