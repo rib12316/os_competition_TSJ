@@ -96,7 +96,7 @@ _F5_STRATEGY_DESC = (
     "| 策略 | 引擎 | 做了什么 | 预期 |\n|---|---|---|---|\n"
     "| **baseline (T0)** | prefix 关，FCFS | 裸 vllm，满 HBM → 随机抢占重算 | 抢占风暴，KV 命中低 |\n"
     "| **vllm 原生 (T1)** | prefix on + priority flag | prefix 帮共享前缀；priority flag 同优先级≈FCFS | 抢占未消除 |\n"
-    "| **我们 (T2)** | **prefix ON** + priority + 准入闸门 + combined priority + think-time | 准入（KV 不溢出→**抢占→0**）+ 会话感知（保护活跃/近完成）| 抢占→0，KV 命中 0.46→0.93，p50 −21% |\n"
+    "| **我们 (T2)** | **prefix ON** + priority + 准入闸门 + combined priority | 准入（KV 不溢出→**抢占→0**）+ 会话感知（保护活跃/近完成）| 抢占→0，KV 命中 0.46→0.93，p50 −21% |\n"
 )
 
 
@@ -1035,10 +1035,13 @@ def build_app(
                             label="选择策略（三档均用 0.27/16384 制压，才能对比抢占差异）",
                         )
                         f5_features = gr.CheckboxGroup(
-                            ["F5 准入+combined priority", "think-time 用户频率仿真",
-                             "C8(F1) 显存", "LMCache(F4) 分层"],
-                            value=["F5 准入+combined priority", "think-time 用户频率仿真"],
-                            label="我们的功能（仅 T2 生效，多选）",
+                            ["F5 准入控制 + combined priority", "C8(F1) 显存量化", "LMCache(F4) 分层"],
+                            value=["F5 准入控制 + combined priority"],
+                            label="我们的优化功能（仅 T2 生效，多选）",
+                        )
+                        gr.Markdown(
+                            "_注：think-time 用户频率仿真是 benchmark 扩展参数（非优化功能），"
+                            "在 📊 统一 Benchmark 的 unified-tau-freq preset 里配。_"
                         )
                         with gr.Row():
                             f5_conc = gr.Number(
