@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent_mem.context_telemetry import ContextEventBuffer
 from agent_mem.demo.chat_app import (
+    _longbench_context_stack,
     _tau_context_stack,
     _tau_context_view,
     _tau_user_sim_settings,
@@ -22,6 +23,33 @@ def test_tau_context_modes_build_expected_middleware_order():
     for mode, names in expected.items():
         stack = _tau_context_stack(mode, "Qwen2.5-7B-Instruct")
         assert stack.names == names
+
+
+def test_longbench_context_modes_keep_order_without_retail_policy():
+    expected = {
+        "baseline": [],
+        "F2": ["compress"],
+        "F3": ["lazyload"],
+        "F2+F3": ["lazyload", "compress"],
+    }
+    for mode, names in expected.items():
+        stack = _longbench_context_stack(mode, "Qwen2.5-7B-Instruct")
+        assert stack.names == names
+
+    stack = _longbench_context_stack(
+        "F2",
+        "Qwen2.5-7B-Instruct",
+        f2_method="llmlingua2",
+        f2_trigger_tokens=2000,
+        f2_recompress_delta_tokens=1000,
+        f2_retention_rate=0.4,
+    )
+    compress = stack.middlewares[0]
+    assert compress.optimize_static_prompt is False
+    assert compress.system_prompt_mode == "none"
+    assert compress.hot_tool_trigger_tokens == 1000
+    assert compress.trigger_tokens == 2000
+    assert compress.recompress_delta_tokens == 1000
 
 
 def test_tau_frontend_can_lower_f2_trigger_without_changing_yaml():

@@ -32,7 +32,7 @@ from qwen_agent.agents import Assistant
 
 from agent_mem.config import load_config
 from agent_mem.context_telemetry import ContextEventBuffer
-from agent_mem.demo import bench_runner, tau_bench_ui
+from agent_mem.demo import bench_runner, longbench_ui, tau_bench_ui
 from agent_mem.demo.engine_control import EngineManager
 from agent_mem.demo.monitor import (
     HistoryConfig,
@@ -60,6 +60,16 @@ _TAU_CONTEXT_PRESETS = {
     "F2+F3": _CONFIGS_DIR / "f2-f3-combined.yaml",
 }
 _TAU_USER_SIM_PRESET = _CONFIGS_DIR / "f2-f3-combined.yaml"
+_LONGBENCH_CONTEXT_PRESET = _CONFIGS_DIR / "unified-longbench.yaml"
+_CONTEXT_MODE_MIDDLEWARES = {
+    "baseline": [],
+    "F2": ["compress"],
+    "F3": ["lazyload"],
+    "F2+F3": ["lazyload", "compress"],
+}
+_DEFAULT_LONGBENCH_ZIP = Path(
+    os.environ.get("AGENT_MEM_LONGBENCH_ZIP", "/tmp/longbench-data.zip")
+).expanduser()
 
 # 统一 benchmark 场景 → preset（preset 编码 suite+middleware+session；引擎由上方按钮单独起）
 BENCH_SCENARIOS: dict[str, str] = {
@@ -287,20 +297,15 @@ def clear_runs() -> tuple[list[dict], go.Figure, str, str]:
     return [], _runs_figure([]), _runs_table([]), _runs_summary([])
 
 
-def _tau_context_stack(
-    mode: str,
-    model: str,
+def _apply_f2_demo_options(
+    cfg: Any,
     *,
     f2_method: str | None = None,
     f2_trigger_tokens: int | None = None,
     f2_recompress_delta_tokens: int | None = None,
     f2_retention_rate: float | None = None,
-) -> MiddlewareStack:
-    """Build a fresh per-task F2/F3 stack without changing the running engine."""
-    if mode not in _TAU_CONTEXT_PRESETS:
-        raise ValueError(f"未知上下文模式 {mode!r}")
-    cfg = load_config(_TAU_CONTEXT_PRESETS[mode])
-    cfg.engine.model = model
+) -> None:
+    """Apply frontend-only F2 controls to one freshly loaded config."""
     if "compress" in cfg.middleware.active and f2_method is not None:
         if f2_method not in {"llmlingua2", "longllmlingua"}:
             raise ValueError(f"未知 F2 压缩方法 {f2_method!r}")
@@ -326,6 +331,59 @@ def _tau_context_stack(
         compress_options["rate"] = retention
         compress_options["assistant_rate"] = retention
         compress_options["tool_result_rate"] = retention
+
+
+def _tau_context_stack(
+    mode: str,
+    model: str,
+    *,
+    f2_method: str | None = None,
+    f2_trigger_tokens: int | None = None,
+    f2_recompress_delta_tokens: int | None = None,
+    f2_retention_rate: float | None = None,
+) -> MiddlewareStack:
+    """Build a fresh tau-bench F2/F3 stack without changing the running engine."""
+    if mode not in _TAU_CONTEXT_PRESETS:
+        raise ValueError(f"未知上下文模式 {mode!r}")
+    cfg = load_config(_TAU_CONTEXT_PRESETS[mode])
+    cfg.engine.model = model
+    _apply_f2_demo_options(
+        cfg,
+        f2_method=f2_method,
+        f2_trigger_tokens=f2_trigger_tokens,
+        f2_recompress_delta_tokens=f2_recompress_delta_tokens,
+        f2_retention_rate=f2_retention_rate,
+    )
+    return middlewares_from_config(cfg)
+
+
+def _longbench_context_stack(
+    mode: str,
+    model: str,
+    *,
+    f2_method: str | None = None,
+    f2_trigger_tokens: int | None = None,
+    f2_recompress_delta_tokens: int | None = None,
+    f2_retention_rate: float | None = None,
+) -> MiddlewareStack:
+    """Build a LongBench stack without applying tau-bench's retail system policy."""
+    if mode not in _CONTEXT_MODE_MIDDLEWARES:
+        raise ValueError(f"未知上下文模式 {mode!r}")
+    cfg = load_config(_LONGBENCH_CONTEXT_PRESET)
+    cfg.engine.model = model
+    cfg.middleware.active = list(_CONTEXT_MODE_MIDDLEWARES[mode])
+    if "compress" in cfg.middleware.active:
+        # F2-only needs a hot-result gate because a short 2Wiki trace may never build 8k cold history.
+        cfg.middleware.options.setdefault("compress", {}).setdefault(
+            "hot_tool_trigger_tokens", 1000
+        )
+    _apply_f2_demo_options(
+        cfg,
+        f2_method=f2_method,
+        f2_trigger_tokens=f2_trigger_tokens,
+        f2_recompress_delta_tokens=f2_recompress_delta_tokens,
+        f2_retention_rate=f2_retention_rate,
+    )
     return middlewares_from_config(cfg)
 
 
@@ -468,6 +526,86 @@ def _tau_context_view(
     return prompt_md, f2_before, f2_after, f3_before, f3_after
 
 
+def _build_context_controls(gr: Any) -> tuple[Any, Any, Any, Any, Any]:
+    """Build the shared F2/F3 controls used by tau-bench and LongBench."""
+    context_mode = gr.Radio(
+        choices=list(_TAU_CONTEXT_PRESETS),
+        value="F2+F3",
+        label="上下文模式（Agent middleware，不重启引擎）",
+        info="F2=Prompt 压缩，F3=工具数据 lazy-load，组合顺序固定为 [lazyload, compress]",
+    )
+    f2_trigger = gr.Number(
+        value=2000,
+        minimum=500,
+        maximum=8000,
+        step=500,
+        label="F2 演示压缩阈值（仅当前前端任务；正式配置仍为 8000）",
+    )
+    f2_method = gr.Radio(
+        choices=["llmlingua2", "longllmlingua"],
+        value="llmlingua2",
+        label="F2 压缩方法",
+        info=(
+            "llmlingua2：tool-aware 结构保护、较快；"
+            "longllmlingua：GPT-2 question-aware 实验档、压缩比可能更高但更慢且不做结构保护"
+        ),
+    )
+    f2_recompress_delta = gr.Number(
+        value=1000,
+        minimum=250,
+        maximum=4000,
+        step=250,
+        label="F2 演示重压新增量（首次压缩后新增多少 token 再压；正式配置为 4000）",
+    )
+    f2_retention = gr.Slider(
+        minimum=0.2,
+        maximum=0.75,
+        value=0.4,
+        step=0.05,
+        label="F2 演示正文保留率（0.40 ≈ 目标压掉 60%；仅作用于可压正文）",
+    )
+    return context_mode, f2_trigger, f2_method, f2_recompress_delta, f2_retention
+
+
+def _build_context_outputs(gr: Any, benchmark_name: str) -> tuple[Any, Any, Any, Any, Any]:
+    """Build matching Prompt/F2/F3 output panels for an interactive task tab."""
+    with gr.Accordion(f"F2/F3 上下文变换（当前 {benchmark_name} session）", open=True):
+        prompt_view = gr.Markdown(
+            "等待任务开始：Prompt paired token、F2 冷历史和 F3 工具结果会在每一步刷新。"
+        )
+        with gr.Row():
+            f2_before = gr.JSON(
+                label="F2 待压缩冷历史（canonical preview）",
+                value={"phase": "waiting"},
+                height=300,
+                max_height=360,
+                scale=1,
+            )
+            f2_after = gr.JSON(
+                label="F2 压缩后冷历史（发送副本）",
+                value={"phase": "waiting"},
+                height=300,
+                max_height=360,
+                scale=1,
+            )
+        with gr.Row():
+            f3_before = gr.JSON(
+                label="F3 待结构化存储的工具数据",
+                value={"phase": "waiting"},
+                height=300,
+                max_height=360,
+                scale=1,
+            )
+            f3_after = gr.JSON(
+                label="F3 外置后的 synopsis/reference",
+                value={"phase": "waiting"},
+                height=300,
+                max_height=360,
+                scale=1,
+            )
+    return prompt_view, f2_before, f2_after, f3_before, f3_after
+
+
 # ---- 应用工厂 ----
 
 
@@ -494,6 +632,7 @@ def build_app(
     # 并发 bench 各会话的实时对话（tid → 气泡列表）；线程写、Timer 读，实时查看
     convo_store: dict[int, list[dict]] = {}
     tau_run_lock = threading.Lock()
+    longbench_run_lock = threading.Lock()
     # ---- 自由对话 ----
     def respond(user_msg: str, chat_history: list[dict]):
         user_msg = (user_msg or "").strip()
@@ -605,6 +744,91 @@ def build_app(
             )
         finally:
             tau_run_lock.release()
+
+    # ---- LongBench 2WikiMQA 任务（流式）----
+    def run_longbench(
+        data_zip,
+        task_id,
+        max_steps,
+        context_mode,
+        f2_method,
+        f2_trigger_tokens,
+        f2_recompress_delta_tokens,
+        f2_retention_rate,
+    ):
+        tid = int(task_id)
+        mode = str(context_mode)
+        zip_path = str(data_zip or "").strip()
+        demo_trigger = max(1, int(f2_trigger_tokens or 2000))
+        demo_recompress_delta = max(1, int(f2_recompress_delta_tokens or 1000))
+        demo_retention = min(1.0, max(0.1, float(f2_retention_rate or 0.4)))
+        session_id = f"longbench-{tid}"
+        buffer = ContextEventBuffer(max_events=5000)
+        if not longbench_run_lock.acquire(blocking=False):
+            empty_view = _tau_context_view(
+                buffer,
+                session_id=session_id,
+                mode=mode,
+                middleware_names=[],
+            )
+            yield [], "已有 LongBench 任务运行，不能重复启动。", *empty_view
+            return
+        try:
+            if not zip_path:
+                raise ValueError("请填写包含 data/2wikimqa.jsonl 的 LongBench data zip 路径")
+            stack = _longbench_context_stack(
+                mode,
+                model,
+                f2_method=str(f2_method),
+                f2_trigger_tokens=demo_trigger,
+                f2_recompress_delta_tokens=demo_recompress_delta,
+                f2_retention_rate=demo_retention,
+            )
+            names = stack.names
+            view = _tau_context_view(
+                buffer,
+                session_id=session_id,
+                mode=mode,
+                middleware_names=names,
+            )
+            yield (
+                [],
+                f"正在从 `{zip_path}` 加载 LongBench 2WikiMQA #{tid}… "
+                f"middleware={names}，F2 method={f2_method}，"
+                f"trigger={demo_trigger}，recompress delta={demo_recompress_delta}，"
+                f"retention={demo_retention:.2f}",
+                *view,
+            )
+            for hist_msgs, status in longbench_ui.run_longbench_task_streaming(
+                data_zip=zip_path,
+                task_id=tid,
+                engine_url=engine_url,
+                model=model,
+                api_key=os.environ.get("OPENAI_API_KEY", "EMPTY"),
+                max_steps=int(max_steps),
+                middlewares=stack,
+                context_event_sink=buffer,
+            ):
+                yield hist_msgs, status, *_tau_context_view(
+                    buffer,
+                    session_id=session_id,
+                    mode=mode,
+                    middleware_names=names,
+                )
+        except Exception as exc:  # noqa: BLE001 - surface path/zip/engine failures in the tab
+            names = locals().get("names", [])
+            yield (
+                [{"role": "assistant", "content": f"LongBench 运行失败：{exc}"}],
+                f"LongBench 失败：{exc}",
+                *_tau_context_view(
+                    buffer,
+                    session_id=session_id,
+                    mode=mode,
+                    middleware_names=names,
+                ),
+            )
+        finally:
+            longbench_run_lock.release()
 
     # ---- 并发 benchmark（流式：会话表 + 成功率；跑完出系统性能最终结果）----
     def run_conc(domain, ntasks, conc, steps):
@@ -940,81 +1164,64 @@ def build_app(
                                 value=20, minimum=1, maximum=40, label="max_steps", scale=1
                             )
                             tau_run = gr.Button("▶ 运行任务", variant="primary", scale=1)
-                        tau_context_mode = gr.Radio(
-                            choices=list(_TAU_CONTEXT_PRESETS),
-                            value="F2+F3",
-                            label="上下文模式（Agent middleware，不重启引擎）",
-                            info="F2=Prompt 压缩，F3=工具数据 lazy-load，组合顺序固定为 [lazyload, compress]",
-                        )
-                        tau_f2_trigger = gr.Number(
-                            value=2000,
-                            minimum=500,
-                            maximum=8000,
-                            step=500,
-                            label="F2 演示压缩阈值（仅当前前端任务；正式配置仍为 8000）",
-                        )
-                        tau_f2_method = gr.Radio(
-                            choices=["llmlingua2", "longllmlingua"],
-                            value="llmlingua2",
-                            label="F2 压缩方法",
-                            info=(
-                                "llmlingua2：tool-aware 结构保护、较快；"
-                                "longllmlingua：GPT-2 question-aware 实验档、压缩比可能更高但更慢且不做结构保护"
-                            ),
-                        )
-                        tau_f2_recompress_delta = gr.Number(
-                            value=1000,
-                            minimum=250,
-                            maximum=4000,
-                            step=250,
-                            label="F2 演示重压新增量（首次压缩后新增多少 token 再压；正式配置为 4000）",
-                        )
-                        tau_f2_retention = gr.Slider(
-                            minimum=0.2,
-                            maximum=0.75,
-                            value=0.4,
-                            step=0.05,
-                            label="F2 演示正文保留率（0.40 ≈ 目标压掉 60%；仅作用于可压正文）",
-                        )
+                        (
+                            tau_context_mode,
+                            tau_f2_trigger,
+                            tau_f2_method,
+                            tau_f2_recompress_delta,
+                            tau_f2_retention,
+                        ) = _build_context_controls(gr)
                         tau_chatbot = gr.Chatbot(
                             type="messages", height=460,
                             label="τ-bench agent 对话（tool-calling）",
                         )
                         tau_status = gr.Markdown()
-                        with gr.Accordion("F2/F3 上下文变换（当前 tau-bench session）", open=True):
-                            tau_prompt_view = gr.Markdown(
-                                "等待任务开始：Prompt paired token、F2 冷历史和 F3 工具结果会在每一步刷新。"
+                        (
+                            tau_prompt_view,
+                            tau_f2_before,
+                            tau_f2_after,
+                            tau_f3_before,
+                            tau_f3_after,
+                        ) = _build_context_outputs(gr, "tau-bench")
+                    with gr.Tab("LongBench 任务"):
+                        gr.Markdown(
+                            "运行 LongBench 的 **2WikiMultihopQA** 单题 Agent 流程。长 context 先作为 "
+                            "`retrieve_documents` 工具结果进入同一 F2/F3 middleware；对话、Prompt token、"
+                            "压缩决策、外置/fetch 和右侧引擎指标均逐步刷新。"
+                        )
+                        with gr.Row():
+                            longbench_data_zip = gr.Textbox(
+                                value=str(_DEFAULT_LONGBENCH_ZIP) if _DEFAULT_LONGBENCH_ZIP.is_file() else "",
+                                label="LongBench data zip",
+                                placeholder="包含 data/2wikimqa.jsonl 的 zip 路径",
+                                scale=3,
                             )
-                            with gr.Row():
-                                tau_f2_before = gr.JSON(
-                                    label="F2 待压缩冷历史（canonical preview）",
-                                    value={"phase": "waiting"},
-                                    height=300,
-                                    max_height=360,
-                                    scale=1,
-                                )
-                                tau_f2_after = gr.JSON(
-                                    label="F2 压缩后冷历史（发送副本）",
-                                    value={"phase": "waiting"},
-                                    height=300,
-                                    max_height=360,
-                                    scale=1,
-                                )
-                            with gr.Row():
-                                tau_f3_before = gr.JSON(
-                                    label="F3 待结构化存储的工具数据",
-                                    value={"phase": "waiting"},
-                                    height=300,
-                                    max_height=360,
-                                    scale=1,
-                                )
-                                tau_f3_after = gr.JSON(
-                                    label="F3 外置后的 synopsis/reference",
-                                    value={"phase": "waiting"},
-                                    height=300,
-                                    max_height=360,
-                                    scale=1,
-                                )
+                            longbench_taskid = gr.Number(
+                                value=0, minimum=0, step=1, label="task_id", scale=1,
+                            )
+                            longbench_maxsteps = gr.Number(
+                                value=8, minimum=1, maximum=20, step=1, label="max_steps", scale=1,
+                            )
+                            longbench_run = gr.Button("▶ 运行任务", variant="primary", scale=1)
+                        (
+                            longbench_context_mode,
+                            longbench_f2_trigger,
+                            longbench_f2_method,
+                            longbench_f2_recompress_delta,
+                            longbench_f2_retention,
+                        ) = _build_context_controls(gr)
+                        longbench_chatbot = gr.Chatbot(
+                            type="messages", height=460,
+                            label="LongBench 2WikiMQA agent 对话（tool-calling）",
+                        )
+                        longbench_status = gr.Markdown()
+                        (
+                            longbench_prompt_view,
+                            longbench_f2_before,
+                            longbench_f2_after,
+                            longbench_f3_before,
+                            longbench_f3_after,
+                        ) = _build_context_outputs(gr, "LongBench")
                     with gr.Tab("📊 统一 Benchmark"):
                         gr.Markdown(_SCENARIO_GUIDE)
                         scenario_dd = gr.Dropdown(
@@ -1128,6 +1335,31 @@ def build_app(
                 tau_f3_before,
                 tau_f3_after,
             ],
+        )
+
+        # 事件：LongBench 2WikiMQA（与 tau-bench 复用同一 F2/F3 展示契约）
+        longbench_run.click(
+            run_longbench,
+            [
+                longbench_data_zip,
+                longbench_taskid,
+                longbench_maxsteps,
+                longbench_context_mode,
+                longbench_f2_method,
+                longbench_f2_trigger,
+                longbench_f2_recompress_delta,
+                longbench_f2_retention,
+            ],
+            [
+                longbench_chatbot,
+                longbench_status,
+                longbench_prompt_view,
+                longbench_f2_before,
+                longbench_f2_after,
+                longbench_f3_before,
+                longbench_f3_after,
+            ],
+            api_name="longbench_task",
         )
 
         # 事件：统一 benchmark（后台 run_study → Timer 轮询进度/结果）

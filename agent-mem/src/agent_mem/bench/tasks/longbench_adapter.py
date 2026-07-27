@@ -98,7 +98,7 @@ def _load_examples(path: Path, *, start: int, limit: int) -> list[dict[str, Any]
     return [json.loads(line) for line in lines[start : start + limit]]
 
 
-def _context_payload(context: str) -> tuple[str, int]:
+def context_payload(context: str) -> tuple[str, int]:
     parts = re.split(r"(?m)^Passage \d+:\n", context)[1:]
     documents = []
     for part in parts:
@@ -114,11 +114,31 @@ def _normalize(value: str) -> str:
     return " ".join(re.findall(r"\w+", value.casefold()))
 
 
-def _answer_correct(text: str, answers: list[str]) -> bool:
+def answer_correct(text: str, answers: list[str]) -> bool:
     normalized = _normalize(text)
     return any(
         normalized == _normalize(answer) or _normalize(answer) in normalized
         for answer in answers
+    )
+
+
+def load_task(data_zip: str | Path, task_id: int) -> TaskInfo:
+    """Load one 2WikiMQA row by its dataset index for interactive demos."""
+    index = int(task_id)
+    if index < 0:
+        raise IndexError(f"task_id={index} 必须 >= 0")
+    path = Path(data_zip).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f"LongBench data zip 不存在：{path}")
+    examples = _load_examples(path, start=index, limit=1)
+    if not examples:
+        raise IndexError(f"task_id={index} 越界：{path} 中没有该 2WikiMQA 任务")
+    return TaskInfo(
+        task_id=index,
+        suite="longbench",
+        domain=_DEFAULT_DOMAIN,
+        split="test",
+        payload=examples[0],
     )
 
 
@@ -168,7 +188,7 @@ def run_task(
     from agent_mem.agent.react import run_react
 
     example = task.payload or {}
-    payload, _doc_count = _context_payload(str(example.get("context", "")))
+    payload, _doc_count = context_payload(str(example.get("context", "")))
     stack = MiddlewareStack(list(middlewares)) if middlewares else MiddlewareStack()
     if client is None:
         from openai import OpenAI
@@ -210,7 +230,7 @@ def run_task(
             latency_ms=(time.monotonic() - started) * 1000, n_steps=0, error=repr(exc),
         )
 
-    success = _answer_correct(result.final_text, list(example.get("answers", [])))
+    success = answer_correct(result.final_text, list(example.get("answers", [])))
     for mw in stack.middlewares:
         close = getattr(mw, "close", None)
         if close is not None:

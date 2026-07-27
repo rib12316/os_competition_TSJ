@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_mem.bench.tasks.longbench_adapter import list_tasks, run_task
+from agent_mem.bench.tasks.longbench_adapter import list_tasks, load_task, run_task
 from agent_mem.bench.tasks.types import TaskInfo
 from agent_mem.config import AppConfig, BenchmarkConfig
 
@@ -53,6 +53,23 @@ def test_list_tasks_requires_data_zip():
     cfg = AppConfig(benchmark=BenchmarkConfig(suite="longbench"))
     with pytest.raises(ValueError, match="data_zip"):
         list_tasks(cfg)
+
+
+def test_load_task_reads_one_dataset_index(tmp_path):
+    z = _write_zip(tmp_path, [_example("Paris"), _example("London")])
+    task = load_task(z, 1)
+    assert task.task_id == 1
+    assert task.suite == "longbench"
+    assert task.domain == "2wikimqa"
+    assert task.payload["answers"] == ["London"]
+
+
+def test_load_task_rejects_missing_path_and_out_of_range(tmp_path):
+    with pytest.raises(FileNotFoundError, match="不存在"):
+        load_task(tmp_path / "missing.zip", 0)
+    z = _write_zip(tmp_path, [_example()])
+    with pytest.raises(IndexError, match="越界"):
+        load_task(z, 2)
 
 
 def test_run_task_success_when_answer_matches(monkeypatch):

@@ -21,6 +21,20 @@ def test_build_app_constructs_without_engine():
     )
     assert isinstance(demo, gr.Blocks)
     assert hasattr(demo, "_agent_mem_monitor")
+    labels = [
+        str((component.get("props") or {}).get("label") or "")
+        for component in demo.config["components"]
+    ]
+    assert "LongBench data zip" in labels
+    assert "LongBench 2WikiMQA agent 对话（tool-calling）" in labels
+    assert labels.count("F2 待压缩冷历史（canonical preview）") == 2
+    assert labels.count("F3 外置后的 synopsis/reference") == 2
+    assert any(
+        dependency.get("api_name") == "longbench_task"
+        and len(dependency.get("inputs") or []) == 8
+        and len(dependency.get("outputs") or []) == 7
+        for dependency in demo.config["dependencies"]
+    )
 
 
 def test_overview_html_has_all_features_and_seams():
