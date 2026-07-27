@@ -51,6 +51,9 @@ def test_f2_panels_show_content_tokens_and_word_diff():
     assert 'class="ctx-del"' in after
     assert 'class="ctx-ins"' in after
     assert "压缩器正文 120 → 55 tokens" in after
+    after_markup = after.split("</style>", 1)[1]
+    assert '<pre class="ctx-content' not in after_markup
+    assert '<details class="ctx-raw"' not in after_markup
 
 
 def test_f2_skip_renders_identical_sent_copy():
@@ -110,7 +113,8 @@ def test_f2_alignment_does_not_pair_unrelated_words_after_line_drift():
     assert '<span class="ctx-del">Keyboard</span>' in after
     assert '<span class="ctx-ins">Next</span>' in after
     assert '<span class="ctx-ins">Steps</span>' in after
-    assert "New cold fact appended verbatim" in after
+    for word in ("New", "cold", "fact", "appended", "verbatim"):
+        assert f'<span class="ctx-ins">{word}</span>' in after
     assert 'ctx-del">Mechanical</span><span class="ctx-ins">Next' not in after
     assert "匹配保留" in after and "新增/改写" in after
 
@@ -181,9 +185,11 @@ def test_f3_panels_show_reference_savings_fetch_and_escape_content():
     assert "200 tokens" in after
     assert "8,800 · 97.78%" in after
     assert "abcdef123456…" in after
-    assert "最近一次按需取回" in after
-    assert "120 tokens" in after
+    assert "最近一次按需取回" not in after
     assert 'class="ctx-del"' in after and 'class="ctx-ins"' in after
+    after_markup = after.split("</style>", 1)[1]
+    assert '<pre class="ctx-content' not in after_markup
+    assert '<details class="ctx-raw"' not in after_markup
 
 
 def test_waiting_panel_is_stable_and_readable():

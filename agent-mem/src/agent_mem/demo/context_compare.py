@@ -27,6 +27,7 @@ _STYLE = """
 <style>
 .ctx-pane{border:1px solid #d0d7de;border-radius:6px;background:#fff;color:#1f2328;
   min-height:420px;overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.ctx-pane.ctx-summary{min-height:0}
 .ctx-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
   padding:12px 14px 10px;border-bottom:1px solid #d8dee4;background:#f6f8fa}
 .ctx-head h3{font-size:15px;line-height:1.3;margin:2px 0 0;letter-spacing:0}
@@ -402,12 +403,11 @@ def render_f2_panels(f2: dict[str, Any], *, enabled: bool) -> tuple[str, str]:
         )
     after_html = (
         _STYLE
-        + '<div class="ctx-pane"><div class="ctx-head"><div><span class="ctx-kicker">F2 · AFTER</span>'
+        + '<div class="ctx-pane ctx-summary"><div class="ctx-head"><div><span class="ctx-kicker">F2 · AFTER</span>'
         + '<h3>实际发送的冷历史副本</h3></div>'
         + f'<span class="ctx-token">{_fmt_tokens(after_tokens)} tokens</span></div>'
         + _metrics_html(before_tokens, after_tokens)
         + f'<div class="ctx-meta">method={_safe(method)} · {_safe(after_note + compressor_tokens)}</div>'
-        + f'<pre class="ctx-content{(" ctx-empty" if not after_preview and action != "skip" else "")}">{_safe(after_text)}</pre>'
         + '<div class="ctx-section"><div class="ctx-section-title"><span>原文保留与压缩后改写</span>'
         + '<span class="ctx-legend"><span class="ctx-del">原文删除</span> · <span class="ctx-ins">新增/改写</span> · 无底色=匹配保留</span></div>'
         + _compression_diff_html(
@@ -415,7 +415,6 @@ def render_f2_panels(f2: dict[str, Any], *, enabled: bool) -> tuple[str, str]:
             after_diff_text if after_preview or action == "skip" else "",
         )
         + "</div>"
-        + _raw_details(after_preview or {"action": action, "reason": reason})
         + "</div>"
     )
     return before_html, after_html
@@ -469,7 +468,6 @@ def render_f3_panels(f3_state: dict[str, Any], *, enabled: bool) -> tuple[str, s
         + "</div>"
     )
 
-    synopsis = externalized.get("synopsis") or {}
     result_id = str(externalized.get("result_id") or "")
     result_short = result_id[:12] + ("…" if len(result_id) > 12 else "")
     after_note = (
@@ -479,31 +477,17 @@ def render_f3_panels(f3_state: dict[str, Any], *, enabled: bool) -> tuple[str, s
         after_note += f" · {reason_text}"
     if after_truncated:
         after_note += " · reference preview 已截断"
-    fetches = f3_state.get("fetches") or []
-    fetch_html = ""
-    if fetches:
-        latest_fetch = fetches[-1]
-        response, _ = _preview_text(latest_fetch.get("response"))
-        selector = json.dumps(latest_fetch.get("selector") or {}, ensure_ascii=False)
-        fetch_html = (
-            '<div class="ctx-section"><div class="ctx-fetch"><b>最近一次按需取回</b> · '
-            f'{_fmt_tokens(latest_fetch.get("fetch_tokens"))} tokens · selector={_safe(selector)}'
-            f'<pre>{_safe(_bounded(_pretty_text(response), 3_000)[0])}</pre></div></div>'
-        )
     after_html = (
         _STYLE
-        + '<div class="ctx-pane"><div class="ctx-head"><div><span class="ctx-kicker">F3 · AFTER</span>'
+        + '<div class="ctx-pane ctx-summary"><div class="ctx-head"><div><span class="ctx-kicker">F3 · AFTER</span>'
         + '<h3>进入 Agent 历史的 synopsis / 短引用</h3></div>'
         + f'<span class="ctx-token">{_fmt_tokens(after_tokens)} tokens</span></div>'
         + _metrics_html(before_tokens, after_tokens)
         + f'<div class="ctx-meta">{_safe(after_note)}</div>'
-        + f'<pre class="ctx-content{(" ctx-empty" if not externalized and phase != "passthrough" else "")}">{_safe(after_text)}</pre>'
         + '<div class="ctx-section"><div class="ctx-section-title"><span>原工具结果 → 短引用的词级差异</span>'
         + '<span class="ctx-legend"><span class="ctx-del">移出 Prompt</span> · <span class="ctx-ins">短引用新增</span></span></div>'
         + _diff_html(before_text if original else "", after_text if externalized or phase == "passthrough" else "")
         + "</div>"
-        + fetch_html
-        + _raw_details({"externalized": externalized, "synopsis": synopsis, "fetches": fetches[-3:]})
         + "</div>"
     )
     return before_html, after_html

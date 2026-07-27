@@ -162,7 +162,9 @@ def test_tau_context_view_exposes_prompt_f2_and_f3_fields():
     assert "10,000" not in prompt  # Markdown uses plain integer formatting.
     assert "10000" in prompt and "1500" in prompt
     assert "long original history" in before and "9,000 tokens" in before
-    assert "short history" in after and "5,000 tokens" in after
+    assert "short" in after and "history" in after and "5,000 tokens" in after
+    assert '<pre class="ctx-content' not in after.split("</style>", 1)[1]
     assert 'class="ctx-del"' in after and 'class="ctx-ins"' in after
     assert "retrieve_documents" in f3_before and "9,000 tokens" in f3_before
-    assert "short reference" in f3_after and "200 tokens" in f3_after
+    assert "short" in f3_after and "reference" in f3_after and "200 tokens" in f3_after
+    assert '<pre class="ctx-content' not in f3_after.split("</style>", 1)[1]
