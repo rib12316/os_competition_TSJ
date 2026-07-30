@@ -103,6 +103,24 @@ def test_live_monitor_samples_and_stops():
         mon.stop()
 
 
+def test_live_monitor_defaults_to_npu_smi_without_allocating_npu_context():
+    mon = LiveMonitor(base_url=None, interval=1.0, device="npu")
+    assert isinstance(mon._backend, monitor.NpuSmiBackend)
+
+
+def test_live_monitor_clear_resets_counter_window():
+    mon = LiveMonitor(base_url=None, interval=1.0, backend=None)
+    with mon._lock:
+        mon._buf.append(Sample(
+            t=1.0, mem_mb=None, kv_hits=None, kv_queries=None,
+            ttft_sum=None, ttft_count=None, e2e_sum=None, e2e_count=None,
+            inter_tok_sum=None, inter_tok_count=None, gen_tokens=None,
+            running=None, waiting=None, kv_usage_perc=None,
+        ))
+    mon.clear()
+    assert mon.snapshot() == []
+
+
 def test_compute_window_series_rates_and_means():
     """合成累积样本：验证窗口 KV 命中率 / TTFT 均值 / 吞吐 的增量计算正确。"""
     # 构造 3 个样本（t=0,5,10），累积值递增
@@ -138,3 +156,26 @@ def test_root_url_strips_v1():
     assert monitor._root_url("http://127.0.0.1:8000/v1") == "http://127.0.0.1:8000"
     assert monitor._root_url("http://127.0.0.1:8000/v1/") == "http://127.0.0.1:8000"
     assert monitor._root_url("http://127.0.0.1:8000") == "http://127.0.0.1:8000"
+
+
+def test_lmcache_metrics_url_tracks_engine_port():
+    assert monitor._lmcache_metrics_url("http://127.0.0.1:8000/v1") == (
+        "http://127.0.0.1:7000/metrics"
+    )
+    assert monitor._lmcache_metrics_url("http://127.0.0.1:8001/v1") == (
+        "http://127.0.0.1:7002/metrics"
+    )
+
+
+def test_kv_pool_pct_reader_uses_kv_gauge_scale(monkeypatch):
+    monkeypatch.setattr(
+        monitor,
+        "scrape_snapshot",
+        lambda _url: {"vllm:kv_cache_usage_perc": 0.72},
+    )
+    assert monitor.kv_pool_pct_reader("http://engine/v1")() == pytest.approx(72.0)
+
+
+def test_kv_pool_pct_reader_returns_negative_when_metric_missing(monkeypatch):
+    monkeypatch.setattr(monitor, "scrape_snapshot", lambda _url: {})
+    assert monitor.kv_pool_pct_reader("http://engine/v1")() == -1.0

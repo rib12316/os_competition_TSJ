@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from agent_mem.kv.connector import KVConnectorConfig, render_kv_connector_args
 from agent_mem.kv.lmcache_check import check_lmcache_ascend, is_lmcache_ascend_available
+
 # 注：c8（可 ``python -m agent_mem.kv.c8`` 运行）不在此 eager import——与 server/ 不
 # eager-import 可运行的 vllm_server 一致，避免 -m 双重导入告警。直接 ``from
 # agent_mem.kv.c8 import annotate_model`` 取用。

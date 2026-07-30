@@ -16,7 +16,7 @@
 
 | 软件 | 要求版本 | 本机实际 | 状态 |
 |---|---|---|---|
-| CANN | 9.0.1 | 8.5.1 | ⚠️ 运行时需升级（见 install-status.md） |
+| CANN | 9.0.0 | **9.0.0 + 910B ops** | ✅ 真机 smoke 与 Benchmark 已验证 |
 | torch | 2.10.0 | **2.10.0+cpu** | ✅ CPU 版（无 nvidia 包） |
 | torch-npu | 2.10.0.post2 | **2.10.0.post2** | ✅（运行需 NPU） |
 | vllm | 0.22.1 | **0.22.1+empty**（editable） | ✅ 可导入 |

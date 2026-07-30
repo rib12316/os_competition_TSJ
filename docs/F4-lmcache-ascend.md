@@ -1,7 +1,7 @@
 # F4 — LMCache Ascend 集成指南
 
 > **状态**：✅ 代码集成完成 + NPU 验证通过 + benchmark 有数据。
-> 结论：LMCache 在当前 workload 下的收益在**延迟和 QPS**（-21%/-32%），内存峰持平（KV 不超 pool，offload 不触发）。
+> 结论：LMCache 在当前 workload 下的收益体现在**延迟下降 21% 和 QPS 提升 32%**，内存峰持平（KV 不超 pool，offload 不触发）。
 
 ## Benchmark 结果（2026-07-20）
 
@@ -26,7 +26,7 @@
 | import 验证 | ✅ | `check_lmcache_ascend()` 通过 |
 | connector 注册 | ✅ | 起引擎时 vllm-ascend 插件加载 LMCacheAscendConnector |
 | 引擎烟测 | ✅ | 正常启动，LMCache 用 `non_cuda_equivalents` 后端，API 正常 |
-| F4 对照 benchmark | ❌ | NPU HBM 92% 被前序引擎占用，容器无法 reset |
+| F4 对照 benchmark | ✅ | 清理前序引擎后完成单 Agent与并发 4 对照，结果见上表 |
 
 > **已知约束**：容器内无法 reset NPU（`npu-smi set -t reset` 不可用）。
 > 多档 benchmark 需在每档之间留足 HBM 释放时间（>5min），或单次只跑一档并重启容器。

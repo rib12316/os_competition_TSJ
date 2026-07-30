@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="681.12pt" height="399.6pt" viewBox="0 0 681.12 399.6" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-07-30T02:45:59.861696</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.1, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 399.6
+L 681.12 399.6
+L 681.12 0
+L 0 0
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 48.6144 144.69264
+L 177.1776 144.69264
+Q 185.2128 144.69264 185.2128 140.03568
+L 185.2128 100.45152
+Q 185.2128 95.79456 177.1776 95.79456
+L 48.6144 95.79456
+Q 40.5792 95.79456 40.5792 100.45152
+L 40.5792 140.03568
+Q 40.5792 144.69264 48.6144 144.69264
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #edf6f1; stroke: #2f7d5b; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 229.4064 160.21584
+L 411.5376 160.21584
+Q 419.5728 160.21584 419.5728 155.55888
+L 419.5728 84.92832
+Q 419.5728 80.27136 411.5376 80.27136
+L 229.4064 80.27136
+Q 221.3712 80.27136 221.3712 84.92832
+L 221.3712 155.55888
+Q 221.3712 160.21584 229.4064 160.21584
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #edf6f1; stroke: #2f7d5b; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 470.4624 144.69264
+L 625.8096 144.69264
+Q 633.8448 144.69264 633.8448 140.03568
+L 633.8448 100.45152
+Q 633.8448 95.79456 625.8096 95.79456
+L 470.4624 95.79456
+Q 462.4272 95.79456 462.4272 100.45152
+L 462.4272 140.03568
+Q 462.4272 144.69264 470.4624 144.69264
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #eaf3fb; stroke: #1769aa; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 181.855727 120.2436
+Q 203.290837 120.2436 223.048896 120.2436
+" clip-path="url(#p23bdfaab8d)" style="fill: none; stroke: #2f7d5b; stroke-width: 1.5; stroke-linecap: round"/>
+    <path d="M 218.248896 117.8436
+L 223.048896 120.2436
+L 218.248896 122.6436
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #2f7d5b; stroke: #2f7d5b; stroke-width: 1.5; stroke-linecap: round"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 416.213684 120.2436
+Q 440.999478 120.2436 464.108222 120.2436
+" clip-path="url(#p23bdfaab8d)" style="fill: none; stroke: #2f7d5b; stroke-width: 1.5; stroke-linecap: round"/>
+    <path d="M 459.308222 117.8436
+L 464.108222 120.2436
+L 459.308222 122.6436
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #2f7d5b; stroke: #2f7d5b; stroke-width: 1.5; stroke-linecap: round"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 470.4624 218.42784
+L 625.8096 218.42784
+Q 633.8448 218.42784 633.8448 213.77088
+L 633.8448 174.18672
+Q 633.8448 169.52976 625.8096 169.52976
+L 470.4624 169.52976
+Q 462.4272 169.52976 462.4272 174.18672
+L 462.4272 213.77088
+Q 462.4272 218.42784 470.4624 218.42784
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #f1eef7; stroke: #6b5b95; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 548.136 143.586432
+Q 548.136 166.811379 548.136 188.359275
+" clip-path="url(#p23bdfaab8d)" style="fill: none; stroke: #6b5b95; stroke-width: 1.5; stroke-linecap: round"/>
+    <path d="M 550.536 183.559275
+L 548.136 188.359275
+L 545.736 183.559275
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #6b5b95; stroke: #6b5b95; stroke-width: 1.5; stroke-linecap: round"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 467.187917 211.470728
+Q 453.389142 168.240055 417.263385 143.646249
+" clip-path="url(#p23bdfaab8d)" style="fill: none; stroke: #6b5b95; stroke-width: 1.5; stroke-linecap: round"/>
+    <path d="M 419.88058 148.331362
+L 417.263385 143.646249
+L 422.581793 144.363561
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #6b5b95; stroke: #6b5b95; stroke-width: 1.5; stroke-linecap: round"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 62.0064 299.92464
+L 291.0096 299.92464
+Q 299.0448 299.92464 299.0448 295.26768
+L 299.0448 236.27952
+Q 299.0448 231.62256 291.0096 231.62256
+L 62.0064 231.62256
+Q 53.9712 231.62256 53.9712 236.27952
+L 53.9712 295.26768
+Q 53.9712 299.92464 62.0064 299.92464
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #fbeceb; stroke: #b5453c; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_11">
+    <path d="M 390.1104 299.92464
+L 619.1136 299.92464
+Q 627.1488 299.92464 627.1488 295.26768
+L 627.1488 236.27952
+Q 627.1488 231.62256 619.1136 231.62256
+L 390.1104 231.62256
+Q 382.0752 231.62256 382.0752 236.27952
+L 382.0752 295.26768
+Q 382.0752 299.92464 390.1104 299.92464
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #edf6f1; stroke: #2f7d5b; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_12">
+    <path d="M 295.687727 265.7736
+Q 340.55893 265.7736 383.194066 265.7736
+" clip-path="url(#p23bdfaab8d)" style="fill: none; stroke: #2f7d5b; stroke-width: 2; stroke-linecap: round"/>
+    <path d="M 378.394066 263.3736
+L 383.194066 265.7736
+L 378.394066 268.1736
+z
+" clip-path="url(#p23bdfaab8d)" style="fill: #2f7d5b; stroke: #2f7d5b; stroke-width: 2; stroke-linecap: round"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 19px; font-family: 'Noto Sans CJK SC'; text-anchor: middle; fill: #0b3c5d" x="340.56" y="29.0448" transform="rotate(-0 340.56 29.0448)">F5：KV-pool 感知的准入控制（背压）</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 10.5px; font-family: 'Noto Sans CJK SC'; text-anchor: middle; fill: #5f6b76" x="340.56" y="46.5084" transform="rotate(-0 340.56 46.5084)">目标不是改变‘谁被抢占’，而是降低池满后发生重算的频率</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(72.917094 116.723287)">pending sessions</text>
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(72.896 130.313131)">等待进入推理引擎</text>
+   </g>
+   <g id="text_4">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(249.673563 98.2186)">RequestAdmissionController</text>
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(320.472 107.7436)"/>
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(263.131375 124.0186)">KV &gt; 85%：降低准入上限</text>
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(263.131375 136.538913)">KV &lt; 70%：逐步恢复上限</text>
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(261.345438 149.0436)">70%–85%：保持当前上限</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(508.540687 116.608444)">vLLM running set</text>
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(505.365687 129.508444)">APC + priority 协同</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 9.5px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(501.588969 185.033956)">Prometheus /metrics</text>
+    <text style="font-size: 9.5px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(499.288187 196.572003)">kv_cache_usage_perc</text>
+    <text style="font-size: 9.5px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(477.973305 208.432902)">preemptions / running / waiting</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(135.411906 250.8236)">baseline（FCFS）</text>
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(114.267375 263.338444)">池利用率触顶 → 抢占与重算</text>
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(95.567375 275.713444)">最终 Demo：7 次抢占，KV hit 0.514</text>
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(150.727531 288.193913)">P50 179.9 s</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(440.902625 250.132975)">ours（准入 + priority 协同）</text>
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(448.445594 263.333756)">在高压区收缩 active 上限</text>
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(423.671375 275.713444)">最终 Demo：3 次抢占，KV hit 0.595</text>
+    <text style="font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #17212b" transform="translate(478.831531 288.193913)">P50 108.7 s</text>
+   </g>
+   <g id="text_9">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #2f7d5b" transform="translate(313.724063 240.9908)">抢占 −57%</text>
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Noto Sans CJK SC'; fill: #2f7d5b" transform="translate(309.927969 250.9908)">P50 −39.6%</text>
+   </g>
+   <g id="text_10">
+    <text style="font-weight: 700; font-size: 11px; font-family: 'Noto Sans CJK SC'; text-anchor: middle; fill: #17212b" x="340.56" y="347.2704" transform="rotate(-0 340.56 347.2704)">证据边界</text>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 9.3px; font-family: 'Noto Sans CJK SC'; fill: #5f6b76" transform="translate(112.796461 366.8013)">以上为 2026-07-29 最终前端 Demo 的一次同配置配对运行（10 任务、conc=6、max_steps=25、seed=42）。</text>
+    <text style="font-size: 9.3px; font-family: 'Noto Sans CJK SC'; fill: #5f6b76" transform="translate(134.006273 377.115581)">结果证明当前运行中抢占减少，但尚不足以声称‘稳定归零’；多 seed、多次重复仍是后续验证项。</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p23bdfaab8d">
+   <rect x="5.76" y="5.76" width="669.6" height="388.08"/>
+  </clipPath>
+ </defs>
+</svg>

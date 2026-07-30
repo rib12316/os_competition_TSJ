@@ -7,17 +7,25 @@ apply_rotary_pos_emb），V 无 RoPE 走 v_proj。scale = maxabs/127。需 NPU�
 Qwen2.5-7B：num_kv_heads=4, head_dim=128 → ch=512。
 """
 from __future__ import annotations
-import sys, shutil
-from pathlib import Path
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import transformers.models.qwen2.modeling_qwen2 as q2m
 
-sys.path.insert(0, "/tmp/f1-c8-wt/agent-mem/src")
+import json
+import shutil
+import sys
+from pathlib import Path
+
+import torch
+import transformers.models.qwen2.modeling_qwen2 as q2m
+from safetensors.torch import load_file, save_file
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "agent-mem" / "src"))
 from agent_mem.kv.c8 import annotate_model  # noqa: E402
 
 MODEL = Path("/data/os_competition_TSJ/models/Qwen2.5-7B-Instruct")
-dev = "npu" if torch.npu.is_available() else "cpu"
+if not hasattr(torch, "npu") or not torch.npu.is_available():
+    raise RuntimeError("C8 calibration requires an available Ascend NPU")
+dev = "npu"
 
 tok = AutoTokenizer.from_pretrained(str(MODEL))
 m = AutoModelForCausalLM.from_pretrained(str(MODEL), torch_dtype=torch.bfloat16).to(dev).eval()
@@ -93,11 +101,16 @@ for j, p in enumerate(prompts):
     if (j + 1) % 8 == 0:
         print(f"[calib] {j+1}/{N} done")
 
-from safetensors.torch import save_file, load_file
 scales = {}
 for i in range(NL):
     scales[f"model.layers.{i}.self_attn.k_proj.kv_cache_scale"] = (k_max[i] / 127.0).clamp(min=1e-8).reshape(CH).to(torch.float32)
     scales[f"model.layers.{i}.self_attn.v_proj.kv_cache_scale"] = (v_max[i] / 127.0).clamp(min=1e-8).reshape(CH).to(torch.float32)
+
+all_scales = torch.cat([value.flatten() for value in scales.values()])
+if not torch.isfinite(all_scales).all() or (all_scales <= 0).any():
+    raise RuntimeError("calibration produced non-finite or non-positive C8 scales")
+if torch.allclose(all_scales, all_scales[0]):
+    raise RuntimeError("calibration produced constant scales; refusing placeholder-like output")
 
 annotate_model(MODEL, overwrite=True)
 sf = MODEL / "model.safetensors"
@@ -105,21 +118,23 @@ bak = MODEL / "model.safetensors.stock.bak"
 if sf.exists():
     if not bak.exists():
         shutil.copy2(sf, bak)
-    allw = load_file(str(sf)); allw.update(scales); save_file(allw, str(sf))
+    allw = load_file(str(sf))
+    allw.update(scales)
+    save_file(allw, str(sf))
     print(f"[inject] single-file: merged {len(scales)} scales (ch={CH})")
 else:
     # sharded
-    SCALES_FILE = "kv_cache_scales.safetensors"
-    save_file(scales, str(MODEL / SCALES_FILE))
+    scales_file = "kv_cache_scales.safetensors"
+    save_file(scales, str(MODEL / scales_file))
     idx = MODEL / "model.safetensors.index.json"
     idx_bak = MODEL / "model.safetensors.index.json.stock.bak"
     if not idx_bak.exists():
         shutil.copy2(idx, idx_bak)
-    d = json.loads(idx.read_text()) if False else __import__("json").loads(idx.read_text())
+    d = json.loads(idx.read_text(encoding="utf-8"))
     for kk in scales:
-        d["weight_map"][kk] = SCALES_FILE
-    idx.write_text(__import__("json").dumps(d, indent=2))
-    print(f"[inject] sharded: wrote {SCALES_FILE} + updated index")
+        d["weight_map"][kk] = scales_file
+    idx.write_text(json.dumps(d, indent=2), encoding="utf-8")
+    print(f"[inject] sharded: wrote {scales_file} + updated index")
 
 for i in (0, NL // 2, NL - 1):
     print(f"  L{i:2d} k_scale[{k_max[i].min()/127:.2e},{k_max[i].max()/127:.2e}]  v_scale[{v_max[i].min()/127:.2e},{v_max[i].max()/127:.2e}]")

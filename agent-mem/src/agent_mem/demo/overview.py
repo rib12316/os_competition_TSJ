@@ -19,12 +19,12 @@ STACK_CHIPS = [
 # ---- 7 缝 ----
 SEAMS = [
     {"id": "A", "name": "引擎 flag", "who": "F1"},
-    {"id": "B", "name": "引擎后端", "who": "F8（未整合）"},
-    {"id": "C", "name": "KV connector（统一槽，yaml 二选一）", "who": "F4 / F5-P2"},
+    {"id": "B", "name": "引擎后端", "who": "vLLM / vLLM-Ascend"},
+    {"id": "C", "name": "KV connector", "who": "F4"},
     {"id": "D", "name": "上下文中间件", "who": "F2 / F3"},
     {"id": "E", "name": "Session 生命周期", "who": "F5"},
     {"id": "F", "name": "自带 workload", "who": "baseline"},
-    {"id": "G", "name": "部署", "who": "F9（待补）"},
+    {"id": "G", "name": "复现与部署", "who": "Docker / run metadata"},
 ]
 
 # ---- 痛点 → 功能 ----
@@ -44,20 +44,20 @@ FEATURE_CARDS = [
      "necessity": "免费 --kv-cache-dtype int8 是 no-op；C8 才真砍显存"},
     {"key": "F2", "title": "Prompt 压缩", "seam": "缝D · 痛点①", "color": "#eb6834",
      "mech": "LLMLingua-2 BERT 压冷历史，热尾+system 原样；tool-aware 保护关键 JSON",
-     "kpis": [{"v": "−19%", "l": "tau-bench prompt"}, {"v": "−27%", "l": "长上下文"}, {"v": "≤2.6pp", "l": "成功率(噪声内)"}],
+     "kpis": [{"v": "−19.38%", "l": "tau-bench prompt"}, {"v": "115", "l": "归档任务"}, {"v": "0", "l": "运行错误"}],
      "necessity": "prefix cache 只免重复前缀重算，F2 进一步压冷历史正文"},
     {"key": "F3", "title": "工具数据 lazy-load", "seam": "缝D · 痛点③", "color": "#1baf7a",
      "mech": "超大工具返回值外化 SQLite，context 只留引用；fetch_tool_result 按需取有界片段",
-     "kpis": [{"v": "−93%", "l": "长工具结果 context"}, {"v": "−66%", "l": "LongBench prompt"}, {"v": "0", "l": "成功率下降"}],
+     "kpis": [{"v": "−66.7%", "l": "LongBench prompt"}, {"v": "−87%", "l": "TTFT 中位数"}, {"v": "−3pp", "l": "最佳成功率差"}],
      "necessity": "vllm 无任何 flag 处理工具大数据进 KV — 纯自研"},
     {"key": "F4", "title": "LMCache 分层", "seam": "缝C · 痛点②", "color": "#eda100",
      "mech": "统一 kv_transfer 槽激活 LMCacheAscendConnector，KV 在 NPU↔CPU↔Disk 三级分层",
      "kpis": [{"v": "−21%", "l": "单 agent p50"}, {"v": "+32%", "l": "并发4 QPS"}],
      "necessity": "KV 超 HBM 即 OOM；分层让容量突破物理 HBM"},
     {"key": "F5", "title": "动态回收 + 会话感知调度", "seam": "缝E · 痛点②⑤", "color": "#e87ba4",
-     "mech": "AdmissionController（KV-pool 准入闸门）+ priority 抢占 + combined（EWMA recency + progress/SRTF）+ think-time 用户活跃度",
-     "kpis": [{"v": "0", "l": "抢占次数"}, {"v": "0.46→0.93", "l": "KV 命中率"}, {"v": "−21%", "l": "e2e p50"}, {"v": "3.5×", "l": "progress p50"}],
-     "necessity": "免费 priority flag 单独 ≈FCFS；增益全来自我们准入+combined 信号"},
+     "mech": "每轮请求读取 KV-pool 水位；70/85% 滞回准入防止池溢出，priority 仅作协同层",
+     "kpis": [{"v": "2→0", "l": "烟测抢占"}, {"v": "0.80→0.92", "l": "KV 命中率"}, {"v": "1.9×", "l": "p50 改善"}],
+     "necessity": "原生 priority 只改变谁被抢；准入控制从源头减少抢占次数"},
 ]
 
 # ---- 三档递进 ----
@@ -75,9 +75,9 @@ NOOP_FLAGS = [
 
 # ---- 触发场景 ----
 SCENARIOS = [
-    {"family": "α 并发资源受限", "preset": "unified-tau-freq", "workload": "6 并发 τ-bench + 小 KV pool（util 0.27）+ think-time profiles", "triggers": "F5 / F1 / F4"},
+    {"family": "α 并发资源受限", "preset": "f5-native / f5-evict-dynamic", "workload": "同一 τ-bench workload 对照 baseline / 准入控制", "triggers": "F5"},
     {"family": "β 长上下文 / 大工具", "preset": "unified-longbench", "workload": "LongBench 2WikiMQA（大 context 当工具结果）", "triggers": "F2 / F3"},
-    {"family": "γ 集成（headline）", "preset": "综合 workload", "workload": "α 压力 + β 长context 同时造", "triggers": "全部"},
+    {"family": "γ KV 通用改进", "preset": "baseline / C8 / LMCache", "workload": "同一 τ-bench 任务依次启动匹配引擎", "triggers": "F1 / F4"},
 ]
 
 # ---- 核心指标 ----
@@ -89,8 +89,8 @@ METRICS_ROWS = [
     {"group": "压缩/工具", "metrics": "prompt_tokens + 工具结果节省", "claim": "上下文压缩 / 工具数据", "who": "F2 / F3"},
 ]
 
-BANNER = ("⚠️ 数字来自各功能分支真机实测；v1 统一重跑待 NPU 启用。"
-          "所有对照：同硬件/模型/prompt/seed，3 次取中位数。")
+BANNER = ("数字来自已归档的 Ascend 真机实验；不同功能的 workload、运行次数和统计口径不同，"
+          "完整边界条件以对应实验报告为准。")
 
 
 def _esc(s: str) -> str:

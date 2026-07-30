@@ -1,0 +1,28 @@
+{
+  "title": "历史 NPU 实验结果",
+  "subtitle": "静态导入的既有实验数据，不使用本轮任务实时指标计算",
+  "environment": "Ascend 910B2C · Qwen2.5-7B-Instruct",
+  "sections": [
+    {
+      "title": "C8 int8 KV 量化",
+      "source": "docs/F1-benchmark-results.md",
+      "columns": ["指标", "BF16 baseline", "C8 int8", "改进"],
+      "rows": [
+        ["同预算 KV 容量", "775,936 tok", "1,556,992 tok", "2.007×"],
+        ["并发 16 输出吞吐", "616.5 tok/s", "830.3 tok/s", "+35%"],
+        ["并发 16 E2E P95", "5.08 s", "2.58 s", "-49%"],
+        ["完成率", "100%", "100%", "保持"]
+      ]
+    },
+    {
+      "title": "LMCache 三级分层",
+      "source": "docs/F4-lmcache-ascend.md · logs-mimo/_summaries/20260720_f4-lmcache-trial_comparison.md",
+      "columns": ["指标", "baseline", "LMCache", "改进"],
+      "rows": [
+        ["单 Agent P50 延迟", "152.8 s", "120.8 s", "-21%"],
+        ["任务成功率", "20%", "40%", "+20pp"],
+        ["并发 4 Agent QPS", "0.028", "0.037", "+32%"]
+      ]
+    }
+  ]
+}

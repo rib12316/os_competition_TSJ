@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1298" height="744" viewBox="0 0 1298 744" role="img" aria-labelledby="title desc">
+  <title id="title">面向通用场景的 KV Cache 量化与分层</title>
+  <desc id="desc">展示BF16 KV Cache经过C8逐通道量化扩大同预算容量，并通过LMCache连接HBM、CPU和磁盘层。</desc>
+  <defs>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M44 0H0V44" fill="none" stroke="#17364d" stroke-width="1" opacity="0.46"/>
+    </pattern>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrowCyan" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#47d7ff"/></marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#54e0a7"/></marker>
+    <marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#ffae52"/></marker>
+    <style>
+      text{font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif;letter-spacing:0}
+      .eyebrow{font-size:20px;font-weight:700;fill:#47d7ff}.title{font-size:42px;font-weight:800;fill:#f4fbff}.sub{font-size:18px;fill:#9db7c9}
+      .panelTitle{font-size:20px;font-weight:750;fill:#dff7ff}.label{font-size:17px;font-weight:650;fill:#d8e8f2}.small{font-size:14px;fill:#8faabd}
+      .metric{font-size:38px;font-weight:800;fill:#54e0a7}.mono{font-family:"JetBrains Mono","Noto Sans Mono",monospace}
+    </style>
+  </defs>
+
+  <rect width="1298" height="744" fill="#071521"/><rect width="1298" height="744" fill="url(#grid)"/>
+  <path d="M0 104H1298M0 650H1298" stroke="#25516c" stroke-width="2"/>
+  <path d="M18 28H106V34H24V112H18ZM1280 28H1192V34H1274V112H1280ZM18 716H106V710H24V632H18ZM1280 716H1192V710H1274V632H1280Z" fill="#47d7ff" opacity="0.85"/>
+
+  <g transform="translate(48 26)">
+    <rect width="154" height="35" rx="4" fill="#0f3c55" stroke="#47d7ff"/>
+    <text x="77" y="24" text-anchor="middle" class="eyebrow" font-size="16">AGENTMEM · 03</text>
+    <text x="0" y="76" class="title">面向通用场景的 KV Cache 量化与分层</text>
+    <text x="1200" y="74" text-anchor="end" class="sub mono">C8 / LMCache</text>
+  </g>
+
+  <!-- BF16 cache -->
+  <g transform="translate(48 134)">
+    <rect width="338" height="486" rx="10" fill="#0a1c2b" stroke="#2d6687" stroke-width="2"/>
+    <rect width="338" height="48" rx="10" fill="#10324a"/><rect y="38" width="338" height="10" fill="#10324a"/>
+    <text x="22" y="31" class="panelTitle">BF16 KV Cache</text><text x="314" y="31" text-anchor="end" class="small mono">56 KiB / token</text>
+
+    <g transform="translate(31 82)">
+      <text x="0" y="0" class="small mono">KEY / VALUE ACTIVATIONS</text>
+      <g transform="translate(0 24)" fill="#184b69" stroke="#47d7ff" stroke-width="2">
+        <rect width="52" height="52" rx="5"/><rect x="59" width="52" height="52" rx="5"/><rect x="118" width="52" height="52" rx="5"/><rect x="177" width="52" height="52" rx="5"/><rect x="236" width="40" height="52" rx="5"/>
+        <rect y="59" width="52" height="52" rx="5"/><rect x="59" y="59" width="52" height="52" rx="5"/><rect x="118" y="59" width="52" height="52" rx="5"/><rect x="177" y="59" width="52" height="52" rx="5"/><rect x="236" y="59" width="40" height="52" rx="5"/>
+        <rect y="118" width="52" height="52" rx="5"/><rect x="59" y="118" width="52" height="52" rx="5"/><rect x="118" y="118" width="52" height="52" rx="5"/><rect x="177" y="118" width="52" height="52" rx="5"/><rect x="236" y="118" width="40" height="52" rx="5"/>
+      </g>
+      <text x="0" y="228" class="label">28 层 · K/V · 4 KV heads</text>
+      <text x="0" y="253" class="small mono">head_dim 128 · 16 bit / element</text>
+      <path d="M0 278H276" stroke="#31586e" stroke-width="2"/>
+      <text x="0" y="312" class="small mono">SAME 41.5 GiB KV POOL</text>
+      <text x="0" y="360" font-size="34" font-weight="800" fill="#f2f8fc" class="mono">775,936</text>
+      <text x="0" y="387" class="small">可缓存 token</text>
+    </g>
+  </g>
+
+  <!-- quantization -->
+  <g transform="translate(420 134)">
+    <rect width="348" height="486" rx="10" fill="#0a1c2b" stroke="#3f9d77" stroke-width="2"/>
+    <rect width="348" height="48" rx="10" fill="#12392f"/><rect y="38" width="348" height="10" fill="#12392f"/>
+    <text x="22" y="31" class="panelTitle">F1 · C8 逐通道量化</text><text x="324" y="31" text-anchor="end" class="small mono">INT8</text>
+
+    <g transform="translate(24 75)">
+      <rect width="300" height="72" rx="8" fill="#102f3b" stroke="#47d7ff"/>
+      <text x="18" y="28" class="label">post-RoPE Key / v_proj Value</text>
+      <text x="18" y="52" class="small mono">scale[c] = max(|x[c]|) / 127</text>
+
+      <path d="M150 86V121" stroke="#54e0a7" stroke-width="4" marker-end="url(#arrowGreen)"/>
+      <g transform="translate(12 132)">
+        <g fill="#1b664f" stroke="#54e0a7" stroke-width="2">
+          <rect width="25" height="49" rx="4"/><rect x="31" width="25" height="49" rx="4"/><rect x="62" width="25" height="49" rx="4"/><rect x="93" width="25" height="49" rx="4"/><rect x="124" width="25" height="49" rx="4"/><rect x="155" width="25" height="49" rx="4"/><rect x="186" width="25" height="49" rx="4"/><rect x="217" width="25" height="49" rx="4"/><rect x="248" width="25" height="49" rx="4"/>
+          <rect y="56" width="25" height="49" rx="4"/><rect x="31" y="56" width="25" height="49" rx="4"/><rect x="62" y="56" width="25" height="49" rx="4"/><rect x="93" y="56" width="25" height="49" rx="4"/><rect x="124" y="56" width="25" height="49" rx="4"/><rect x="155" y="56" width="25" height="49" rx="4"/><rect x="186" y="56" width="25" height="49" rx="4"/><rect x="217" y="56" width="25" height="49" rx="4"/><rect x="248" y="56" width="25" height="49" rx="4"/>
+        </g>
+      </g>
+
+      <text x="150" y="269" text-anchor="middle" class="metric">2.007×</text>
+      <text x="150" y="296" text-anchor="middle" class="label">同预算 KV token 容量</text>
+      <text x="150" y="323" text-anchor="middle" class="small mono">775,936 → 1,556,992</text>
+
+      <rect y="347" width="300" height="74" rx="8" fill="#12372f" stroke="#54e0a7"/>
+      <text x="18" y="376" class="label">静态反量化参与 Attention</text>
+      <text x="18" y="401" class="small">不改变模型权重与输入 token 数</text>
+    </g>
+  </g>
+
+  <path d="M389 376H411" stroke="#47d7ff" stroke-width="4" marker-end="url(#arrowCyan)"/>
+  <path d="M771 376H793" stroke="#54e0a7" stroke-width="4" marker-end="url(#arrowGreen)"/>
+
+  <!-- tiered cache -->
+  <g transform="translate(802 134)">
+    <rect width="448" height="486" rx="10" fill="#0a1c2b" stroke="#2d6687" stroke-width="2"/>
+    <rect width="448" height="48" rx="10" fill="#10324a"/><rect y="38" width="448" height="10" fill="#10324a"/>
+    <text x="22" y="31" class="panelTitle">F4 · 分层 KV 存储</text><text x="424" y="31" text-anchor="end" class="small mono">LMCache</text>
+
+    <g transform="translate(24 76)">
+      <rect width="400" height="92" rx="8" fill="#12372f" stroke="#54e0a7" stroke-width="2"/>
+      <g transform="translate(20 19)"><path d="M0 12L28 0l28 12-28 12zM0 12v30l28 12 28-12V12" fill="none" stroke="#54e0a7" stroke-width="3"/></g>
+      <text x="96" y="32" class="panelTitle">NPU HBM · HOT</text>
+      <text x="96" y="59" class="small">活跃 block · 最低访问延迟</text>
+      <text x="376" y="55" text-anchor="end" class="small mono">64 GiB</text>
+
+      <path d="M200 102V132" stroke="#47d7ff" stroke-width="3" marker-end="url(#arrowCyan)"/>
+      <text x="218" y="123" class="small mono">SAVE / LOAD</text>
+
+      <rect y="142" width="400" height="92" rx="8" fill="#102f3b" stroke="#47d7ff" stroke-width="2"/>
+      <g transform="translate(20 18)" fill="none" stroke="#47d7ff" stroke-width="3"><ellipse cx="28" cy="9" rx="28" ry="9"/><path d="M0 9v39c0 5 13 9 28 9s28-4 28-9V9M0 28c0 5 13 9 28 9s28-4 28-9"/></g>
+      <text x="96" y="174" class="panelTitle">CPU Memory · WARM</text>
+      <text x="96" y="201" class="small">可复用副本 · 扩展缓存容量</text>
+
+      <path d="M200 244V274" stroke="#ffae52" stroke-width="3" marker-end="url(#arrowOrange)"/>
+
+      <rect y="284" width="400" height="92" rx="8" fill="#2f2a24" stroke="#ffae52" stroke-width="2"/>
+      <g transform="translate(20 17)" fill="none" stroke="#ffae52" stroke-width="3"><rect x="0" y="8" width="58" height="48" rx="6"/><circle cx="45" cy="44" r="4" fill="#ffae52"/><path d="M9 20h40M9 30h40"/></g>
+      <text x="96" y="316" class="panelTitle">Disk · COLD</text>
+      <text x="96" y="343" class="small">长生命周期归档 · 按需回读</text>
+
+      <text x="0" y="413" class="small">已验证 connector 接入与 KV 复用</text>
+      <text x="0" y="436" class="small">真实迁移是否触发取决于负载与配置</text>
+    </g>
+  </g>
+
+  <g transform="translate(48 674)">
+    <rect width="344" height="42" rx="21" fill="#12372f" stroke="#54e0a7"/><text x="172" y="28" text-anchor="middle" class="label">C8 容量翻倍</text>
+    <rect x="364" width="344" height="42" rx="21" fill="#102f3b" stroke="#47d7ff"/><text x="536" y="28" text-anchor="middle" class="label">HBM → CPU → Disk</text>
+    <rect x="728" width="474" height="42" rx="21" fill="#102f3b" stroke="#47d7ff"/><text x="965" y="28" text-anchor="middle" class="label">量化降低单位成本 · 分层扩大容量边界</text>
+  </g>
+</svg>

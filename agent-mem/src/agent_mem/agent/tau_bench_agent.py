@@ -38,17 +38,66 @@ class SolveOutcome:
     ttft_ms_list: list[float] = field(default_factory=list)  # 每步 TTFT（首 token 时间）
 
 
+def _parse_tool_arguments(raw_arguments: Any) -> dict[str, Any]:
+    """Parse tool arguments, repairing consecutive JSON objects from local models."""
+    if isinstance(raw_arguments, dict):
+        return dict(raw_arguments)
+    if not isinstance(raw_arguments, str) or not raw_arguments.strip():
+        return {}
+    text = raw_arguments.strip()
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except (ValueError, TypeError):
+        pass
+
+    decoder = json.JSONDecoder()
+    merged: dict[str, Any] = {}
+    position = 0
+    parsed_any = False
+    try:
+        while position < len(text):
+            while position < len(text) and text[position].isspace():
+                position += 1
+            if position >= len(text):
+                break
+            value, position = decoder.raw_decode(text, position)
+            if not isinstance(value, dict):
+                return {}
+            merged.update(value)
+            parsed_any = True
+    except (ValueError, TypeError):
+        return {}
+    return merged if parsed_any else {}
+
+
 def _message_to_action(next_message: dict, Action: Any, respond_name: str) -> Any:
     """镜像 tau_bench message_to_action：有 tool_calls→工具 Action，否则→respond。"""
     tcs = next_message.get("tool_calls") or []
     if tcs and tcs[0].get("function"):
         tc = tcs[0]
-        try:
-            kwargs = json.loads(tc["function"].get("arguments") or "{}")
-        except (ValueError, TypeError):
-            kwargs = {}
+        kwargs = _parse_tool_arguments(tc["function"].get("arguments"))
         return Action(name=tc["function"]["name"], kwargs=kwargs)
     return Action(name=respond_name, kwargs={"content": next_message.get("content") or ""})
+
+
+def _canonicalize_tool_call(next_message: dict, action: Any) -> dict[str, Any]:
+    """Store exactly one valid tool call matching the action sent to tau-bench."""
+    tool_calls = next_message.get("tool_calls") or []
+    source = tool_calls[0] if tool_calls and isinstance(tool_calls[0], dict) else {}
+    source_function = source.get("function") or {}
+    canonical = {
+        "id": source.get("id") or "call",
+        "type": "function",
+        "function": {
+            "name": action.name or source_function.get("name"),
+            "arguments": json.dumps(
+                dict(action.kwargs), ensure_ascii=False, separators=(",", ":")
+            ),
+        },
+    }
+    next_message["tool_calls"] = [canonical]
+    return canonical
 
 
 class TauBenchAgent:
@@ -173,9 +222,7 @@ class TauBenchAgent:
             action = _message_to_action(next_message, Action, RESPOND_ACTION_NAME)
 
             if action.name != RESPOND_ACTION_NAME:
-                tcs = next_message.get("tool_calls") or []
-                next_message["tool_calls"] = tcs[:1]  # τ-bench 每步一个 action
-                tc = tcs[0] if tcs else {"id": "x", "function": {"name": action.name}}
+                tc = _canonicalize_tool_call(next_message, action)
                 messages.append(next_message)
                 ctx.tool_call_id = str(tc.get("id") or "")
                 ctx.tool_call_index = 0

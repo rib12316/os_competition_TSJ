@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1298" height="744" viewBox="0 0 1298 744" role="img" aria-labelledby="title desc">
+  <title id="title">面向长生命周期会话的上下文压缩</title>
+  <desc id="desc">展示长会话上下文经过工具结果外置、结构保护、冷热切分和增量压缩后形成紧凑模型输入。</desc>
+  <defs>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M44 0H0V44" fill="none" stroke="#17364d" stroke-width="1" opacity="0.46"/>
+    </pattern>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrowCyan" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#47d7ff"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#54e0a7"/>
+    </marker>
+    <style>
+      text{font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif;letter-spacing:0}
+      .eyebrow{font-size:20px;font-weight:700;fill:#47d7ff}
+      .title{font-size:42px;font-weight:800;fill:#f4fbff}
+      .sub{font-size:18px;fill:#9db7c9}
+      .panelTitle{font-size:20px;font-weight:750;fill:#dff7ff}
+      .label{font-size:17px;font-weight:650;fill:#d8e8f2}
+      .small{font-size:14px;fill:#8faabd}
+      .metric{font-size:38px;font-weight:800;fill:#54e0a7}
+      .mono{font-family:"JetBrains Mono","Noto Sans Mono",monospace}
+    </style>
+  </defs>
+
+  <rect width="1298" height="744" fill="#071521"/>
+  <rect width="1298" height="744" fill="url(#grid)"/>
+  <path d="M0 104H1298M0 650H1298" stroke="#25516c" stroke-width="2"/>
+  <path d="M18 28H106V34H24V112H18ZM1280 28H1192V34H1274V112H1280ZM18 716H106V710H24V632H18ZM1280 716H1192V710H1274V632H1280Z" fill="#47d7ff" opacity="0.85"/>
+
+  <g transform="translate(48 26)">
+    <rect width="154" height="35" rx="4" fill="#0f3c55" stroke="#47d7ff"/>
+    <text x="77" y="24" text-anchor="middle" class="eyebrow" font-size="16">AGENTMEM · 01</text>
+    <text x="0" y="76" class="title">面向长生命周期会话的上下文压缩</text>
+    <text x="1200" y="74" text-anchor="end" class="sub mono">CONTEXT PIPELINE / LIVE</text>
+  </g>
+
+  <!-- growing context -->
+  <g transform="translate(48 134)">
+    <rect width="330" height="486" rx="10" fill="#0a1c2b" stroke="#2d6687" stroke-width="2"/>
+    <rect width="330" height="48" rx="10" fill="#10324a"/>
+    <rect y="38" width="330" height="10" fill="#10324a"/>
+    <text x="22" y="31" class="panelTitle">持续增长的会话上下文</text>
+    <text x="306" y="31" text-anchor="end" class="small mono">CANONICAL</text>
+
+    <g transform="translate(22 74)">
+      <rect width="286" height="48" rx="6" fill="#12324a" stroke="#3a779b"/>
+      <circle cx="22" cy="24" r="8" fill="#47d7ff"/>
+      <text x="42" y="21" class="label">System Policy</text><text x="262" y="29" text-anchor="end" class="small mono">FIXED</text>
+
+      <rect y="60" width="286" height="48" rx="6" fill="#12324a" stroke="#3a779b"/>
+      <circle cx="22" cy="84" r="8" fill="#47d7ff"/>
+      <text x="42" y="81" class="label">Tool Schema</text><text x="262" y="89" text-anchor="end" class="small mono">REPEAT</text>
+
+      <rect y="120" width="286" height="58" rx="6" fill="#12372f" stroke="#46a67c"/>
+      <circle cx="22" cy="149" r="8" fill="#54e0a7"/>
+      <text x="42" y="145" class="label">Hot turns</text><text x="262" y="153" text-anchor="end" class="small mono">KEEP 6</text>
+
+      <rect y="190" width="286" height="86" rx="6" fill="#302b26" stroke="#c98a45"/>
+      <g fill="#d9984d"><circle cx="22" cy="213" r="6"/><circle cx="22" cy="235" r="6"/><circle cx="22" cy="257" r="6"/></g>
+      <text x="42" y="220" class="label">Cold history</text>
+      <path d="M42 239H252M42 254H218" stroke="#9c7148" stroke-width="5" stroke-linecap="round"/>
+
+      <rect y="288" width="286" height="72" rx="6" fill="#35252b" stroke="#d56f7b"/>
+      <path d="M17 307h16v16H17zM20 310h10v10H20z" fill="none" stroke="#ff8391" stroke-width="2"/>
+      <text x="42" y="316" class="label">Large tool result</text>
+      <path d="M42 337H256M42 351H232" stroke="#9f5963" stroke-width="5" stroke-linecap="round"/>
+    </g>
+    <text x="22" y="465" class="small mono">CONTEXT GROWS WITH EVERY TURN</text>
+  </g>
+
+  <!-- pipeline -->
+  <g transform="translate(410 134)">
+    <rect width="444" height="486" rx="10" fill="#0a1c2b" stroke="#2d6687" stroke-width="2"/>
+    <rect width="444" height="48" rx="10" fill="#10324a"/>
+    <rect y="38" width="444" height="10" fill="#10324a"/>
+    <text x="22" y="31" class="panelTitle">协议感知处理链</text>
+    <text x="420" y="31" text-anchor="end" class="small mono">F3 → F2</text>
+
+    <path d="M56 104H388" stroke="#47d7ff" stroke-width="3" marker-end="url(#arrowCyan)" opacity="0.7"/>
+    <g transform="translate(36 76)">
+      <circle cx="20" cy="28" r="20" fill="#0d4a64" stroke="#47d7ff" stroke-width="2"/>
+      <text x="20" y="35" text-anchor="middle" class="label">1</text>
+      <text x="54" y="23" class="label">F3 工具结果外置</text>
+      <text x="54" y="45" class="small">ArtifactStore 保存原文，只回传 result_id</text>
+    </g>
+
+    <g transform="translate(36 157)">
+      <rect width="372" height="74" rx="8" fill="#112d42" stroke="#47d7ff"/>
+      <path d="M24 22h35v30H24zM31 16h35v30" fill="none" stroke="#47d7ff" stroke-width="3"/>
+      <text x="88" y="31" class="label">结构字段隔离保护</text>
+      <text x="88" y="55" class="small mono">tool_calls / call_id / JSON args</text>
+    </g>
+
+    <g transform="translate(36 252)">
+      <circle cx="20" cy="28" r="20" fill="#174839" stroke="#54e0a7" stroke-width="2"/>
+      <text x="20" y="35" text-anchor="middle" class="label">2</text>
+      <text x="54" y="23" class="label">F2 冷热切分与压缩</text>
+      <text x="54" y="45" class="small">热区原样保留，冷历史按阈值增量复压</text>
+    </g>
+
+    <g transform="translate(36 332)">
+      <rect width="372" height="92" rx="8" fill="#102d28" stroke="#54e0a7"/>
+      <g transform="translate(20 21)" fill="#54e0a7"><rect width="13" height="50" rx="2"/><rect x="20" y="12" width="13" height="38" rx="2"/><rect x="40" y="24" width="13" height="26" rx="2"/></g>
+      <text x="98" y="34" class="label">增量复压复用</text>
+      <text x="98" y="60" class="small mono">trigger 3000 · delta 2000 · hot 6</text>
+    </g>
+    <text x="222" y="466" text-anchor="middle" class="small">只有可压缩自然语言进入压缩器</text>
+  </g>
+
+  <path d="M381 376H402" stroke="#47d7ff" stroke-width="4" marker-end="url(#arrowCyan)"/>
+  <path d="M857 376H878" stroke="#54e0a7" stroke-width="4" marker-end="url(#arrowGreen)"/>
+
+  <!-- compact model input -->
+  <g transform="translate(886 134)">
+    <rect width="364" height="486" rx="10" fill="#0a1c2b" stroke="#3f9d77" stroke-width="2"/>
+    <rect width="364" height="48" rx="10" fill="#12392f"/>
+    <rect y="38" width="364" height="10" fill="#12392f"/>
+    <text x="22" y="31" class="panelTitle">紧凑模型输入</text>
+    <text x="340" y="31" text-anchor="end" class="small mono">SENT</text>
+
+    <g transform="translate(24 75)">
+      <rect width="316" height="50" rx="6" fill="#12372f" stroke="#54e0a7"/><text x="18" y="31" class="label">✓ Policy / Schema 约束保留</text>
+      <rect y="62" width="316" height="50" rx="6" fill="#12372f" stroke="#54e0a7"/><text x="18" y="93" class="label">✓ Hot turns 原样保留</text>
+      <rect y="124" width="316" height="50" rx="6" fill="#102f3b" stroke="#47d7ff"/><text x="18" y="155" class="label">↗ result_id 按需取回</text>
+      <rect y="186" width="316" height="50" rx="6" fill="#102f3b" stroke="#47d7ff"/><text x="18" y="217" class="label">↘ Cold history 紧凑表示</text>
+    </g>
+
+    <g transform="translate(24 344)">
+      <text x="0" y="0" class="small mono">10-TASK WITHIN-RUN PROMPT</text>
+      <text x="0" y="49" class="metric">−17.25%</text>
+      <text x="0" y="82" class="label mono">1,179,503 → 976,015</text>
+      <path d="M0 105H316" stroke="#2e5d51" stroke-width="2"/>
+      <text x="0" y="132" class="small">压缩事件可审计 · 结构字段不参与压缩</text>
+    </g>
+  </g>
+
+  <g transform="translate(48 674)">
+    <rect width="356" height="42" rx="21" fill="#102f3b" stroke="#47d7ff"/><text x="178" y="28" text-anchor="middle" class="label">结构保护</text>
+    <rect x="376" width="356" height="42" rx="21" fill="#102f3b" stroke="#47d7ff"/><text x="554" y="28" text-anchor="middle" class="label">冷热分层</text>
+    <rect x="752" width="450" height="42" rx="21" fill="#12372f" stroke="#54e0a7"/><text x="977" y="28" text-anchor="middle" class="label">外置优先 · 压缩随后</text>
+  </g>
+</svg>

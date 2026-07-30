@@ -38,11 +38,13 @@ class _FakeStreamClient:
 
     def __init__(self, chunk_lists):
         self._lists = list(chunk_lists)
+        self.calls = []
         self.chat = types.SimpleNamespace(
             completions=types.SimpleNamespace(create=self._create)
         )
 
     def _create(self, **kw):
+        self.calls.append(kw)
         assert kw.get("stream") is True
         assert kw.get("stream_options") == {"include_usage": True}
         return iter(self._lists.pop(0))
@@ -105,6 +107,27 @@ def test_solve_tool_then_respond_gets_reward_and_ttft():
     assert len(out.ttft_ms_list) == 2
     assert all(t > 0 for t in out.ttft_ms_list)  # TTFT 被采集
     assert any(m.get("role") == "tool" and m.get("content") == "tool ok" for m in out.messages)
+
+
+def test_solve_canonicalizes_consecutive_tool_argument_objects():
+    env = _FakeEnv()
+    client = _FakeStreamClient([
+        _tool_chunks("calculate", '{"expression":"1+1"}{"unit":"decimal"}'),
+        _content_chunks("done"),
+    ])
+
+    out = TauBenchAgent(client, "Qwen3-0.6B").solve(
+        env, task_index=0, max_num_steps=2
+    )
+
+    assert out.reward == 1.0
+    assistant = next(
+        message for message in client.calls[1]["messages"]
+        if message.get("role") == "assistant" and message.get("tool_calls")
+    )
+    assert assistant["tool_calls"][0]["function"]["arguments"] == (
+        '{"expression":"1+1","unit":"decimal"}'
+    )
 
 
 def test_solve_truncates_at_max_steps_without_done():

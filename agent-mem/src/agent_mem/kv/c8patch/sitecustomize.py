@@ -23,7 +23,7 @@ def _apply():
     try:
         import vllm_ascend.patch.worker.patch_gqa_c8 as pg
         from vllm.model_executor.models.qwen2 import Qwen2ForCausalLM
-    except Exception as e:  # noqa: BLE001 — non-vllm context (pytest/calibrate/etc.)
+    except Exception:  # noqa: BLE001 — non-vllm context (pytest/calibrate/etc.)
         return
     fn = Qwen2ForCausalLM.load_weights
     if getattr(fn, "_qwen2_c8_patched", False):
@@ -41,7 +41,6 @@ def _apply():
         file=sys.stderr,
         flush=True,
     )
-
 
 if os.environ.get("QWEN2_C8_PATCH") == "1":
     _apply()

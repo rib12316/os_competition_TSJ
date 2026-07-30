@@ -57,8 +57,8 @@ class NoOpMiddleware(BaseMiddleware):
     name = "noop"
 
 
-# ---- 注册表：名字 → 中间件类（F2/F3 实现后在此注册）----
-# F2 Prompt 压缩已注册；F3 lazy-load 待补 "lazyload"。
+# ---- 注册表：名字 → 中间件类 ----
+# F2 Prompt 压缩与 F3 lazy-load 均在这里注册，由配置按名称启用。
 _REGISTRY: dict[str, type[BaseMiddleware]] = {
     "noop": NoOpMiddleware,
     "compress": CompressMiddleware,

@@ -157,6 +157,8 @@ class AdmissionController:
             self._last_hbm = hbm
             if hbm < 0:  # 读不到 HBM → 放行（受 max_workers 上限约束）
                 return self._current_workers < self.max_workers
+            if self.target_hi > 100:  # admission 关闭哨兵（target_hi 设 >100）→ 永远放行到 max_workers
+                return self._current_workers < self.max_workers
             if hbm > self.target_hi:
                 return False  # HBM 太高，不放
             if hbm < self.target_lo:

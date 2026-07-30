@@ -1,0 +1,213 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 920" font-family="'Microsoft YaHei','SimHei','WenQuanYi Micro Hei',sans-serif">
+  <defs>
+    <linearGradient id="l1" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#1a237e"/><stop offset="100%" stop-color="#283593"/></linearGradient>
+    <linearGradient id="l2" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#37474f"/><stop offset="100%" stop-color="#455a64"/></linearGradient>
+    <linearGradient id="l3" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#0d47a1"/><stop offset="100%" stop-color="#1565c0"/></linearGradient>
+    <linearGradient id="l4" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#004d40"/><stop offset="100%" stop-color="#00695c"/></linearGradient>
+    <linearGradient id="l5" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#4a148c"/><stop offset="100%" stop-color="#6a1b9a"/></linearGradient>
+    <linearGradient id="box1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e8eaf6"/><stop offset="100%" stop-color="#c5cae9"/></linearGradient>
+    <linearGradient id="box2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#eceff1"/><stop offset="100%" stop-color="#cfd8dc"/></linearGradient>
+    <linearGradient id="box3" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e3f2fd"/><stop offset="100%" stop-color="#bbdefb"/></linearGradient>
+    <linearGradient id="box4" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e0f2f1"/><stop offset="100%" stop-color="#b2dfdb"/></linearGradient>
+    <linearGradient id="box5" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f3e5f5"/><stop offset="100%" stop-color="#e1bee7"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.15"/></filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="920" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="550" y="36" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a237e">面向智能体的内存管理系统 — 总体架构</text>
+
+  <!-- ===== Layer 5: 展示交互层 ===== -->
+  <rect x="30" y="56" width="1040" height="130" rx="8" fill="url(#box5)" stroke="#7b1fa2" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="30" y="56" width="1040" height="30" rx="8" fill="url(#l5)"/>
+  <rect x="30" y="76" width="1040" height="10" fill="url(#l5)"/>
+  <text x="550" y="76" text-anchor="middle" font-size="13" font-weight="bold" fill="white">第五层 — 展示交互层</text>
+
+  <rect x="55" y="96" width="200" height="40" rx="5" fill="white" stroke="#7b1fa2" stroke-width="1"/>
+  <text x="155" y="113" text-anchor="middle" font-size="10" font-weight="bold" fill="#4a148c">Gradio 前端 (7 Tab)</text>
+  <text x="155" y="127" text-anchor="middle" font-size="8" fill="#666">Chat / τ-bench / F5 并发演示</text>
+
+  <rect x="275" y="96" width="170" height="40" rx="5" fill="white" stroke="#7b1fa2" stroke-width="1"/>
+  <text x="360" y="113" text-anchor="middle" font-size="10" font-weight="bold" fill="#4a148c">EngineManager</text>
+  <text x="360" y="127" text-anchor="middle" font-size="8" fill="#666">引擎启停 / 配置热切换</text>
+
+  <rect x="465" y="96" width="180" height="40" rx="5" fill="white" stroke="#7b1fa2" stroke-width="1"/>
+  <text x="555" y="113" text-anchor="middle" font-size="10" font-weight="bold" fill="#4a148c">LiveMonitor</text>
+  <text x="555" y="127" text-anchor="middle" font-size="8" fill="#666">HBM / KV hit / TTFT / QPS</text>
+
+  <rect x="665" y="96" width="190" height="40" rx="5" fill="white" stroke="#7b1fa2" stroke-width="1"/>
+  <text x="760" y="113" text-anchor="middle" font-size="10" font-weight="bold" fill="#4a148c">优化效果对比</text>
+  <text x="760" y="127" text-anchor="middle" font-size="8" fill="#666">Before/After 图表</text>
+
+  <rect x="875" y="96" width="170" height="40" rx="5" fill="white" stroke="#7b1fa2" stroke-width="1"/>
+  <text x="960" y="113" text-anchor="middle" font-size="10" font-weight="bold" fill="#4a148c">架构总览</text>
+  <text x="960" y="127" text-anchor="middle" font-size="8" fill="#666">特征→机制映射</text>
+
+  <!-- Arrow L5 → L4 -->
+  <text x="550" y="152" text-anchor="middle" font-size="8" fill="#999">metrics.json / f5_driver_snapshot.json / engine logs</text>
+  <path d="M550,158 L550,172" stroke="#999" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+
+  <!-- ===== Layer 4: 评测调度层 ===== -->
+  <rect x="30" y="178" width="1040" height="140" rx="8" fill="url(#box4)" stroke="#00695c" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="30" y="178" width="1040" height="30" rx="8" fill="url(#l4)"/>
+  <rect x="30" y="198" width="1040" height="10" fill="url(#l4)"/>
+  <text x="550" y="198" text-anchor="middle" font-size="13" font-weight="bold" fill="white">第四层 — 评测调度层</text>
+
+  <!-- Benchmark subsystem -->
+  <rect x="50" y="218" width="490" height="90" rx="5" fill="white" stroke="#b2dfdb" stroke-width="1"/>
+  <text x="295" y="235" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#004d40">Benchmark 评测框架</text>
+
+  <rect x="62" y="246" width="145" height="28" rx="3" fill="#e0f2f1" stroke="#80cbc4" stroke-width="0.8"/>
+  <text x="134" y="264" text-anchor="middle" font-size="8.5" fill="#004d40">Runner Protocol</text>
+
+  <rect x="217" y="246" width="145" height="28" rx="3" fill="#e0f2f1" stroke="#80cbc4" stroke-width="0.8"/>
+  <text x="289" y="264" text-anchor="middle" font-size="8.5" fill="#004d40">SuiteAdapter (τ-bench/LongBench)</text>
+
+  <rect x="372" y="246" width="155" height="28" rx="3" fill="#e0f2f1" stroke="#80cbc4" stroke-width="0.8"/>
+  <text x="449" y="264" text-anchor="middle" font-size="8.5" fill="#004d40">三档对照 + 门槛判定</text>
+
+  <text x="295" y="300" text-anchor="middle" font-size="8" fill="#666">6 核心指标: e2e P50/P95 · QPS · HBM peak · KV hit · success · TTFT</text>
+
+  <!-- Scheduler subsystem -->
+  <rect x="560" y="218" width="490" height="90" rx="5" fill="white" stroke="#b2dfdb" stroke-width="1"/>
+  <text x="805" y="235" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#004d40">并发会话调度系统</text>
+
+  <rect x="572" y="246" width="110" height="28" rx="3" fill="#e0f2f1" stroke="#80cbc4" stroke-width="0.8"/>
+  <text x="627" y="264" text-anchor="middle" font-size="7.5" fill="#004d40">SessionManager</text>
+
+  <rect x="690" y="246" width="120" height="28" rx="3" fill="#e0f2f1" stroke="#80cbc4" stroke-width="0.8"/>
+  <text x="750" y="264" text-anchor="middle" font-size="7.5" fill="#004d40">AdmissionController</text>
+
+  <rect x="818" y="246" width="115" height="28" rx="3" fill="#e0f2f1" stroke="#80cbc4" stroke-width="0.8"/>
+  <text x="875" y="264" text-anchor="middle" font-size="7.5" fill="#004d40">PriorityEviction</text>
+
+  <rect x="940" y="246" width="100" height="28" rx="3" fill="#e0f2f1" stroke="#80cbc4" stroke-width="0.8"/>
+  <text x="990" y="264" text-anchor="middle" font-size="7.5" fill="#004d40">EvictionTracker</text>
+
+  <text x="805" y="298" text-anchor="middle" font-size="8" fill="#666">HBM 滞回准入(70%/85%) · idle→priority=100 · sweep 线程 · 回调注入</text>
+
+  <!-- Arrow L4 → L3 -->
+  <text x="550" y="324" text-anchor="middle" font-size="8" fill="#999">OpenAI-compatible API (/v1/chat/completions) · /metrics</text>
+  <path d="M550,330 L550,344" stroke="#999" stroke-width="1.5"/>
+
+  <!-- ===== Layer 3: Agent推理层 ===== -->
+  <rect x="30" y="350" width="1040" height="135" rx="8" fill="url(#box3)" stroke="#1565c0" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="30" y="350" width="1040" height="30" rx="8" fill="url(#l3)"/>
+  <rect x="30" y="370" width="1040" height="10" fill="url(#l3)"/>
+  <text x="550" y="370" text-anchor="middle" font-size="13" font-weight="bold" fill="white">第三层 — Agent 推理层</text>
+
+  <!-- ReAct Loop -->
+  <rect x="50" y="390" width="370" height="45" rx="5" fill="white" stroke="#90caf9" stroke-width="1"/>
+  <text x="235" y="408" text-anchor="middle" font-size="10" font-weight="bold" fill="#0d47a1">自写 ReAct 循环</text>
+  <text x="235" y="424" text-anchor="middle" font-size="8" fill="#666">上下文构造 → 流式LLM调用(TTFT) → 解析 → 工具执行 → 历史更新</text>
+
+  <!-- MiddlewareStack -->
+  <rect x="440" y="390" width="300" height="45" rx="5" fill="white" stroke="#90caf9" stroke-width="1"/>
+  <text x="590" y="408" text-anchor="middle" font-size="10" font-weight="bold" fill="#0d47a1">MiddlewareStack</text>
+  <text x="590" y="424" text-anchor="middle" font-size="8" fill="#666">transform_request · intercept_tool_result · after_model_call</text>
+
+  <!-- tools -->
+  <rect x="760" y="390" width="120" height="45" rx="5" fill="white" stroke="#90caf9" stroke-width="1"/>
+  <text x="820" y="408" text-anchor="middle" font-size="10" font-weight="bold" fill="#0d47a1">工具集</text>
+  <text x="820" y="424" text-anchor="middle" font-size="8" fill="#666">τ-bench / 业务工具</text>
+
+  <!-- F2 & F3 -->
+  <rect x="50" y="445" width="240" height="30" rx="4" fill="#bbdefb" stroke="#64b5f6" stroke-width="0.8"/>
+  <text x="170" y="464" text-anchor="middle" font-size="9" font-weight="bold" fill="#0d47a1">F2 上下文压缩</text>
+  <text x="328" y="464" text-anchor="middle" font-size="7.5" fill="#555">静态精简 + LLMLingua-2 动态 BERT · tool-aware 字段保护 · 子进程 worker 池</text>
+
+  <rect x="570" y="445" width="240" height="30" rx="4" fill="#bbdefb" stroke="#64b5f6" stroke-width="0.8"/>
+  <text x="690" y="464" text-anchor="middle" font-size="9" font-weight="bold" fill="#0d47a1">F3 工具数据外置</text>
+  <text x="850" y="464" text-anchor="middle" font-size="7.5" fill="#555">SQLite ArtifactStore · JSON Pointer · 字段搜索 · 768-token 上限</text>
+
+  <!-- Arrow L3 → L2 -->
+  <text x="550" y="491" text-anchor="middle" font-size="8" fill="#999">OpenAI-compatible chat completions API</text>
+  <path d="M550,497 L550,511" stroke="#999" stroke-width="1.5"/>
+
+  <!-- ===== Layer 2: 推理引擎层 ===== -->
+  <rect x="30" y="517" width="1040" height="150" rx="8" fill="url(#box2)" stroke="#455a64" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="30" y="517" width="1040" height="30" rx="8" fill="url(#l2)"/>
+  <rect x="30" y="537" width="1040" height="10" fill="url(#l2)"/>
+  <text x="550" y="537" text-anchor="middle" font-size="13" font-weight="bold" fill="white">第二层 — 推理引擎层</text>
+
+  <!-- vLLM core -->
+  <rect x="50" y="557" width="300" height="48" rx="5" fill="white" stroke="#90a4ae" stroke-width="1"/>
+  <text x="200" y="575" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#37474f">vLLM V1 (APC 自动前缀缓存)</text>
+  <text x="200" y="594" text-anchor="middle" font-size="8" fill="#666">PagedAttention · block 级 LRU · 隐式 CoW</text>
+
+  <!-- vllm-ascend -->
+  <rect x="370" y="557" width="250" height="48" rx="5" fill="white" stroke="#90a4ae" stroke-width="1"/>
+  <text x="495" y="575" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#37474f">vllm-ascend 0.22.1rc1</text>
+  <text x="495" y="594" text-anchor="middle" font-size="8" fill="#666">Ascend NPU 适配 · KV connector 框架</text>
+
+  <!-- Model -->
+  <rect x="640" y="557" width="200" height="48" rx="5" fill="white" stroke="#90a4ae" stroke-width="1"/>
+  <text x="740" y="575" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#37474f">Qwen2.5-7B-Instruct</text>
+  <text x="740" y="594" text-anchor="middle" font-size="8" fill="#666">BF16 · 28L · 4 KV heads · GQA</text>
+
+  <!-- Optimization access points -->
+  <rect x="860" y="557" width="190" height="48" rx="5" fill="white" stroke="#90a4ae" stroke-width="1"/>
+  <text x="955" y="573" text-anchor="middle" font-size="9" font-weight="bold" fill="#37474f">/metrics 端点</text>
+  <text x="955" y="592" text-anchor="middle" font-size="8" fill="#666">KV hit · TTFT · TPOT · E2E</text>
+
+  <!-- Three optimization boxes -->
+  <rect x="50" y="615" width="300" height="42" rx="4" fill="#cfd8dc" stroke="#90a4ae" stroke-width="0.8"/>
+  <text x="200" y="632" text-anchor="middle" font-size="9" font-weight="bold" fill="#263238">F1: KV 量化 C8</text>
+  <text x="200" y="649" text-anchor="middle" font-size="7.5" fill="#555">--quantization ascend  ·  post-RoPE 自校准  ·  FULL_DECODE_ONLY</text>
+
+  <rect x="370" y="615" width="250" height="42" rx="4" fill="#cfd8dc" stroke="#90a4ae" stroke-width="0.8"/>
+  <text x="495" y="632" text-anchor="middle" font-size="9" font-weight="bold" fill="#263238">F4: 分层存储</text>
+  <text x="495" y="649" text-anchor="middle" font-size="7.5" fill="#555">LMCacheAscend  ·  SimpleCPUOffload  ·  lazy_offload</text>
+
+  <rect x="640" y="615" width="410" height="42" rx="4" fill="#cfd8dc" stroke="#90a4ae" stroke-width="0.8"/>
+  <text x="845" y="632" text-anchor="middle" font-size="9" font-weight="bold" fill="#263238">F5 引擎支撑: --scheduling-policy priority</text>
+  <text x="845" y="649" text-anchor="middle" font-size="7.5" fill="#555">PriorityRequestQueue · priority 透传 · extra_body</text>
+
+  <!-- Arrow L2 → L1 -->
+  <text x="550" y="672" text-anchor="middle" font-size="8" fill="#999">CANN 9.0.0 · torch_npu 2.10.0 · /dev/davinci15</text>
+  <path d="M550,678 L550,692" stroke="#999" stroke-width="1.5"/>
+
+  <!-- ===== Layer 1: 国产化部署层 ===== -->
+  <rect x="30" y="698" width="1040" height="120" rx="8" fill="url(#box1)" stroke="#283593" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="30" y="698" width="1040" height="30" rx="8" fill="url(#l1)"/>
+  <rect x="30" y="718" width="1040" height="10" fill="url(#l1)"/>
+  <text x="550" y="718" text-anchor="middle" font-size="13" font-weight="bold" fill="white">第一层 — 国产化部署层</text>
+
+  <rect x="55" y="738" width="180" height="65" rx="5" fill="white" stroke="#9fa8da" stroke-width="1"/>
+  <text x="145" y="758" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a237e">openEuler 24.03</text>
+  <text x="145" y="776" text-anchor="middle" font-size="8" fill="#666">国产开源操作系统</text>
+  <text x="145" y="792" text-anchor="middle" font-size="8" fill="#666">CANN 容器镜像基底</text>
+
+  <rect x="255" y="738" width="200" height="65" rx="5" fill="white" stroke="#9fa8da" stroke-width="1"/>
+  <text x="355" y="758" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a237e">Ascend 910B2C NPU</text>
+  <text x="355" y="776" text-anchor="middle" font-size="8" fill="#666">达芬奇架构 · 64 GB HBM</text>
+  <text x="355" y="792" text-anchor="middle" font-size="8" fill="#666">BF16 精度 · 单卡推理</text>
+
+  <rect x="475" y="738" width="180" height="65" rx="5" fill="white" stroke="#9fa8da" stroke-width="1"/>
+  <text x="565" y="758" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a237e">CANN 9.0.0</text>
+  <text x="565" y="776" text-anchor="middle" font-size="8" fill="#666">昇腾AI软件栈</text>
+  <text x="565" y="792" text-anchor="middle" font-size="8" fill="#666">910b ops · 9390 kernel</text>
+
+  <rect x="675" y="738" width="180" height="65" rx="5" fill="white" stroke="#9fa8da" stroke-width="1"/>
+  <text x="765" y="758" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a237e">torch_npu 2.10.0</text>
+  <text x="765" y="776" text-anchor="middle" font-size="8" fill="#666">Ascend NPU 适配层</text>
+  <text x="765" y="792" text-anchor="middle" font-size="8" fill="#666">triton-ascend 3.2.1</text>
+
+  <rect x="875" y="738" width="170" height="65" rx="5" fill="white" stroke="#9fa8da" stroke-width="1"/>
+  <text x="960" y="758" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a237e">Docker Compose</text>
+  <text x="960" y="776" text-anchor="middle" font-size="8" fill="#666">vLLM serve 容器</text>
+  <text x="960" y="792" text-anchor="middle" font-size="8" fill="#666">Gradio 前端容器</text>
+
+  <!-- Right side: data flow annotations -->
+  <rect x="440" y="830" width="220" height="22" rx="10" fill="#e8eaf6" stroke="#9fa8da" stroke-width="0.8"/>
+  <text x="550" y="845" text-anchor="middle" font-size="8.5" fill="#283593">↑ OpenAI-compatible API / ↓ /metrics</text>
+
+  <!-- Config note -->
+  <rect x="160" y="830" width="250" height="22" rx="10" fill="#e8eaf6" stroke="#9fa8da" stroke-width="0.8"/>
+  <text x="285" y="845" text-anchor="middle" font-size="8.5" fill="#283593">20 yaml 配置预设 · 配置驱动 · 可复现</text>
+
+  <rect x="720" y="830" width="220" height="22" rx="10" fill="#e8eaf6" stroke="#9fa8da" stroke-width="0.8"/>
+  <text x="830" y="845" text-anchor="middle" font-size="8.5" fill="#283593">245 tests · ruff 全绿 · pyproject.toml</text>
+</svg>

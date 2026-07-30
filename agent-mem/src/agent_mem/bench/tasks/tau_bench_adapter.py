@@ -18,14 +18,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from agent_mem.bench.stats import median
+from agent_mem.bench.tasks.types import TaskInfo  # noqa: F401
 
 SUPPORTED_ENVS = ("retail", "airline")
 SUPPORTED_SPLITS = ("train", "test", "dev")
 
 
-# TaskInfo 已抽到 bench/tasks/types.py（suite-agnostic：tau/longbench 共享 lean DTO）。
-# 此处 re-export 保持向后兼容（tests / __init__ docstring 仍可从本模块导入 TaskInfo）。
-from agent_mem.bench.tasks.types import TaskInfo  # noqa: F401
+# TaskInfo 在本模块 re-export，保持 tests 和旧调用方兼容。
 
 
 @dataclass(frozen=True)
@@ -39,6 +38,7 @@ class TaskRunResult:
     n_steps: int
     error: str | None
     ttft_ms: float = 0.0  # 该任务各步首 token 时间的中位数（骨架 0）
+    prompt_tokens: int = 0  # 该任务所有模型请求的 prompt token 累计值
 
 
 def is_successful(reward: float) -> bool:

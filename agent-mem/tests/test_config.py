@@ -68,7 +68,7 @@ def test_load_f1_int8():
 
 def test_c8_enabled_requires_ascend_backend():
     # c8.enabled + backend=vllm 应校验失败
-    from agent_mem.config import AppConfig, validate, ConfigError
+    from agent_mem.config import AppConfig, ConfigError, validate
     bad = AppConfig(
         engine=EngineConfig(backend="vllm", model="m"),
         benchmark=BenchmarkConfig(), metrics=MetricsConfig(), config_name="x",

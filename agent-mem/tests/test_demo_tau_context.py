@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent_mem.context_telemetry import ContextEventBuffer
 from agent_mem.demo.chat_app import (
+    _CONTEXT_UI_MODES,
     _context_workload,
     _longbench_context_stack,
     _tau_context_stack,
@@ -24,6 +25,14 @@ def test_tau_context_modes_build_expected_middleware_order():
     for mode, names in expected.items():
         stack = _tau_context_stack(mode, "Qwen2.5-7B-Instruct")
         assert stack.names == names
+
+
+def test_combined_mode_remains_backend_only():
+    assert _CONTEXT_UI_MODES == ("baseline", "F2", "F3")
+    assert _tau_context_stack("F2+F3", "Qwen2.5-7B-Instruct").names == [
+        "lazyload",
+        "compress",
+    ]
 
 
 def test_context_mode_routes_to_workload_that_exercises_feature():

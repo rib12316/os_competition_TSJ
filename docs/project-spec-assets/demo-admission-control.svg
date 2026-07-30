@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1298" height="744" viewBox="0 0 1298 744" role="img" aria-labelledby="title desc">
+  <title id="title">面向高并发请求的准入控制</title>
+  <desc id="desc">展示并发会话在进入推理引擎前经过KV池压力感知、70%到85%滞回门限和队列背压。</desc>
+  <defs>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M44 0H0V44" fill="none" stroke="#17364d" stroke-width="1" opacity="0.46"/>
+    </pattern>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrowCyan" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#47d7ff"/></marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#54e0a7"/></marker>
+    <marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#ffae52"/></marker>
+    <style>
+      text{font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif;letter-spacing:0}
+      .eyebrow{font-size:20px;font-weight:700;fill:#47d7ff}.title{font-size:42px;font-weight:800;fill:#f4fbff}.sub{font-size:18px;fill:#9db7c9}
+      .panelTitle{font-size:20px;font-weight:750;fill:#dff7ff}.label{font-size:17px;font-weight:650;fill:#d8e8f2}.small{font-size:14px;fill:#8faabd}
+      .metric{font-size:32px;font-weight:800;fill:#54e0a7}.mono{font-family:"JetBrains Mono","Noto Sans Mono",monospace}
+    </style>
+  </defs>
+
+  <rect width="1298" height="744" fill="#071521"/><rect width="1298" height="744" fill="url(#grid)"/>
+  <path d="M0 104H1298M0 650H1298" stroke="#25516c" stroke-width="2"/>
+  <path d="M18 28H106V34H24V112H18ZM1280 28H1192V34H1274V112H1280ZM18 716H106V710H24V632H18ZM1280 716H1192V710H1274V632H1280Z" fill="#47d7ff" opacity="0.85"/>
+
+  <g transform="translate(48 26)">
+    <rect width="154" height="35" rx="4" fill="#0f3c55" stroke="#47d7ff"/>
+    <text x="77" y="24" text-anchor="middle" class="eyebrow" font-size="16">AGENTMEM · 02</text>
+    <text x="0" y="76" class="title">面向高并发请求的 KV-pool 准入控制</text>
+    <text x="1200" y="74" text-anchor="end" class="sub mono">ADMISSION / PRESSURE</text>
+  </g>
+
+  <!-- incoming sessions -->
+  <g transform="translate(48 134)">
+    <rect width="348" height="486" rx="10" fill="#0a1c2b" stroke="#2d6687" stroke-width="2"/>
+    <rect width="348" height="48" rx="10" fill="#10324a"/><rect y="38" width="348" height="10" fill="#10324a"/>
+    <text x="22" y="31" class="panelTitle">并发 Session 请求</text><text x="324" y="31" text-anchor="end" class="small mono">CONC = 6</text>
+
+    <g transform="translate(22 73)">
+      <g transform="translate(0 0)"><rect width="304" height="48" rx="7" fill="#102f45" stroke="#47d7ff"/><circle cx="24" cy="24" r="10" fill="#47d7ff"/><text x="48" y="21" class="label">session-01</text><text x="278" y="29" text-anchor="end" class="small mono">8.4K</text></g>
+      <g transform="translate(0 58)"><rect width="304" height="48" rx="7" fill="#102f45" stroke="#47d7ff"/><circle cx="24" cy="24" r="10" fill="#47d7ff"/><text x="48" y="21" class="label">session-02</text><text x="278" y="29" text-anchor="end" class="small mono">12.1K</text></g>
+      <g transform="translate(0 116)"><rect width="304" height="48" rx="7" fill="#102f45" stroke="#47d7ff"/><circle cx="24" cy="24" r="10" fill="#47d7ff"/><text x="48" y="21" class="label">session-03</text><text x="278" y="29" text-anchor="end" class="small mono">9.8K</text></g>
+      <g transform="translate(0 174)"><rect width="304" height="48" rx="7" fill="#2f2a24" stroke="#ffae52"/><circle cx="24" cy="24" r="10" fill="#ffae52"/><text x="48" y="21" class="label">session-04</text><text x="278" y="29" text-anchor="end" class="small mono">WAIT</text></g>
+      <g transform="translate(0 232)"><rect width="304" height="48" rx="7" fill="#2f2a24" stroke="#ffae52"/><circle cx="24" cy="24" r="10" fill="#ffae52"/><text x="48" y="21" class="label">session-05</text><text x="278" y="29" text-anchor="end" class="small mono">WAIT</text></g>
+      <g transform="translate(0 290)"><rect width="304" height="48" rx="7" fill="#2f2a24" stroke="#ffae52"/><circle cx="24" cy="24" r="10" fill="#ffae52"/><text x="48" y="21" class="label">session-06</text><text x="278" y="29" text-anchor="end" class="small mono">WAIT</text></g>
+    </g>
+    <text x="22" y="455" class="small">每次模型请求都重新经过准入边界</text>
+    <text x="22" y="477" class="small mono">NOT ONLY AT SESSION START</text>
+  </g>
+
+  <!-- gate -->
+  <g transform="translate(430 134)">
+    <rect width="360" height="486" rx="10" fill="#0a1c2b" stroke="#2d6687" stroke-width="2"/>
+    <rect width="360" height="48" rx="10" fill="#10324a"/><rect y="38" width="360" height="10" fill="#10324a"/>
+    <text x="22" y="31" class="panelTitle">自适应准入门</text><text x="336" y="31" text-anchor="end" class="small mono">F5</text>
+
+    <g transform="translate(46 76)">
+      <circle cx="134" cy="106" r="94" fill="#0b2333" stroke="#244b62" stroke-width="18"/>
+      <path d="M77 181A94 94 0 0 1 50 106" fill="none" stroke="#54e0a7" stroke-width="18" stroke-linecap="round"/>
+      <path d="M50 106A94 94 0 0 1 119 13" fill="none" stroke="#47d7ff" stroke-width="18" stroke-linecap="round"/>
+      <path d="M119 13A94 94 0 0 1 211 72" fill="none" stroke="#ffae52" stroke-width="18" stroke-linecap="round"/>
+      <path d="M211 72A94 94 0 0 1 218 106" fill="none" stroke="#ff6878" stroke-width="18" stroke-linecap="round"/>
+      <line x1="134" y1="106" x2="198" y2="68" stroke="#f7fbff" stroke-width="5" stroke-linecap="round"/>
+      <circle cx="134" cy="106" r="10" fill="#f7fbff"/>
+      <text x="134" y="101" text-anchor="middle" class="small mono">KV POOL</text>
+      <text x="134" y="137" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="34" font-weight="800" fill="#ffae52">82%</text>
+      <text x="43" y="224" class="small mono" fill="#54e0a7">70% RECOVER</text>
+      <text x="225" y="224" text-anchor="end" class="small mono" fill="#ff6878">85% HOLD</text>
+    </g>
+
+    <g transform="translate(28 330)">
+      <rect width="304" height="58" rx="8" fill="#2f2a24" stroke="#ffae52"/>
+      <path d="M24 17v24M37 17v24" stroke="#ffae52" stroke-width="5"/>
+      <text x="64" y="26" class="label">滞回区间：维持当前上限</text><text x="64" y="47" class="small">防止门限附近频繁开关</text>
+      <rect y="72" width="304" height="58" rx="8" fill="#12372f" stroke="#54e0a7"/>
+      <path d="M20 29l12 12 22-28" transform="translate(0 72)" fill="none" stroke="#54e0a7" stroke-width="5"/>
+      <text x="64" y="98" class="label">压力下降：恢复放行</text><text x="64" y="119" class="small">会话状态与 priority 协同</text>
+    </g>
+  </g>
+
+  <path d="M399 375H421" stroke="#47d7ff" stroke-width="4" marker-end="url(#arrowCyan)"/>
+  <path d="M793 375H815" stroke="#54e0a7" stroke-width="4" marker-end="url(#arrowGreen)"/>
+
+  <!-- KV pool and outcome -->
+  <g transform="translate(824 134)">
+    <rect width="426" height="486" rx="10" fill="#0a1c2b" stroke="#3f9d77" stroke-width="2"/>
+    <rect width="426" height="48" rx="10" fill="#12392f"/><rect y="38" width="426" height="10" fill="#12392f"/>
+    <text x="22" y="31" class="panelTitle">推理引擎 KV Pool</text><text x="402" y="31" text-anchor="end" class="small mono">vLLM / NPU</text>
+
+    <g transform="translate(24 76)">
+      <text x="0" y="0" class="small mono">ALLOCATED BLOCKS</text>
+      <g transform="translate(0 18)">
+        <g fill="#1b664f" stroke="#54e0a7"><rect width="34" height="58" rx="4"/><rect x="40" width="34" height="58" rx="4"/><rect x="80" width="34" height="58" rx="4"/><rect x="120" width="34" height="58" rx="4"/><rect x="160" width="34" height="58" rx="4"/><rect x="200" width="34" height="58" rx="4"/><rect x="240" width="34" height="58" rx="4"/></g>
+        <rect x="280" width="34" height="58" rx="4" fill="#855c26" stroke="#ffae52"/><rect x="320" width="34" height="58" rx="4" fill="#182b38" stroke="#35576d"/><rect x="360" width="18" height="58" rx="4" fill="#182b38" stroke="#35576d"/>
+      </g>
+      <path d="M0 95H378" stroke="#31586e" stroke-width="2"/>
+      <text x="0" y="123" class="small">准入控制在池满前形成应用层背压</text>
+    </g>
+
+    <g transform="translate(24 240)">
+      <rect width="178" height="91" rx="8" fill="#102f3b" stroke="#47d7ff"/><text x="16" y="26" class="small mono">PREEMPTIONS</text><text x="16" y="67" class="metric">7 → 3</text>
+      <rect x="200" width="178" height="91" rx="8" fill="#102f3b" stroke="#47d7ff"/><text x="216" y="26" class="small mono">KV HIT</text><text x="216" y="67" class="metric">+8.1pp</text>
+      <rect y="105" width="178" height="91" rx="8" fill="#102f3b" stroke="#47d7ff"/><text x="16" y="131" class="small mono">E2E P50</text><text x="16" y="172" class="metric">−39.6%</text>
+      <rect x="200" y="105" width="178" height="91" rx="8" fill="#102f3b" stroke="#47d7ff"/><text x="216" y="131" class="small mono">QPS</text><text x="216" y="172" class="metric">+25.1%</text>
+    </g>
+    <text x="24" y="463" class="small">10 tasks · conc 6 · runs 1 · 减少而非消除抢占</text>
+  </g>
+
+  <g transform="translate(48 674)">
+    <rect width="344" height="42" rx="21" fill="#102f3b" stroke="#47d7ff"/><text x="172" y="28" text-anchor="middle" class="label">逐请求压力检测</text>
+    <rect x="364" width="344" height="42" rx="21" fill="#2f2a24" stroke="#ffae52"/><text x="536" y="28" text-anchor="middle" class="label">70% / 85% 滞回</text>
+    <rect x="728" width="474" height="42" rx="21" fill="#12372f" stroke="#54e0a7"/><text x="965" y="28" text-anchor="middle" class="label">先防溢出，再减少抢占重算</text>
+  </g>
+</svg>

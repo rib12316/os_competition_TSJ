@@ -144,11 +144,58 @@ F3 原工具结果到短引用的 diff 保持原算法，没有随 F2 改动。
 
 - F2：显示 τ-bench 参数和 F2 参数；
 - F3：显示 LongBench 参数，隐藏 τ-bench/F2 参数；
-- F2+F3：显示 LongBench 和 F2 参数；
 - baseline：显示“baseline 对照场景”选择。
+- F2+F3：后端 preset / workload 路由 / 测试仍保留，但当前前端不暴露按钮。
 
 统一 Gradio API 为 `context_task`，契约是 12 输入、7 输出。已经通过 API 真实提交 F3，确认实际进入
 LongBench，middleware 为 `lazyload`，不是只做了前端隐藏。
+
+### 2.6 本次交接前的前端瘦身与样式调整
+
+在 `agent-mem/src/agent_mem/demo/chat_app.py` 上继续做了若干 F2/F3 前端小调整，只改展示与控件组织：
+
+1. **上下文优化参数分组。**
+   - `上下文模式`、`F2 压缩方法`、`F2 演示正文保留率` 等控件已放入带边框的 `参数调整` 区域。
+   - 原 `F2 演示压缩阈值（仅当前前端任务；正式配置仍为 8000）` 与 `F2 演示重压新增量` 合并为一个
+     `压缩阈值` 输入，默认 `2000`。
+   - Gradio `context_task` 仍保持 12 输入、7 输出；同一个 `压缩阈值` 组件在输入列表中复用两次，分别传给
+     `trigger_tokens` 与 `recompress_delta_tokens`，因此两个数始终相同。
+   - 该前端演示输入只影响当前任务覆盖；正式 F2/F3 YAML 的 `8000/4000` 安全基线没有修改。
+
+2. **上下文优化 Agent 对话样式。**
+   - `上下文优化Agent对话` 外层增加边框。
+   - 对话区字体略缩小。
+   - 仅对上下文优化 Chatbot 添加气泡颜色：user 为浅绿色，agent/assistant 为白色；自由对话和 F5 对话不受影响。
+
+3. **页面顶部清理。**
+   - 顶部只保留 `agent-mem · KV/显存优化对比演示` 标题。
+   - 删除了首屏长说明：
+     `左：自由对话 / τ-bench 任务 / 📊 并发 benchmark ... 逐步累加成 before/after`。
+   - `🏗 架构总览` 暂设为不可见，不再占首屏。
+   - `🛠 引擎控制` 已恢复可见且默认展开；保留引擎功能开关、启动/停止按钮、显存上限和 `max_model_len`
+     参数。只删除了其解释性说明文字，没有删除控件。
+
+4. **右侧实时监控浮动。**
+   - 纯 CSS `position: sticky` 在 Gradio 布局中实测不稳定，已改为滚动触发的 viewport dock。
+   - 右侧 Column 使用 `live-monitor-column` 作为定位锚点；监控 Group 保留 `live-monitor-sticky` class。
+   - 页面滚过监控区起点后，JavaScript 按右栏实时坐标和宽度增加 `is-docked`，切换为
+     `position: fixed; top: 12px`；滚回顶部自动恢复普通布局。
+   - 小于 900px 的窄屏始终使用普通流式布局，避免固定面板覆盖正文。
+   - Playwright 实测桌面滚动后 Group 顶部坐标稳定为 12px、position 为 fixed；700px 窄屏保持 static。
+   - 多段彩色分隔条已移除；恢复 Plot 的“实时监控（窗口=10s）”原生标签，并改为与监控图等宽的正常流标题栏，
+     标签下方保留间距，不再遮挡第一排子图；10 秒窗口和刷新逻辑不变。
+   - 修复左栏较短时右栏停靠导致页面高度塌缩、滚动位置回弹的问题：停靠期间右侧 Column 保留监控原高度占位。
+   - 停靠态禁止 Gradio 内部 flex 块收缩，使右栏产生真实内部滚动范围；监控定时刷新后会恢复用户的右栏滚动位置。
+
+5. **可见性/语法修复。**
+   - 修复过一次 `chat_app.py` 中 F5 按钮区域 `with gr.Row()` 下的缩进错误；这是为了恢复整个 demo
+     构造和 7860 前端启动，不改变 F2/F3 逻辑。
+   - 运行实例 `/config` 已确认：`🛠 引擎控制`、`引擎功能（多选组合）`、`▶ 启动引擎`、`⏹ 停止`、
+     `显存上限`、`max_model_len` 均可见。
+
+6. **页面继续精简。**
+   - `📊 统一 Benchmark` tab、对应后台 `run_study` 句柄和 `unified_bench` Gradio API 已从 demo 移除。
+   - `🧪 高并发·F5` 保留运行参数、开始/停止、结果表和代表性会话；顶部场景背景及“两层交付”说明已移除。
 
 ## 3. 提交与回退点
 
@@ -190,7 +237,7 @@ HEAD:   本交接文档提交（开始新会话时以 git log 为准）
 F2/F3 implementation: c3c8141
 7860:   HTTP 200
 7861:   HTTP 200
-8000:   offline
+8000:   offline / no listener
 ```
 
 7860 已运行在持久 tmux 会话：
@@ -226,13 +273,23 @@ ssh -N -L 17860:127.0.0.1:7860 <user>@<server>
 
 ## 5. 当前验证基线
 
-2026-07-28 在当前工作树运行：
+2026-07-28 在当前工作树运行过两轮全量测试：
 
 ```text
 pytest: 341 passed, 6 warnings
+pytest: 344 passed, 8 warnings
 ```
 
-warnings 为 Gradio 6 迁移相关 deprecation。
+最新一次命令使用去代理环境：
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
+    -u http_proxy -u https_proxy -u all_proxy -u no_proxy \
+    PYTHONPATH=agent-mem/src \
+    /data/os_competition_TSJ/.venv/bin/python -m pytest -q agent-mem/tests
+```
+
+warnings 主要为 Gradio 6 迁移相关 deprecation，另有 litellm/importlib-resources deprecation。
 
 关键真实 smoke：
 
@@ -280,7 +337,8 @@ F2/F3 新修改，不能直接 `git add` 整个文件；应检查 diff，并按�
 2. **F2/F3 自动 workload 是演示路由，不是算法限制。** 两个 middleware 都可运行在其他 workload；路由只是选择
    当前最稳定、最容易触发的展示场景。
 3. **baseline 必须可选择两类对照。** 不要把 baseline 永久固定为 τ-bench，否则无法做 F3 同 workload 对照。
-4. **F2+F3 当前路由 LongBench。** 这是为了稳定触发 F3；组合顺序必须保持 `[lazyload, compress]`。
+4. **F2+F3 后端仍保留但当前前端隐藏。** 如后续重新暴露，建议继续路由 LongBench 以稳定触发 F3；
+   组合顺序必须保持 `[lazyload, compress]`。
 5. **不要恢复右侧重复正文。** 用户明确要求 after 面板只保留指标、元信息和 diff。
 6. **F2 相同短语必须保持无底色。** 特别是 `The order details ... following items:` 回归样例。
 7. **浏览器截图验收尚缺。** 环境中此前没有 Playwright/Chromium；目前主要通过 Gradio config、API 和单测验证。
@@ -328,13 +386,18 @@ F5、引擎、校准和技术报告改动，尤其注意 chat_app.py 与 test_de
 当前页面已经完成：
 - 一个“上下文优化任务”tab；
 - F2 自动路由 τ-bench；
-- F3/F2+F3 自动路由 LongBench；
+- F3 自动路由 LongBench；
 - baseline 可选 F2/τ-bench 或 F3/LongBench 对照；
 - 一套 Prompt/F2/F3 telemetry 面板；
 - F2 两轨 diff 与精确短语锚点；
 - F2/F3 after 面板只保留 token、元信息和 diff，不再重复正文。
+- 前端上下文模式只暴露 baseline / F2 / F3；F2+F3 后端 preset 和路由仍保留，但当前前端不暴露按钮。
+- 上下文优化任务已加入 `参数调整` 分组，F2 `压缩阈值` 一个输入同时控制首次压缩阈值和重压新增量。
+- 上下文优化 Agent 对话已加外框、缩小字体，并区分 user 绿色气泡和 agent 白色气泡。
+- 右侧实时监控已加 sticky 浮动样式，class 挂在内部 group 上。
+- 顶部长说明和引擎控制说明文案已删除；引擎控制控件本身必须保留可见。
 
-当前 7860 运行在 tmux session agent-mem-demo-7860，7860/7861 前端在线，8000 引擎可能离线。
+当前 7860 运行在 tmux session agent-mem-demo-7860，7860/7861 前端在线，8000 引擎当前未监听。
 开始时请重新检查 git status、tmux、7860/7861/8000 和最新 pytest，不要只相信交接时状态。
 
 先复述你理解的 F2/F3 当前架构、自动 workload 路由、结论边界和脏工作树风险，然后继续处理我接下来

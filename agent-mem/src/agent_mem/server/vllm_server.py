@@ -13,6 +13,7 @@ Prometheus ``/metrics``（含 ``vllm:prefix_cache_hits_total``/``_queries_total`
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -21,8 +22,6 @@ import time
 from pathlib import Path
 
 import httpx
-
-import json
 
 from agent_mem.config import AppConfig, KVTransferConfig, load_config
 

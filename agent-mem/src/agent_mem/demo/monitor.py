@@ -22,13 +22,15 @@ import statistics
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
 from agent_mem.bench import vllm_metrics
-from agent_mem.bench.mem_sampler import MemBackend, make_backend
+from agent_mem.bench.mem_sampler import MemBackend, NpuSmiBackend, make_backend
 from agent_mem.metrics import RunMetrics
 
 
@@ -70,6 +72,13 @@ class Sample:
     running: int | None  # num_requests_running（gauge）
     waiting: int | None  # num_requests_waiting（gauge）
     kv_usage_perc: float | None  # gpu_cache_usage_perc（gauge，真实 KV 利用率）
+    preemptions: float | None = None  # num_preemptions（counter）
+    lmcache_local_bytes: float | None = None  # LMCache CPU tier bytes（gauge）
+    lmcache_disk_bytes: float | None = None  # LMCache local-disk tier bytes（gauge）
+    lmcache_remote_bytes: float | None = None  # LMCache remote tier bytes（gauge）
+    lmcache_requested_tokens: float | None = None  # LMCache requested tokens（counter）
+    lmcache_hit_tokens: float | None = None  # LMCache hit tokens（counter）
+    lmcache_stored_tokens: float | None = None  # LMCache stored tokens（counter）
 
 
 # vLLM /metrics 指标名（直方图暴露 _sum/_count；counter 暴露 _total/本名；gauge 本名）
@@ -84,6 +93,13 @@ M_INTER_COUNT = "vllm:request_time_per_output_token_seconds_count"
 M_GEN_TOKENS = "vllm:generation_tokens_total"
 M_RUNNING = "vllm:num_requests_running"
 M_WAITING = "vllm:num_requests_waiting"
+M_PREEMPTIONS = "vllm:num_preemptions"
+M_LMCACHE_LOCAL_BYTES = "lmcache:local_cache_usage"
+M_LMCACHE_DISK_BYTES = "lmcache:local_storage_usage"
+M_LMCACHE_REMOTE_BYTES = "lmcache:remote_cache_usage"
+M_LMCACHE_REQUESTED_TOKENS = "lmcache:num_requested_tokens"
+M_LMCACHE_HIT_TOKENS = "lmcache:num_hit_tokens"
+M_LMCACHE_STORED_TOKENS = "lmcache:num_stored_tokens"
 # 真实 KV 利用率指标名：Ascend/新版 ``vllm:kv_cache_usage_perc``，旧版 CUDA ``vllm:gpu_cache_usage_perc``。
 # 两个都试（适配不同框架）；修 mem_peak 被预分配掩盖。
 KV_USAGE_NAMES = ("vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc")
@@ -116,6 +132,37 @@ def scrape_snapshot(base_url: str | None, *, timeout: float = 3.0) -> dict[str, 
     except Exception:  # noqa: BLE001 — 引擎离线
         return None
     return _metrics_map(text)
+
+
+def _lmcache_metrics_url(base_url: str) -> str:
+    """Map engine port 8000+n to LMCache worker metrics port 7000+2n."""
+    engine_port = urlparse(base_url).port or 8000
+    metrics_port = 7000 + max(0, engine_port - 8000) * 2
+    return f"http://127.0.0.1:{metrics_port}/metrics"
+
+
+def scrape_lmcache_snapshot(
+    base_url: str | None, *, timeout: float = 0.5,
+) -> dict[str, float] | None:
+    """Scrape LMCache's worker-side internal metrics endpoint when enabled."""
+    if not base_url:
+        return None
+    try:
+        response = httpx.get(_lmcache_metrics_url(base_url), timeout=timeout)
+        response.raise_for_status()
+    except Exception:  # noqa: BLE001 - endpoint exists only for LMCache modes
+        return None
+    return _metrics_map(response.text)
+
+
+def kv_pool_pct_reader(base_url: str) -> Callable[[], float]:
+    """Build a reader returning vLLM KV-pool utilization in the controller's 0..100 scale."""
+
+    def _read() -> float:
+        usage = kv_usage_from_map(scrape_snapshot(base_url))
+        return -1.0 if usage is None else usage * 100.0
+
+    return _read
 
 
 @dataclass(frozen=True)
@@ -222,7 +269,8 @@ class LiveMonitor:
             self._backend = backend
         else:
             try:
-                self._backend = make_backend(device)
+                # A frontend monitor must not create its own torch.npu context.
+                self._backend = NpuSmiBackend() if device == "npu" else make_backend(device)
             except Exception:  # noqa: BLE001
                 self._backend = None
 
@@ -250,6 +298,9 @@ class LiveMonitor:
             except Exception:  # noqa: BLE001 — 设备未就绪等，跳过本次显存
                 mem = None
         m = scrape_snapshot(self.base_url)  # None → 所有 /metrics 字段为 None
+        lmcache_metrics = scrape_lmcache_snapshot(self.base_url)
+        if lmcache_metrics:
+            m = {**(m or {}), **lmcache_metrics}
 
         def pick(name: str) -> float | None:
             # counter 在 Prometheus 里暴露为 ``<name>_total``（如 prefix_cache_queries_total），
@@ -273,6 +324,13 @@ class LiveMonitor:
             running=None if m is None else m.get(M_RUNNING),
             waiting=None if m is None else m.get(M_WAITING),
             kv_usage_perc=kv_usage_from_map(m),
+            preemptions=pick(M_PREEMPTIONS),
+            lmcache_local_bytes=pick(M_LMCACHE_LOCAL_BYTES),
+            lmcache_disk_bytes=pick(M_LMCACHE_DISK_BYTES),
+            lmcache_remote_bytes=pick(M_LMCACHE_REMOTE_BYTES),
+            lmcache_requested_tokens=pick(M_LMCACHE_REQUESTED_TOKENS),
+            lmcache_hit_tokens=pick(M_LMCACHE_HIT_TOKENS),
+            lmcache_stored_tokens=pick(M_LMCACHE_STORED_TOKENS),
         )
 
     def _loop(self) -> None:
@@ -293,6 +351,11 @@ class LiveMonitor:
         """最近一次快照（buffer 空时 None）。"""
         with self._lock:
             return self._buf[-1] if self._buf else None
+
+    def clear(self) -> None:
+        """清空滚动窗口；切换引擎时避免把两套 Prometheus counter 混算。"""
+        with self._lock:
+            self._buf.clear()
 
 
 # ---- 历史 before/after ----

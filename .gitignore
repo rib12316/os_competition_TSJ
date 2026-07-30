@@ -14,6 +14,7 @@ htmlcov/
 
 # ===== uv / venv (隔离环境位于仓库根目录) =====
 .venv/
+.venv-*/
 venv/
 env/
 
@@ -40,6 +41,15 @@ models/*
 
 # ===== 缓存 =====
 .cache/
+huggingface_home/
+
+# ===== 子项目运行产物 / 中间实验归档 =====
+agent-mem/logs/
+docs/f2-results/
+docs/f3-results/
+docs/.ipynb_checkpoints/
+docs/*截图*.png
+docs/*.docx
 
 # ===== IDE / OS =====
 .idea/
